@@ -1,4 +1,4 @@
-const API_URL = "YOUR_APPS_SCRIPT_WEB_APP_URL_HERE"; // Replace with your deployment URL
+const API_URL = "https://script.google.com/macros/s/AKfycbwrxA5Le2a3uawQFZ6xAX1jsJ_Tou2Vy4w_x8qhNbNSC_UyJ5N-WveFuM_QjPqL6yA1/exec"; // Replace with your deployment URL
 
 document.getElementById('actionBtn').addEventListener('click', fetchTasks);
 
