@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>What Gardening Today?</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="manifest" href="manifest.json">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="apple-touch-icon" href="icon-192.png">
+</head>
+<body>
+    <header>
+        <div class="logo">🌱 What Gardening Today?</div>
+    </header>
+
+    <main>
+        <section class="cta-section">
+            <button id="actionBtn">WHAT GARDENING TODAY?</button>
+            <p class="subtitle">Tap to check today's dynamic layout</p>
+        </section>
+
+        <section class="task-section">
+            <h2 id="listHeading">TODAY'S TASKS</h2>
+            <div id="loader" class="hidden">Gathering garden blueprint...</div>
+            <div id="taskContainer"></div>
+        </section>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>
