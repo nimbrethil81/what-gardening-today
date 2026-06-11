@@ -1,121 +1,110 @@
-:root {
-    --bg-color: #F9F9F9;
-    --card-color: #FFFFFF;
-    --primary-green: #2E7D32;
-    --text-main: #333333;
-    --text-muted: #666666;
+/* --- MAIN ACTION BUTTON --- */
+#action-btn {
+    background-color: #4CAF50; /* The nice green */
+    color: white;
+    padding: 16px 24px;
+    border: none;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+    width: 100%;
+    margin-bottom: 20px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    transition: background-color 0.2s;
 }
 
-body {
-    margin: 0;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    background-color: var(--bg-color);
-    color: var(--text-main);
+#action-btn:active {
+    background-color: #388E3C;
+}
+
+#action-btn:disabled {
+    background-color: #cccccc;
+    cursor: not-allowed;
+    box-shadow: none;
+}
+
+/* --- TASK CONTAINER & LAYOUT --- */
+#task-container {
     display: flex;
     flex-direction: column;
-    align-items: center;
+    gap: 16px;
 }
 
-header {
-    width: 100%;
-    padding: 15px 0;
+/* --- DYNAMIC TASK CARDS --- */
+.task-card {
     background: #ffffff;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-    text-align: center;
-    font-weight: 700;
-    font-size: 1.1rem;
-}
-
-main {
-    width: 100%;
-    max-width: 480px;
-    padding: 20px;
-    box-sizing: border-box;
-}
-
-.cta-section {
-    text-align: center;
-    margin: 40px 0;
-}
-
-#actionBtn {
-    background-color: var(--primary-green);
-    color: white;
-    border: none;
-    padding: 18px 28px;
-    font-size: 1.1rem;
-    font-weight: bold;
-    border-radius: 30px;
-    box-shadow: 0 4px 12px rgba(46, 125, 50, 0.3);
-    cursor: pointer;
-    min-height: 44px; /* Apple Tap Targets */
-    transition: transform 0.1s ease;
-}
-
-#actionBtn:active {
-    transform: scale(0.97);
-}
-
-.subtitle {
-    font-size: 0.85rem;
-    color: var(--text-muted);
-    margin-top: 8px;
-}
-
-.task-section h2 {
-    font-size: 0.9rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: var(--text-muted);
-    margin-bottom: 15px;
-}
-
-.card {
-    background: var(--card-color);
     border-radius: 12px;
     padding: 16px;
-    margin-bottom: 12px;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.04);
-    display: flex;
-    gap: 14px;
-    align-items: flex-start;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    border-left: 6px solid #4CAF50; /* Green accent edge */
 }
 
-.checkbox-container {
-    min-width: 44px;
-    min-height: 44px;
+.task-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.category-badge {
+    background: #e8f5e9;
+    color: #2e7d32;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 800;
+    text-transform: uppercase;
+}
+
+.frequency-badge {
+    color: #888;
+    font-size: 12px;
+    font-style: italic;
+}
+
+.task-title {
+    margin: 0 0 8px 0;
+    font-size: 18px;
+    color: #222;
+}
+
+.task-instruction {
+    margin: 0 0 16px 0;
+    color: #555;
+    font-size: 15px;
+    line-height: 1.5;
+}
+
+/* --- CHECKBOX AREA --- */
+.completion-checkbox-wrapper {
     display: flex;
     align-items: center;
-    justify-content: center;
+    gap: 10px;
+    cursor: pointer;
+    font-size: 15px;
+    color: #444;
+    padding-top: 12px;
+    border-top: 1px solid #eeeeee;
 }
 
-.card input[type="checkbox"] {
-    width: 22px;
-    height: 22px;
-    accent-color: var(--primary-green);
+.task-check {
+    width: 20px;
+    height: 20px;
+    accent-color: #4CAF50;
     cursor: pointer;
 }
 
-.card-content h3 {
-    margin: 0 0 4px 0;
-    font-size: 1.05rem;
+/* --- STATE MESSAGES --- */
+.loading-spinner-box, .error-card, .empty-state-card {
+    text-align: center;
+    padding: 24px;
+    background: #ffffff;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    color: #555;
 }
 
-.category-tag {
-    font-size: 0.7rem;
-    font-weight: bold;
-    color: var(--primary-green);
-    text-transform: uppercase;
-    margin-bottom: 4px;
-    display: block;
+.error-card {
+    border-left: 6px solid #f44336; /* Red error edge */
 }
-
-.card-content p {
-    margin: 0;
-    font-size: 0.9rem;
-    color: var(--text-muted);
-    line-height: 1.35;
-}
-
-.hidden { display: none; }
-#loader { text-align: center; color: var(--text-muted); margin: 20px 0; }
