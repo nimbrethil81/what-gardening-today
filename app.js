@@ -8,6 +8,11 @@ document.addEventListener("DOMContentLoaded", () => {
     if (actionButton) {
         actionButton.addEventListener("click", fetchGardeningTasks);
     }
+
+    // NEW: Listen for checkbox toggles inside the task container
+    if (taskContainer) {
+        taskContainer.addEventListener("change", handleTaskCompletion);
+    }
 });
 
 /**
@@ -116,4 +121,55 @@ function renderTaskCards(tasks) {
 function cleanStringForClass(str) {
     if (!str) return "generic";
     return str.toLowerCase().replace(/[^a-z0-9]/g, "-");
+}
+
+/**
+ * Catches checkbox clicks, sends a POST request to the Google Sheet, 
+ * and handles the visual UI updates.
+ */
+async function handleTaskCompletion(event) {
+    // Only proceed if the changed element is specifically a task checkbox
+    if (!event.target.classList.contains("task-check")) return;
+
+    const checkbox = event.target;
+    const card = checkbox.closest(".task-card");
+    const taskId = checkbox.getAttribute("data-task-id");
+    const assetId = checkbox.getAttribute("data-asset-id");
+    const label = card.querySelector(".checkbox-label-text");
+
+    // 1. Give immediate visual feedback that the network is working
+    checkbox.disabled = true;
+    label.textContent = "Logging to database...";
+
+    try {
+        // 2. Fire the payload to the backend
+        const response = await fetch(API_URL, {
+            method: "POST",
+            body: JSON.stringify({
+                task_id: taskId,
+                asset_id: assetId,
+                notes: "Completed via PWA client"
+            })
+        });
+
+        const result = await response.json();
+
+        // 3. Evaluate backend response
+        if (result.status === "success" || result.success === true) {
+            // Success! Visually confirm it for the user
+            label.textContent = "Completed! 🎉";
+            card.style.opacity = "0.5"; // Dim the card to show it's done
+            card.style.transition = "opacity 0.3s ease";
+        } else {
+            throw new Error(result.message || "Database rejected the log.");
+        }
+
+    } catch (error) {
+        // 4. Graceful Error Handling
+        console.error("POST Pipeline Error:", error);
+        label.textContent = "Network error. Try again.";
+        label.style.color = "#f44336"; // Turn text red
+        checkbox.disabled = false;
+        checkbox.checked = false; // Uncheck it so they can try again
+    }
 }
