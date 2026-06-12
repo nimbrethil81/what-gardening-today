@@ -1,5 +1,80 @@
 const API_URL = "https://script.google.com/macros/s/AKfycbwrxA5Le2a3uawQFZ6xAX1jsJ_Tou2Vy4w_x8qhNbNSC_UyJ5N-WveFuM_QjPqL6yA1/exec"; 
 
+// --- SPA NAVIGATION & DICTIONARY LOGIC ---
+let globalDictionary = [];
+
+document.addEventListener("DOMContentLoaded", () => {
+  // Navigation Event Listeners
+  document.getElementById('nav-today').addEventListener('click', () => switchView('today'));
+  document.getElementById('nav-profile').addEventListener('click', () => switchView('profile'));
+});
+
+function switchView(viewName) {
+  // 1. Hide everything and remove active states
+  document.getElementById('view-today').classList.add('hidden');
+  document.getElementById('view-profile').classList.add('hidden');
+  document.getElementById('nav-today').classList.remove('active');
+  document.getElementById('nav-profile').classList.remove('active');
+
+  // 2. Show the requested view
+  if (viewName === 'today') {
+    document.getElementById('view-today').classList.remove('hidden');
+    document.getElementById('nav-today').classList.add('active');
+  } else if (viewName === 'profile') {
+    document.getElementById('view-profile').classList.remove('hidden');
+    document.getElementById('nav-profile').classList.add('active');
+    
+    // Fetch the dictionary only once if we haven't already
+    if (globalDictionary.length === 0) {
+      fetchDictionary();
+    }
+  }
+}
+
+async function fetchDictionary() {
+  try {
+    // Note: We append ?action=get_dictionary to hit the new logic block in your API
+    const response = await fetch(API_URL + "?action=get_dictionary");
+    const result = await response.json();
+    
+    if (result.status === 'success') {
+      globalDictionary = result.data;
+      setupDropdownLogic();
+    }
+  } catch (error) {
+    console.error("Error fetching dictionary:", error);
+  }
+}
+
+function setupDropdownLogic() {
+  const categorySelect = document.getElementById('category-select');
+  const itemSelect = document.getElementById('item-select');
+
+  categorySelect.addEventListener('change', (e) => {
+    const selectedCategory = e.target.value;
+    
+    // Reset the second dropdown
+    itemSelect.innerHTML = '<option value="">2. Select Item...</option>'; 
+    
+    if (selectedCategory) {
+      // Filter the global dictionary for items matching the chosen category
+      const filteredItems = globalDictionary.filter(item => item.category === selectedCategory);
+      
+      // Populate the second dropdown
+      filteredItems.forEach(item => {
+        const option = document.createElement('option');
+        option.value = item.prefix; // The database key (e.g., PLANT_ROSE)
+        option.textContent = item.suggested_name; // The friendly text (e.g., Rose)
+        itemSelect.appendChild(option);
+      });
+      
+      itemSelect.disabled = false;
+    } else {
+      itemSelect.disabled = true;
+    }
+  });
+}
+
 document.addEventListener("DOMContentLoaded", () => {
     const actionButton = document.getElementById("action-btn");
     const taskContainer = document.getElementById("task-container");
