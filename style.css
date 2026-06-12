@@ -108,3 +108,64 @@
 .error-card {
     border-left: 6px solid #f44336; /* Red error edge */
 }
+/* Navigation Bar */
+.app-nav {
+  display: flex;
+  justify-content: space-around;
+  background-color: #f1f1f1;
+  padding: 10px;
+  margin-bottom: 20px;
+  border-radius: 8px;
+}
+
+.nav-btn {
+  background: none;
+  border: none;
+  font-size: 16px;
+  font-weight: bold;
+  color: #666;
+  padding: 10px 20px;
+  cursor: pointer;
+}
+
+.nav-btn.active {
+  color: #2e7d32;
+  border-bottom: 3px solid #2e7d32;
+}
+
+/* View Switching Utility */
+.hidden {
+  display: none !important;
+}
+
+/* Profile Form Elements */
+.profile-card {
+  background: white;
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 20px;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+  border: 1px solid #e0e0e0;
+}
+
+.input-field {
+  width: 100%;
+  padding: 12px;
+  margin-bottom: 15px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 16px;
+  box-sizing: border-box; /* Ensures padding doesn't break width */
+}
+
+.secondary-btn {
+  width: 100%;
+  padding: 15px;
+  background-color: #4CAF50; /* A slightly different green to distinguish from main action */
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: bold;
+  cursor: pointer;
+}
