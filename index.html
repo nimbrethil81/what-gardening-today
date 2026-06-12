@@ -7,27 +7,59 @@
     <link rel="stylesheet" href="style.css">
     <link rel="manifest" href="manifest.json">
     <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <link rel="apple-touch-icon" href="icon-192.png">
 </head>
 <body>
-    <header>
-        <div class="logo">🌱 What Gardening Today?</div>
-    </header>
+  <header>
+    <h1>What Gardening Today?</h1>
+  </header>
 
-    <main>
-        <section class="cta-section">
-            <button id="action-btn">WHAT GARDENING SHOULD I DO TODAY?</button>
-            <p class="subtitle">Tap to check today's tasks</p>
-        </section>
+  <nav class="app-nav">
+    <button id="nav-today" class="nav-btn active">Garden Today</button>
+    <button id="nav-profile" class="nav-btn">My Garden</button>
+  </nav>
 
-        <section class="task-section">
-            <h2 id="listHeading">TODAY'S TASKS</h2>
-            <div id="loader" class="hidden">Gathering garden information...</div>
-            <div id="task-container"></div>
-        </section>
-    </main>
+  <main>
+    <div id="view-today" class="view-section">
+      <div id="loader" style="display: none;">Loading your tasks...</div>
+      <button id="action-btn">What gardening should I do today?</button>
+      <div id="task-container"></div>
+    </div>
 
-    <script src="app.js"></script>
+    <div id="view-profile" class="view-section hidden">
+      <div class="profile-card">
+        <h3>Add to Garden</h3>
+        <select id="category-select" class="input-field">
+         <option value="" disabled selected hidden>1. Select Category...</option>
+          <option value="Lawn">Lawn</option>
+          <option value="Beds">Beds</option>
+          <option value="Trees & shrubs">Trees & shrubs</option>
+          <option value="Plants & flowers">Plants & flowers</option>
+          <option value="Veg & herbs">Veg & herbs</option>
+          <option value="Garden structures">Garden structures</option>
+          <option value="Tools">Tools</option>
+        </select>
+
+        <select id="item-select" class="input-field" disabled>
+          <option value="" disabled selected hidden>2. Select Item...</option>
+        </select>
+
+        <input type="text" id="custom-name" class="input-field" placeholder="3. Custom Name (e.g., Front Patio)">
+
+        <button id="add-asset-btn" class="secondary-btn">Add to Garden</button>
+      </div>
+
+      <div class="profile-card">
+        <h3>Current Inventory</h3>
+        <div id="inventory-list">
+          <p class="empty-state">Loading inventory...</p>
+        </div>
+      </div>
+    </div>
+  </main>
+  
+  <script src="app.js"></script>
 </body>
 </html>
