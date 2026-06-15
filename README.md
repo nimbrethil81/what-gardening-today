@@ -35,7 +35,7 @@ To modify your garden profile assets or alter the rules of the logic engine, upd
 ## 🗺️ Engineering Roadmap
 
 - [x] **Phase 1 (Current):** Setup Zero-Cost Jamstack Engine & PWA Delivery.
-- [ ] **Phase 2:** Interactivity & Stateful Memory (Persistent task logging via `Task_Log` writes).
-- [ ] **Phase 2.1:** Item inventory
+- [x] **Phase 2:** Interactivity & Stateful Memory (Persistent task logging via `Task_Log` writes).
+- [x] **Phase 2.1:** Item inventory
 - [ ] **Phase 3:** Environmental API Integration (HTML5 Geolocation + OpenWeather API smart filtering).
 - [ ] **Phase 4:** Scale Migrate to Supabase (PostgreSQL) + Native App Engine (Flutter/SwiftUI).

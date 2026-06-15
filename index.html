@@ -1,65 +1,106 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>What Gardening Today?</title>
-    <link rel="stylesheet" href="style.css">
-    <link rel="manifest" href="manifest.json">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <link rel="apple-touch-icon" href="icon-192.png">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>What Gardening Today</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <meta name="theme-color" content="#2E7D32">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header>
-    <h1>What Gardening Today?</h1>
-  </header>
 
-  <nav class="app-nav">
-    <button id="nav-today" class="nav-btn active">Garden Today</button>
-    <button id="nav-profile" class="nav-btn">My Garden</button>
-  </nav>
+  <div class="app-container">
+    
+    <h2 class="main-app-title">🌱 What Gardening Today?</h2>
 
-  <main>
-    <div id="view-today" class="view-section">
-      <div id="loader" style="display: none;">Loading your tasks...</div>
-      <button id="action-btn">What gardening should I do today?</button>
-      <div id="task-container"></div>
-    </div>
-
-    <div id="view-profile" class="view-section hidden">
-      <div class="profile-card">
-        <h3>Add to Garden</h3>
-        <select id="category-select" class="input-field">
-         <option value="" disabled selected hidden>1. Select Category...</option>
-          <option value="Lawn">Lawn</option>
-          <option value="Beds">Beds</option>
-          <option value="Trees & shrubs">Trees & shrubs</option>
-          <option value="Plants & flowers">Plants & flowers</option>
-          <option value="Veg & herbs">Veg & herbs</option>
-          <option value="Garden structures">Garden structures</option>
-          <option value="Tools">Tools</option>
-        </select>
-
-        <select id="item-select" class="input-field" disabled>
-          <option value="" disabled selected hidden>2. Select Item...</option>
-        </select>
-
-        <input type="text" id="custom-name" class="input-field" placeholder="3. Custom Name (e.g., Front Patio)">
-
-        <button id="add-asset-btn" class="secondary-btn">Add to Garden</button>
-      </div>
-
-      <div class="profile-card">
-        <h3>Current Inventory</h3>
-        <div id="inventory-list">
-          <p class="empty-state">Loading inventory...</p>
+    <main id="main-content">
+      
+      <section id="view-today" class="view-section active-view">
+        
+        <div class="weather-widget">
+          <h1>19°C ☀️</h1>
+          <p>Perfect Planting Conditions</p>
         </div>
-      </div>
-    </div>
-  </main>
-  
+
+        <div id="task-container">
+          <div class="loading-spinner-box">Loading your garden tasks...</div>
+        </div>
+      </section>
+
+      <section id="view-garden" class="view-section">
+        
+        <h2 class="section-title">Add to My Garden</h2>
+        <div class="app-card">
+          <p class="form-instruction">1. Choose a Category</p>
+          
+          <div class="category-tiles-grid">
+            <button class="tile-btn" onclick="selectCategory('Lawn', this)">
+              <span class="tile-icon">🌱</span>
+              <span class="tile-label">Lawn</span>
+            </button>
+            <button class="tile-btn" onclick="selectCategory('Beds', this)">
+              <span class="tile-icon">🪵</span>
+              <span class="tile-label">Beds</span>
+            </button>
+            <button class="tile-btn" onclick="selectCategory('Trees & shrubs', this)">
+              <span class="tile-icon">🌳</span>
+              <span class="tile-label">Trees & Shrubs</span>
+            </button>
+            <button class="tile-btn" onclick="selectCategory('Veg & herbs', this)">
+              <span class="tile-icon">🥕</span>
+              <span class="tile-label">Veg & Herbs</span>
+            </button>
+            <button class="tile-btn" onclick="selectCategory('Garden structures', this)">
+              <span class="tile-icon">🏡</span>
+              <span class="tile-label">Structures</span>
+            </button>
+            <button class="tile-btn" onclick="selectCategory('Tools', this)">
+              <span class="tile-icon">🛠️</span>
+              <span class="tile-label">Tools</span>
+            </button>
+            <button class="tile-btn full-width" onclick="selectCategory('Plants & flowers', this)">
+              <span class="tile-icon">🌸</span>
+              <span class="tile-label">Plants & Flowers</span>
+            </button>
+          </div>
+
+          <p class="form-instruction">2. Select Item</p>
+          <div id="pill-box" class="pill-cloud">
+            <div class="pill-placeholder">Select a category above...</div>
+          </div>
+
+          <p class="form-instruction">3. My Reference (Optional)</p>
+          <div class="modern-input-wrapper">
+            <input type="text" id="custom-name" placeholder="e.g., Front Yard, Red Planter" oninput="validateForm()">
+          </div>
+
+          <button id="add-asset-btn" class="primary-action-btn" disabled>Add to My Garden</button>
+        </div>
+
+        <h2 class="section-title">My Garden</h2>
+        <div id="inventory-list">
+          <div class="loading-spinner-box">Loading inventory...</div>
+        </div>
+
+      </section>
+
+    </main>
+
+    <nav class="app-nav-bar">
+      <button id="nav-today" class="nav-item active" onclick="switchTab('today', this)">
+        <span class="nav-item-icon">📋</span>
+        <span>Today's Tasks</span>
+      </button>
+      <button id="nav-profile" class="nav-item" onclick="switchTab('garden', this)">
+        <span class="nav-item-icon">🏡</span>
+        <span>My Garden</span>
+      </button>
+    </nav>
+
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>
