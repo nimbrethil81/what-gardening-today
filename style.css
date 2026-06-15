@@ -169,3 +169,28 @@
   font-weight: bold;
   cursor: pointer;
 }
+/* --- INVENTORY LIST --- */
+.inventory-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid #eeeeee;
+}
+
+.inventory-item:last-child {
+    border-bottom: none;
+}
+
+.inventory-details {
+    display: flex;
+    flex-direction: column;
+}
+
+.inventory-category {
+    font-size: 12px;
+    color: #888;
+    text-transform: uppercase;
+    margin-top: 4px;
+    font-weight: bold;
+}

@@ -24,10 +24,13 @@ function switchView(viewName) {
     document.getElementById('view-profile').classList.remove('hidden');
     document.getElementById('nav-profile').classList.add('active');
     
-    // Fetch the dictionary only once if we haven't already
+    // Fetch the dictionary only once
     if (globalDictionary.length === 0) {
       fetchDictionary();
     }
+    
+    // ALWAYS fetch fresh inventory when opening the tab
+    fetchInventory();
   }
 }
 
@@ -78,6 +81,11 @@ function setupDropdownLogic() {
 document.addEventListener("DOMContentLoaded", () => {
     const actionButton = document.getElementById("action-btn");
     const taskContainer = document.getElementById("task-container");
+  // NEW: Listen for the "Add to Garden" button click
+    const addAssetBtn = document.getElementById("add-asset-btn");
+    if (addAssetBtn) {
+        addAssetBtn.addEventListener("click", handleAddAsset);
+    }
 
     // Add immediate visual event listener to your primary action button
     if (actionButton) {
@@ -247,4 +255,125 @@ async function handleTaskCompletion(event) {
         checkbox.disabled = false;
         checkbox.checked = false; // Uncheck it so they can try again
     }
+}
+/**
+ * Gathers user input, generates a unique Asset ID, and posts it to the User_Profile database.
+ */
+async function handleAddAsset() {
+    const category = document.getElementById('category-select').value;
+    const itemPrefix = document.getElementById('item-select').value;
+    const customName = document.getElementById('custom-name').value;
+    const btn = document.getElementById('add-asset-btn');
+
+    // 1. Validation to prevent empty database rows
+    if (!category || !itemPrefix || !customName) {
+        alert("Please select a category, an item, and provide a custom name.");
+        return;
+    }
+
+    // 2. Generate a unique Asset_ID (e.g., PLANT_ROSE_8492) to prevent primary key conflicts
+    const uniqueAssetId = `${itemPrefix}_${Math.floor(1000 + Math.random() * 9000)}`;
+
+    // 3. UI Loading State
+    btn.disabled = true;
+    btn.textContent = "Planting in database...";
+
+    try {
+        // 4. Send payload to API Gateway
+        const response = await fetch(API_URL, {
+            method: "POST",
+            body: JSON.stringify({
+                action: "add_asset", // Triggers ROUTE 1 in Apps Script
+                asset_id: uniqueAssetId,
+                category: category,
+                friendly_name: customName
+            })
+        });
+
+        const result = await response.json();
+
+        // 5. Evaluate and render success state
+        if (result.status === "success" || result.success === true) {
+            btn.textContent = "Added to Garden! 🎉";
+            btn.style.backgroundColor = "#2e7d32"; // Dark success green
+            
+            // Gracefully reset the form after 2 seconds
+            setTimeout(() => {
+                document.getElementById('category-select').value = "";
+                
+                const itemSelect = document.getElementById('item-select');
+                itemSelect.innerHTML = '<option value="" disabled selected hidden>2. Select Item...</option>';
+                itemSelect.disabled = true;
+                
+                document.getElementById('custom-name').value = "";
+                
+                btn.textContent = "Add to Garden";
+                btn.style.backgroundColor = ""; 
+                btn.disabled = false;
+
+                // NEW: Refresh the inventory list to show the newly added item!
+                fetchInventory();
+            }, 2000);
+        } else {
+            throw new Error(result.message || "Database rejected the entry.");
+        }
+
+    } catch (error) {
+        // 6. Fail gracefully on network errors
+        console.error("Add Asset Error:", error);
+        btn.textContent = "Network Error. Try again.";
+        btn.style.backgroundColor = "#f44336"; // Red error state
+        
+        setTimeout(() => {
+            btn.textContent = "Add to Garden";
+            btn.style.backgroundColor = "";
+            btn.disabled = false;
+        }, 3000);
+    }
+}
+/**
+ * Fetches the user's active garden items from the database
+ */
+async function fetchInventory() {
+    const inventoryList = document.getElementById('inventory-list');
+    inventoryList.innerHTML = '<p class="empty-state">Loading inventory...</p>';
+
+    try {
+        const response = await fetch(API_URL + "?action=get_profile");
+        const result = await response.json();
+
+        if (result.status === 'success') {
+            renderInventory(result.data);
+        } else {
+            throw new Error(result.message);
+        }
+    } catch (error) {
+        console.error("Error fetching inventory:", error);
+        inventoryList.innerHTML = '<p class="empty-state" style="color: #f44336;">Failed to load inventory.</p>';
+    }
+}
+
+/**
+ * Builds the HTML for the inventory list
+ */
+function renderInventory(items) {
+    const inventoryList = document.getElementById('inventory-list');
+    inventoryList.innerHTML = ''; // Clear loader
+
+    if (items.length === 0) {
+        inventoryList.innerHTML = '<p class="empty-state">Your garden is empty! Add some items above.</p>';
+        return;
+    }
+
+    items.forEach(item => {
+        const itemDiv = document.createElement('div');
+        itemDiv.className = 'inventory-item';
+        itemDiv.innerHTML = `
+            <div class="inventory-details">
+                <strong>${item.friendly_name}</strong>
+                <span class="inventory-category">${item.category}</span>
+            </div>
+            `;
+        inventoryList.appendChild(itemDiv);
+    });
 }
