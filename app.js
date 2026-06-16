@@ -22,6 +22,11 @@ document.addEventListener("DOMContentLoaded", () => {
     if (addAssetBtn) {
         addAssetBtn.addEventListener("click", handleAddAsset);
     }
+
+    const inventoryList = document.getElementById("inventory-list");
+    if (inventoryList) {
+        inventoryList.addEventListener("click", handleRemoveAsset);
+    }
 });
 
 // --- NAVIGATION LOGIC ---
@@ -41,7 +46,12 @@ async function fetchDictionary() {
         const response = await fetch(API_URL + "?action=get_dictionary");
         const result = await response.json();
         if(result.status === "success") {
-            globalDictionary = result.data;
+            // Normalise to PascalCase regardless of what casing the API returns
+            globalDictionary = result.data.map(item => ({
+                Category:                item.Category                || item.category                || '',
+                Suggested_Name:          item.Suggested_Name          || item.suggested_name          || '',
+                Default_Asset_ID_Prefix: item.Default_Asset_ID_Prefix || item.prefix                  || ''
+            }));
         }
     } catch (error) {
         console.error("Error fetching dictionary:", error);
@@ -113,6 +123,15 @@ function renderTaskCards(tasks) {
     });
 }
 
+// Look up the canonical Suggested_Name for an asset using its ID prefix
+function getSuggestedName(assetId) {
+    // Strip the trailing _NNNN random suffix to recover the dictionary prefix
+    // e.g. "VEG_TOMATO_4821" → "VEG_TOMATO", "LAWN_1034" → "LAWN"
+    const prefix = assetId.replace(/_\d{4}$/, '');
+    const entry = globalDictionary.find(d => d.Default_Asset_ID_Prefix === prefix);
+    return entry ? entry.Suggested_Name : null;
+}
+
 function renderGroupedInventory() {
     const displayArea = document.getElementById('inventory-list');
     displayArea.innerHTML = '';
@@ -143,13 +162,20 @@ function renderGroupedInventory() {
         items.forEach(item => {
             const cardDiv = document.createElement('div');
             cardDiv.className = 'inventory-item-card';
-            
-            // Note: Our API returns friendly_name. 
-            // In the real sheet, Suggested Name isn't passed back from the profile, so we use friendly_name.
+
+            const suggestedName = getSuggestedName(item.asset_id);
+            const displayName   = suggestedName || item.friendly_name || item.asset_id;
+            // Only show the user's custom reference if it differs from the suggested name
+            const customRef     = (item.friendly_name && suggestedName && item.friendly_name !== suggestedName)
+                                    ? item.friendly_name
+                                    : null;
+
             cardDiv.innerHTML = `
                 <div>
-                    <strong>${item.friendly_name || item.asset_id}</strong>
+                    <strong>${displayName}</strong>
+                    ${customRef ? `<div class="inventory-item-meta">📌 ${customRef}</div>` : ''}
                 </div>
+                <button class="remove-asset-btn" data-asset-id="${item.asset_id}" data-friendly-name="${displayName}">✕</button>
             `;
             groupDiv.appendChild(cardDiv);
         });
@@ -253,6 +279,68 @@ async function handleAddAsset() {
             btn.style.backgroundColor = ""; 
             btn.disabled = false;
         }, 3000);
+    }
+}
+
+// --- REMOVE ASSET LOGIC ---
+function handleRemoveAsset(event) {
+    const btn = event.target.closest('.remove-asset-btn');
+    if (!btn) return;
+
+    if (btn.dataset.confirming === 'true') {
+        // Second tap — execute removal
+        const assetId = btn.getAttribute('data-asset-id');
+        executeRemoveAsset(assetId, btn);
+    } else {
+        // First tap — ask for confirmation
+        btn.dataset.confirming = 'true';
+        btn.textContent = 'Remove?';
+        btn.classList.add('confirming');
+
+        // Auto-reset after 3 seconds if no second tap
+        setTimeout(() => {
+            if (btn.dataset.confirming === 'true') {
+                btn.dataset.confirming = 'false';
+                btn.textContent = '✕';
+                btn.classList.remove('confirming');
+            }
+        }, 3000);
+    }
+}
+
+async function executeRemoveAsset(assetId, btn) {
+    btn.disabled = true;
+    btn.textContent = '⏳';
+
+    try {
+        const response = await fetch(API_URL, {
+            method: 'POST',
+            body: JSON.stringify({
+                action: 'remove_asset',
+                asset_id: assetId
+            })
+        });
+
+        const result = await response.json();
+        if (result.status === 'success') {
+            btn.textContent = '✓';
+            btn.classList.remove('confirming');
+            btn.classList.add('removed');
+
+            // Refresh inventory and today's tasks after a short delay
+            setTimeout(() => {
+                fetchInventory();
+                fetchGardeningTasks();
+            }, 600);
+        } else {
+            throw new Error(result.message || 'Remove failed');
+        }
+    } catch (error) {
+        console.error('Remove Asset Error:', error);
+        btn.disabled = false;
+        btn.textContent = '✕';
+        btn.dataset.confirming = 'false';
+        btn.classList.remove('confirming');
     }
 }
 
