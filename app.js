@@ -31,13 +31,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
 // --- NAVIGATION LOGIC ---
 function switchTab(viewId, element) {
-    // Toggle nav active state
-    document.querySelectorAll('.nav-item').forEach(btn => btn.classList.remove('active'));
-    element.classList.add('active');
+  // 1. Toggle nav active state
+  document.querySelectorAll('.nav-item').forEach(btn => btn.classList.remove('active'));
+  element.classList.add('active');
 
-    // Swap views
-    document.querySelectorAll('.view-section').forEach(section => section.classList.remove('active-view'));
-    document.getElementById(`view-${viewId}`).classList.add('active-view');
+  // 2. Swap view panels
+  document.querySelectorAll('.view-section').forEach(section => section.classList.remove('active-view'));
+  document.getElementById(`view-${viewId}`).classList.add('active-view');
+
+  // 3. SMART REFRESH: If returning to the Today view, re-fetch the tasks!
+  if (viewId === 'today') {
+      fetchGardeningTasks();
+  }
 }
 
 // --- API FETCHERS ---
