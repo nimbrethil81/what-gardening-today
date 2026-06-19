@@ -1,4 +1,4 @@
-const API_URL = "https://script.google.com/macros/s/AKfycbwrxA5Le2a3uawQFZ6xAX1jsJ_Tou2Vy4w_x8qhNbNSC_UyJ5N-WveFuM_QjPqL6yA1/exec";
+const API_URL = "https://script.google.com/macros/s/AKfycbwDA5U9Ve0EIcfDbtOnwhGCukR-2WuNLWL_xm0zj3PC5mlR7-IGAecli9E2Bao5Nix6/exec";
 
 // --- LOCAL MEMORY STATE ---
 let globalDictionary = [];
@@ -6,28 +6,40 @@ let userInventory = [];
 let selectedCategoryRef = null;
 let selectedSubItemObj = null; // Stores the actual dictionary row object
 
-document.addEventListener("DOMContentLoaded", () => {
-    // 1. Initial Data Fetches
-    fetchGardeningTasks();
-    fetchDictionary();
-    fetchInventory();
+// ------------------------------
+// LOAD ALL DATA FROM BACKEND
+// ------------------------------
+async function loadAppData() {
+  try {
+    const currentMonth = new Date().getMonth() + 1;
+    const url = `${API_URL}?action=get_all&month=${currentMonth}&t=${Date.now()}`;
 
-    // 2. Setup Event Listeners
+    const response = await fetch(url, { cache: "no-store" });
+    const json = await response.json();
+
+    if (json.status !== "success") {
+      console.error("Backend error:", json);
+      document.getElementById("task-container").innerHTML = '<div class="loading-spinner-box" style="color:red;">Backend returned an error.</div>';
+      return;
+    }
+
+    // 1. Update Global State (Crucial for inventory matching!)
+    globalDictionary = json.categories || [];
+    userInventory = json.inventory || [];
+    const tasks = json.tasks || [];
+
+    // 2. Render UI using your ACTUAL function names
+    renderTaskCards(tasks);
+    renderGroupedInventory();
+
+  } catch (err) {
+    console.error("Fetch failed:", err);
     const taskContainer = document.getElementById("task-container");
-    if(taskContainer) {
-        taskContainer.addEventListener("click", handleTaskCompletion);
+    if (taskContainer) {
+        taskContainer.innerHTML = '<div class="loading-spinner-box" style="color:red;">Unable to load data from server.</div>';
     }
-
-    const addAssetBtn = document.getElementById("add-asset-btn");
-    if (addAssetBtn) {
-        addAssetBtn.addEventListener("click", handleAddAsset);
-    }
-
-    const inventoryList = document.getElementById("inventory-list");
-    if (inventoryList) {
-        inventoryList.addEventListener("click", handleRemoveAsset);
-    }
-});
+  }
+}
 
 // --- NAVIGATION LOGIC ---
 function switchTab(viewId, element) {
@@ -68,10 +80,17 @@ async function fetchGardeningTasks() {
     taskContainer.innerHTML = '<div class="loading-spinner-box">Gathering seasonal rules...</div>';
 
     try {
-        const currentMonth = new Date().getMonth() + 1;
-        const targetRequestUrl = `${API_URL}?month=${currentMonth}`;
-        
-        const response = await fetch(targetRequestUrl);
+        // 2. Query data based on the client's current system calendar month (1-12)
+
+const currentMonth = new Date().getMonth() + 1;
+
+// Add a cache-buster timestamp to force Safari to fetch fresh data
+const cacheBuster = new Date().getTime();
+const targetRequestUrl = `${API_URL}?month=${currentMonth}&t=${cacheBuster}`;
+
+// Add the 'no-store' directive for modern browsers
+const response = await fetch(targetRequestUrl, { cache: 'no-store' });
+
         const result = await response.json();
         
         if (result.status === "success") {
@@ -99,6 +118,79 @@ async function fetchInventory() {
     } catch (error) {
         console.error("Error fetching inventory:", error);
         inventoryList.innerHTML = '<div class="loading-spinner-box" style="color:red;">Failed to load inventory.</div>';
+    }
+}
+// --- GEOLOCATION & WEATHER LOGIC ---
+function requestLocalWeather() {
+  if (!navigator.geolocation) {
+    updateWeatherFallback();
+    return;
+  }
+
+  navigator.geolocation.getCurrentPosition(
+    async (pos) => {
+      const lat = pos.coords.latitude;
+      const lon = pos.coords.longitude;
+
+      try {
+        const url = `${API_URL}?action=get_weather&lat=${lat}&lon=${lon}`;
+        const response = await fetch(url);
+        const json = await response.json();
+
+        if (json.status === "success") {
+  const temp = Math.round(json.data.main.temp);
+  const desc = json.data.weather[0].description;
+  const icon = json.data.weather[0].icon;
+
+  // Capitalise description
+  const niceDesc = desc.charAt(0).toUpperCase() + desc.slice(1);
+
+  document.getElementById("weather-temp").textContent = `${temp}°C`;
+  document.getElementById("weather-desc").textContent = niceDesc;
+
+  // Add icon
+  document.getElementById("weather-icon").src =
+    `https://openweathermap.org/img/wn/${icon}@2x.png`;
+}
+ else {
+          updateWeatherFallback();
+        }
+      } catch (err) {
+        updateWeatherFallback();
+      }
+    },
+
+    // ❗ This was missing — without it, the widget never updates
+    (err) => {
+      console.warn("Geolocation blocked:", err);
+      updateWeatherFallback();
+    }
+  );
+}
+
+function updateWeatherFallback() {
+  document.getElementById("weather-temp").textContent = "--°C";
+  document.getElementById("weather-desc").textContent = "Weather unavailable";
+}
+
+
+function updateWeatherWidget(weatherData) {
+    // Selectors for your UI
+    const tempDisplay = document.querySelector('.weather-widget h1');
+    const conditionDisplay = document.querySelector('.weather-widget p');
+    
+    if (tempDisplay && conditionDisplay) {
+        // Round the temperature and grab the main condition (e.g., "Rain", "Clear")
+        const temp = Math.round(weatherData.main.temp);
+        const condition = weatherData.weather[0].main;
+        
+        // Simple mapping to add an emoji based on the condition
+        let emoji = "☁️";
+        if (condition === "Clear") emoji = "☀️";
+        if (condition === "Rain" || condition === "Drizzle") emoji = "🌧️";
+        
+        tempDisplay.innerHTML = `${temp}°C ${emoji}`;
+        conditionDisplay.textContent = weatherData.weather[0].description;
     }
 }
 
@@ -383,3 +475,21 @@ async function handleTaskCompletion(event) {
         checkbox.innerText = "❌";
     }
 }
+
+// 1. Initial Data Fetches
+document.addEventListener("DOMContentLoaded", () => {
+
+    // 1. Fire these independently! If tasks fail, weather still loads.
+    loadAppData();
+    requestLocalWeather();
+
+    // 2. Setup Event Listeners using your ACTUAL function names
+    const taskContainer = document.getElementById("task-container");
+    if (taskContainer) taskContainer.addEventListener("click", handleTaskCompletion);
+
+    const inventoryList = document.getElementById("inventory-list");
+    if (inventoryList) inventoryList.addEventListener("click", handleRemoveAsset);
+    
+    const addAssetBtn = document.getElementById("add-asset-btn");
+    if (addAssetBtn) addAssetBtn.addEventListener("click", handleAddAsset);
+});
