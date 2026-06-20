@@ -7,24 +7,30 @@ let selectedCategoryRef = null;
 let selectedSubItemObj = null; // Stores the actual dictionary row object
 
 // ------------------------------
+// ------------------------------
 // LOAD ALL DATA FROM BACKEND
 // ------------------------------
 async function loadAppData() {
   try {
     const currentMonth = new Date().getMonth() + 1;
     const url = `${API_URL}?action=get_all&month=${currentMonth}&t=${Date.now()}`;
-
     const response = await fetch(url, { cache: "no-store" });
     const json = await response.json();
 
     if (json.status !== "success") {
       console.error("Backend error:", json);
-      document.getElementById("task-container").innerHTML = '<div class="loading-spinner-box" style="color:red;">Backend returned an error.</div>';
+      document.getElementById("task-container").innerHTML = 'Backend returned an error.';
       return;
     }
 
-    // 1. Update Global State (Crucial for inventory matching!)
-    globalDictionary = json.categories || [];
+    // 1. Update Global State (WITH PROPER CASING MAPPING)
+    const rawCategories = json.categories || [];
+    globalDictionary = rawCategories.map(item => ({
+        Category: item.category || '',
+        Suggested_Name: item.suggested_name || '',
+        Default_Asset_ID_Prefix: item.prefix || ''
+    }));
+    
     userInventory = json.inventory || [];
     const tasks = json.tasks || [];
 
@@ -36,7 +42,7 @@ async function loadAppData() {
     console.error("Fetch failed:", err);
     const taskContainer = document.getElementById("task-container");
     if (taskContainer) {
-        taskContainer.innerHTML = '<div class="loading-spinner-box" style="color:red;">Unable to load data from server.</div>';
+        taskContainer.innerHTML = 'Unable to load data from server.';
     }
   }
 }
