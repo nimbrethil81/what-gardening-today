@@ -301,6 +301,9 @@ function selectCategory(categoryKey, element) {
     // Filter dictionary based on actual Google Sheet categories
     const relevantItems = globalDictionary.filter(item => item.Category === categoryKey);
 
+  // ADD THIS NEW LINE TO SORT THE ITEMS ALPHABETICALLY:
+  relevantItems.sort((a, b) => a.Suggested_Name.localeCompare(b.Suggested_Name));
+  
     if(relevantItems.length === 0) {
         pillBox.innerHTML = '<div class="pill-placeholder">Loading items... (or none found)</div>';
         validateForm();
