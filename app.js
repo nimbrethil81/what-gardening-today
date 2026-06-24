@@ -112,7 +112,7 @@ const response = await fetch(targetRequestUrl, { cache: 'no-store' });
 
 async function fetchInventory() {
     const inventoryList = document.getElementById('inventory-list');
-    inventoryList.innerHTML = '<div class="loading-spinner-box">Loading inventory...</div>';
+    inventoryList.innerHTML = '<div class="loading-spinner-box">Growing garden...</div>';
 
     try {
         const response = await fetch(API_URL + "?action=get_profile");
