@@ -75,6 +75,7 @@ The global engine containing the rules and care instructions for all supported g
 * **Suppress_If_Raining:** `TRUE` = hide this task when it is currently raining at the user's location. `FALSE` or blank = ignore.
 * **Suppress_If_Temp_Below:** Numeric temperature threshold in °C. If the current temperature is below this value, the task is hidden. Blank = ignore.
 * **Requires_Wind_Above:** Numeric wind speed threshold. Behaviour of this column is a **known limitation** — see §5E.
+* **Estimated_Minutes:** Whole number of minutes a novice would typically spend on one occurrence of the task (e.g. `30`). Added for future use — not yet read by the backend; surfaced in the app in a later phase.
 
 ### Tab 4: `Task_Log`
 
@@ -140,6 +141,8 @@ All GET requests append a client-supplied `&t=<timestamp>` cache-buster to force
 4. **Documentation Review.** After implementing a feature or bug fix, review whether SPEC.md and CHANGELOG.md should be updated. If updates are appropriate, explain what should change and ask for confirmation before modifying either file.
 
 5. **Plain English Communication.** When asking the developer to make a design decision, explain the options in terms of what they would actually see or experience, not technical shorthand. When providing test steps, write them as actions a non-developer could follow — what to do and what to expect to happen, not descriptions of underlying technical behaviour.
+
+6. **Content Authoring.** Adding items to `Item_Dictionary` and tasks to `Master_Task_Matrix` follows the semicolon-import process, prompts, and verification steps documented in `docs/DATABASE_WORKFLOW.md`.
 
 ### E. Known Limitations
 
