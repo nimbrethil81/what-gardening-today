@@ -42,9 +42,25 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
   gap: 8px;
 }
 
+/* --- SECTION HEADINGS (accent bar style) --- */
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 24px 4px 12px 4px;
+}
+
+.section-accent-bar {
+  width: 4px;
+  height: 22px;
+  background: var(--brand-green);
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
 .section-title {
   font-size: 20px;
-  margin: 24px 0 12px 4px;
+  margin: 0;
   color: var(--text-main);
 }
 
@@ -220,15 +236,30 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
 .primary-action-btn:disabled { background-color: #D1D1D6; color: #8E8E93; box-shadow: none; cursor: not-allowed; }
 
 /* --- CURRENT INVENTORY DISPLAY --- */
-.inventory-group { margin-bottom: 20px; }
+/* Tinted container that ties the whole "My Garden" list together */
+.garden-container {
+  background: var(--brand-light);
+  border: 1px solid #D4EAD6;
+  border-radius: 16px;
+  padding: 6px 14px 10px 14px;
+  box-sizing: border-box;
+}
+
+.inventory-group { padding: 12px 0; }
+.inventory-group:first-child { padding-top: 6px; }
+
+/* Divider between categories lives on the container, not on each title */
+.inventory-group + .inventory-group {
+  border-top: 1px solid #C9E2CB;
+}
+
 .inventory-group-title {
   font-size: 14px;
   font-weight: 700;
   color: var(--brand-green);
   margin-bottom: 10px;
-  padding-bottom: 4px;
-  border-bottom: 1px solid var(--border-color);
 }
+
 .inventory-item-card {
   background: var(--bg-card);
   border-radius: 10px;
@@ -241,6 +272,9 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
   justify-content: space-between;
   align-items: center;
 }
+
+.inventory-item-card:last-child { margin-bottom: 0; }
+
 .inventory-item-custom-name { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
 .inventory-item-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; font-family: monospace; }
 
@@ -319,4 +353,3 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
   width: 40px;
   height: 40px;
 }
-
