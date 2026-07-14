@@ -104,6 +104,39 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
 /* --- TODAY VIEW TASK CARDS --- */
 #task-container { display: flex; flex-direction: column; gap: 10px; }
 
+/* Wraps each card so the Hide action can sit underneath it, revealed by a
+   sideways swipe. overflow:hidden keeps the hide action clipped to the same
+   rounded shape as the card until it's dragged into view. */
+.task-card-wrapper {
+  position: relative;
+  overflow: hidden;
+  border-radius: 14px;
+}
+
+/* Sits behind the card at rest; only visible once the card is swiped left. */
+.task-hide-action {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 76px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-red);
+}
+
+.hide-task-btn {
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: none;
+  color: #FFFFFF;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
 .task-card {
   background: var(--bg-card);
   border-radius: 14px;
@@ -113,7 +146,10 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
   align-items: center;
   justify-content: space-between;
   border-left: 4px solid var(--brand-green);
-  transition: opacity 0.2s ease;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  position: relative;
+  z-index: 1;
+  touch-action: pan-y; /* let vertical scrolling through; JS handles horizontal swipe */
 }
 
 .task-info h3 { font-size: 15px; color: var(--text-main); margin-bottom: 4px; }
@@ -353,3 +389,138 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
   width: 40px;
   height: 40px;
 }
+
+/* --- HEADER + SETTINGS GEAR ICON --- */
+.app-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.settings-icon-btn {
+  position: absolute;
+  top: 50%;
+  right: 2px;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  font-size: 20px;
+  line-height: 1;
+  color: var(--text-main);
+  cursor: pointer;
+  padding: 6px;
+}
+
+.settings-icon-btn:active { transform: translateY(-50%) scale(0.9); }
+
+/* --- UNDO TOAST (shown briefly after hiding a task) --- */
+.undo-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 84px;
+  transform: translateX(-50%) translateY(16px);
+  max-width: calc(100% - 32px);
+  background: #1C1C1E;
+  color: #FFFFFF;
+  padding: 12px 16px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  font-size: 14px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.25);
+  z-index: 1100;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.undo-toast.visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+  pointer-events: auto;
+}
+
+.undo-toast-btn {
+  background: none;
+  border: none;
+  color: var(--accent-blue);
+  font-weight: 700;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 4px 6px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* --- HIDDEN TASKS MODAL (opened via the settings gear icon) --- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 1200;
+}
+
+.modal-overlay.hidden { display: none; }
+
+.modal-panel {
+  width: 100%;
+  max-width: 440px;
+  max-height: 80vh;
+  overflow-y: auto;
+  background: var(--bg-app);
+  border-radius: 20px 20px 0 0;
+  padding: 20px 16px calc(20px + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.modal-close-btn {
+  background: none;
+  border: none;
+  font-size: 18px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 8px;
+}
+
+.hidden-tasks-list { display: flex; flex-direction: column; gap: 8px; }
+
+.hidden-task-card {
+  background: var(--bg-card);
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);
+}
+
+.hidden-task-info h4 { font-size: 14px; margin: 0 0 2px 0; }
+.hidden-task-info p { font-size: 11px; color: var(--text-muted); margin: 0; }
+
+.restore-task-btn {
+  background: none;
+  border: 1.5px solid var(--brand-green);
+  color: var(--brand-green);
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.restore-task-btn:active { transform: scale(0.96); }
+

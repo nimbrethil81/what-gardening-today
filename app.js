@@ -6,6 +6,13 @@ let userInventory = [];
 let selectedCategoryRef = null;
 let selectedSubItemObj = null; // Stores the actual dictionary row object
 
+// --- HIDE-THIS-TASK STATE ---
+const HIDE_REVEAL_WIDTH = 76; // px — must match .task-hide-action's width in style.css
+let currentlyRevealedWrapper = null; // the one task card currently swiped open, if any
+let dragState = null;                // in-progress swipe gesture, or null when idle
+let undoToastTimeout = null;
+let undoToastTaskId = null;
+
 // ------------------------------
 // ------------------------------
 // LOAD ALL DATA FROM BACKEND
@@ -204,6 +211,7 @@ function updateWeatherWidget(weatherData) {
 function renderTaskCards(tasks) {
     const taskContainer = document.getElementById("task-container");
     taskContainer.innerHTML = "";
+    currentlyRevealedWrapper = null; // any previous swipe-open state no longer applies
 
     if (tasks.length === 0) {
         taskContainer.innerHTML = `<div class="loading-spinner-box">✨ Your garden is up to date!</div>`;
@@ -211,18 +219,24 @@ function renderTaskCards(tasks) {
     }
 
     tasks.forEach(task => {
-        const card = document.createElement("div");
-        card.className = `task-card`;
-        
-        // Build the modern UI card
-        card.innerHTML = `
-            <div class="task-info">
-                <h3>${task.task_name}</h3>
-                <p>${task.category} • ${task.instruction}</p>
+        const wrapper = document.createElement("div");
+        wrapper.className = "task-card-wrapper";
+
+        // Build the modern UI card, now sitting on top of a Hide action
+        // that's revealed by swiping the card sideways.
+        wrapper.innerHTML = `
+            <div class="task-hide-action">
+                <button class="hide-task-btn" data-task-id="${task.task_id}">Hide</button>
             </div>
-            <button class="task-action-btn task-check" data-task-id="${task.task_id}" data-asset-id="${task.asset_id}">✓</button>
+            <div class="task-card">
+                <div class="task-info">
+                    <h3>${task.task_name}</h3>
+                    <p>${task.category} • ${task.instruction}</p>
+                </div>
+                <button class="task-action-btn task-check" data-task-id="${task.task_id}" data-asset-id="${task.asset_id}">✓</button>
+            </div>
         `;
-        taskContainer.appendChild(card);
+        taskContainer.appendChild(wrapper);
     });
 }
 
@@ -450,6 +464,244 @@ async function executeRemoveAsset(assetId, btn) {
     }
 }
 
+// --- SWIPE-TO-REVEAL "HIDE" GESTURE ---
+// A horizontal drag on a task card slides it aside to reveal the Hide button
+// sitting underneath. Direction-locked against startY/startX so a vertical
+// scroll gesture is left alone and never mistaken for a swipe.
+
+function onCardPointerDown(e) {
+    const wrapper = e.target.closest('.task-card-wrapper');
+    if (!wrapper) return;
+
+    const card = wrapper.querySelector('.task-card');
+    const wasRevealed = wrapper.classList.contains('revealed');
+
+    dragState = {
+        wrapper, card,
+        startX: e.clientX,
+        startY: e.clientY,
+        startTransform: wasRevealed ? -HIDE_REVEAL_WIDTH : 0,
+        locked: false,
+        isHorizontal: false,
+        lastX: undefined
+    };
+    card.style.transition = 'none';
+}
+
+function onCardPointerMove(e) {
+    if (!dragState) return;
+
+    const deltaX = e.clientX - dragState.startX;
+    const deltaY = e.clientY - dragState.startY;
+
+    if (!dragState.locked) {
+        if (Math.abs(deltaX) < 6 && Math.abs(deltaY) < 6) return; // not enough movement to decide yet
+        dragState.locked = true;
+        dragState.isHorizontal = Math.abs(deltaX) > Math.abs(deltaY);
+        if (!dragState.isHorizontal) {
+            // Vertical gesture — this is a page scroll, not our swipe. Hand it back.
+            dragState.card.style.transition = '';
+            dragState = null;
+            return;
+        }
+    }
+
+    if (!dragState.isHorizontal) return;
+
+    let newX = dragState.startTransform + deltaX;
+    newX = Math.max(-HIDE_REVEAL_WIDTH, Math.min(0, newX));
+    dragState.card.style.transform = `translateX(${newX}px)`;
+    dragState.lastX = newX;
+}
+
+function onCardPointerUp() {
+    if (!dragState || !dragState.isHorizontal) { dragState = null; return; }
+
+    const { wrapper, card } = dragState;
+    const finalX = dragState.lastX !== undefined ? dragState.lastX : dragState.startTransform;
+    card.style.transition = '';
+
+    if (finalX < -(HIDE_REVEAL_WIDTH / 2)) {
+        if (currentlyRevealedWrapper && currentlyRevealedWrapper !== wrapper) {
+            closeSwipeWrapper(currentlyRevealedWrapper);
+        }
+        openSwipeWrapper(wrapper);
+    } else {
+        closeSwipeWrapper(wrapper);
+    }
+
+    dragState = null;
+}
+
+function openSwipeWrapper(wrapper) {
+    wrapper.classList.add('revealed');
+    wrapper.querySelector('.task-card').style.transform = `translateX(-${HIDE_REVEAL_WIDTH}px)`;
+    currentlyRevealedWrapper = wrapper;
+}
+
+function closeSwipeWrapper(wrapper) {
+    wrapper.classList.remove('revealed');
+    wrapper.querySelector('.task-card').style.transform = 'translateX(0)';
+    if (currentlyRevealedWrapper === wrapper) currentlyRevealedWrapper = null;
+}
+
+// --- HIDE THIS TASK ---
+// Tapping Hide removes the card immediately and fires the request in the
+// background, with a few seconds' grace via the Undo toast before it's final.
+
+async function handleHideTaskClick(event) {
+    const hideBtn = event.target.closest('.hide-task-btn');
+    if (!hideBtn) return;
+
+    const taskId = hideBtn.getAttribute('data-task-id');
+    const wrapper = hideBtn.closest('.task-card-wrapper');
+    const nameEl = wrapper ? wrapper.querySelector('.task-info h3') : null;
+    const taskName = nameEl ? nameEl.textContent : 'Task';
+
+    if (currentlyRevealedWrapper === wrapper) currentlyRevealedWrapper = null;
+    if (wrapper) wrapper.remove();
+
+    showUndoToast(taskId, taskName);
+
+    try {
+        const response = await fetch(API_URL, {
+            method: 'POST',
+            body: JSON.stringify({ action: 'hide_task', task_id: taskId })
+        });
+        const result = await response.json();
+        if (result.status !== 'success') {
+            console.error('Hide task failed:', result.message);
+        }
+    } catch (error) {
+        console.error('Hide Task Error:', error);
+    }
+}
+
+function showUndoToast(taskId, taskName) {
+    if (undoToastTimeout) clearTimeout(undoToastTimeout);
+
+    undoToastTaskId = taskId;
+    const toast = document.getElementById('undo-toast');
+    const message = document.getElementById('undo-toast-message');
+    message.textContent = `"${taskName}" hidden.`;
+    toast.classList.add('visible');
+
+    undoToastTimeout = setTimeout(() => {
+        toast.classList.remove('visible');
+        undoToastTimeout = null;
+        undoToastTaskId = null;
+    }, 5000);
+}
+
+async function handleUndoHide() {
+    if (!undoToastTaskId) return;
+    const taskId = undoToastTaskId;
+
+    if (undoToastTimeout) { clearTimeout(undoToastTimeout); undoToastTimeout = null; }
+    document.getElementById('undo-toast').classList.remove('visible');
+    undoToastTaskId = null;
+
+    try {
+        const response = await fetch(API_URL, {
+            method: 'POST',
+            body: JSON.stringify({ action: 'unhide_task', task_id: taskId })
+        });
+        const result = await response.json();
+        if (result.status === 'success') {
+            fetchGardeningTasks(); // bring the restored task straight back
+        } else {
+            console.error('Undo failed:', result.message);
+        }
+    } catch (error) {
+        console.error('Undo Hide Error:', error);
+    }
+}
+
+// --- HIDDEN TASKS MANAGEMENT (settings gear icon) ---
+
+function openHiddenTasksModal() {
+    document.getElementById('hidden-tasks-modal').classList.remove('hidden');
+    fetchHiddenTasks();
+}
+
+function closeHiddenTasksModal() {
+    document.getElementById('hidden-tasks-modal').classList.add('hidden');
+}
+
+async function fetchHiddenTasks() {
+    const listEl = document.getElementById('hidden-tasks-list');
+    listEl.innerHTML = '<div class="loading-spinner-box">Loading...</div>';
+
+    try {
+        const response = await fetch(API_URL + '?action=get_hidden_tasks&t=' + Date.now(), { cache: 'no-store' });
+        const result = await response.json();
+
+        if (result.status !== 'success') throw new Error(result.message || 'Unknown error');
+        renderHiddenTasksList(result.data);
+    } catch (error) {
+        console.error('Fetch Hidden Tasks Error:', error);
+        listEl.innerHTML = '<div class="loading-spinner-box" style="color:red;">Failed to load hidden tasks.</div>';
+    }
+}
+
+function renderHiddenTasksList(hiddenTasks) {
+    const listEl = document.getElementById('hidden-tasks-list');
+    listEl.innerHTML = '';
+
+    if (hiddenTasks.length === 0) {
+        listEl.innerHTML = '<div class="loading-spinner-box">You haven\'t hidden any tasks.</div>';
+        return;
+    }
+
+    hiddenTasks.forEach(task => {
+        const card = document.createElement('div');
+        card.className = 'hidden-task-card';
+        card.innerHTML = `
+            <div class="hidden-task-info">
+                <h4>${task.task_name}</h4>
+                <p>${task.category}</p>
+            </div>
+            <button class="restore-task-btn" data-task-id="${task.task_id}">Restore</button>
+        `;
+        listEl.appendChild(card);
+    });
+}
+
+async function handleRestoreTask(event) {
+    const btn = event.target.closest('.restore-task-btn');
+    if (!btn) return;
+
+    const taskId = btn.getAttribute('data-task-id');
+    btn.disabled = true;
+    btn.textContent = '⏳';
+
+    try {
+        const response = await fetch(API_URL, {
+            method: 'POST',
+            body: JSON.stringify({ action: 'unhide_task', task_id: taskId })
+        });
+        const result = await response.json();
+
+        if (result.status === 'success') {
+            const card = btn.closest('.hidden-task-card');
+            if (card) card.remove();
+
+            fetchGardeningTasks(); // keep Today's Tasks in sync in the background
+
+            const listEl = document.getElementById('hidden-tasks-list');
+            if (listEl.children.length === 0) {
+                listEl.innerHTML = '<div class="loading-spinner-box">You haven\'t hidden any tasks.</div>';
+            }
+        } else {
+            throw new Error(result.message || 'Restore failed');
+        }
+    } catch (error) {
+        console.error('Restore Task Error:', error);
+        btn.disabled = false;
+        btn.textContent = 'Restore';
+    }
+}
+
 async function handleTaskCompletion(event) {
     if (!event.target.classList.contains("task-check")) return;
 
@@ -494,11 +746,42 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // 2. Setup Event Listeners using your ACTUAL function names
     const taskContainer = document.getElementById("task-container");
-    if (taskContainer) taskContainer.addEventListener("click", handleTaskCompletion);
+    if (taskContainer) {
+        taskContainer.addEventListener("click", handleTaskCompletion);
+        taskContainer.addEventListener("click", handleHideTaskClick);
+
+        // Swipe-to-reveal gesture on task cards
+        taskContainer.addEventListener("pointerdown", onCardPointerDown);
+        taskContainer.addEventListener("pointermove", onCardPointerMove);
+        taskContainer.addEventListener("pointerup", onCardPointerUp);
+        taskContainer.addEventListener("pointercancel", onCardPointerUp);
+    }
 
     const inventoryList = document.getElementById("inventory-list");
     if (inventoryList) inventoryList.addEventListener("click", handleRemoveAsset);
     
     const addAssetBtn = document.getElementById("add-asset-btn");
     if (addAssetBtn) addAssetBtn.addEventListener("click", handleAddAsset);
+
+    // 3. Undo toast
+    const undoBtn = document.getElementById("undo-toast-btn");
+    if (undoBtn) undoBtn.addEventListener("click", handleUndoHide);
+
+    // 4. Hidden tasks settings modal
+    const settingsBtn = document.getElementById("settings-btn");
+    if (settingsBtn) settingsBtn.addEventListener("click", openHiddenTasksModal);
+
+    const closeModalBtn = document.getElementById("close-hidden-modal");
+    if (closeModalBtn) closeModalBtn.addEventListener("click", closeHiddenTasksModal);
+
+    const hiddenModal = document.getElementById("hidden-tasks-modal");
+    if (hiddenModal) {
+        // Tapping the dimmed backdrop (not the panel itself) closes the modal
+        hiddenModal.addEventListener("click", (e) => {
+            if (e.target === hiddenModal) closeHiddenTasksModal();
+        });
+    }
+
+    const hiddenTasksList = document.getElementById("hidden-tasks-list");
+    if (hiddenTasksList) hiddenTasksList.addEventListener("click", handleRestoreTask);
 });

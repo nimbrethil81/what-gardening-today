@@ -14,8 +14,11 @@
 <body>
 
   <div class="app-container">
-    
-    <h2 class="main-app-title">🌱 What Gardening Today?</h2>
+
+    <div class="app-header">
+      <h2 class="main-app-title">🌱 What Gardening Today?</h2>
+      <button id="settings-btn" class="settings-icon-btn" aria-label="Settings">⚙️</button>
+    </div>
 
     <main id="main-content">
       
@@ -113,6 +116,25 @@
       </button>
     </nav>
 
+  </div>
+
+  <!-- Brief "Undo" banner shown right after hiding a task -->
+  <div id="undo-toast" class="undo-toast">
+    <span id="undo-toast-message"></span>
+    <button id="undo-toast-btn" class="undo-toast-btn">Undo</button>
+  </div>
+
+  <!-- Settings: list of hidden tasks, opened via the gear icon -->
+  <div id="hidden-tasks-modal" class="modal-overlay hidden">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <h2 class="section-title">Hidden Tasks</h2>
+        <button id="close-hidden-modal" class="modal-close-btn" aria-label="Close">✕</button>
+      </div>
+      <div id="hidden-tasks-list" class="hidden-tasks-list">
+        <div class="loading-spinner-box">Loading...</div>
+      </div>
+    </div>
   </div>
 
   <script src="app.js"></script>

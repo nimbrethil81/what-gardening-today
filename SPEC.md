@@ -15,8 +15,9 @@ The "What Gardening Today?" app eliminates cognitive overload and decision paral
 
 The system is a Progressive Web App (PWA) reading dynamically from a relational database schema structured inside Google Sheets.
 
-* **Data Layer (Google Sheets):** The relational database. Four primary tables: `User_Profile`, `Item_Dictionary`, `Master_Task_Matrix`, and `Task_Log`. A supporting `Reference_Lists` sheet maps display categories to their `Asset_ID` prefixes.
+* **Data Layer (Google Sheets):** The relational database. Five tables: `User_Profile`, `Item_Dictionary`, `Master_Task_Matrix`, `Task_Log`, and `Hidden_Tasks`. A supporting `Reference_Lists` sheet maps display categories to their `Asset_ID` prefixes.
 * **API Gateway (Google Apps Script Web App):** Listens for client GET/POST requests, filters data (season, cooldowns, weather), securely proxies the external weather API, and returns RESTful JSON payloads.
+* **Data Audit (Apps Script, `Audit.gs`):** A read-only integrity checker attached to the spreadsheet, exposed as a **Garden Data → Run Audit** menu and reporting into an `Audit_Report` tab. It exists because this data fails silently: a task targeting something that does not exist raises no error, it simply never appears. The audit turns that class of silent failure into a visible list. It reads the seven categories and nine prefixes from `Reference_Lists` rather than hardcoding them, and never modifies data. See `docs/DATABASE_WORKFLOW.md` §7.
 * **Frontend Interface (GitHub Pages Static Host):** Vanilla HTML5, CSS3, and JavaScript (`index.html`, `style.css`, `app.js`) configured with a Service Worker (`sw.js`) and Web App Manifest (`manifest.json`) to run as a standalone iOS/Android PWA. PWA icon and favicon assets are stored under `assets/icons/`.
 
 ---
@@ -99,6 +100,17 @@ Append-only historical record of completed tasks.
 * **Date_Completed:** Date the task was ticked off. Stored as a UTC date — see known limitation in §5E.
 * **Notes:** Default tracking string sent by the client (currently `"Completed via PWA client"`).
 
+### Tab 5: `Hidden_Tasks`
+
+Tasks the user has chosen never to see again, regardless of whether they'd otherwise match. Reversible — a task can always be restored from the settings screen.
+
+* **Task_ID:** References a `Master_Task_Matrix` row. Checked before every other filter in `selectTasks`, so a hidden task is excluded unconditionally — asset match, season, cooldown and weather are never even evaluated for it.
+* **Date_Hidden:** Date the task was hidden. Informational only; not currently used to auto-expire a hide.
+
+The tab is created automatically, with headers, the first time a task is hidden — there is nothing to set up in advance.
+
+Single-user today: there is no `User_ID` column, so this table is the entire hidden-task state for the one garden the app serves. This is the first genuinely user-scoped table in the schema, and it is the natural first thing to look at when designing for more than one user (see Phase 4).
+
 ---
 
 ## 4. API ROUTES
@@ -112,6 +124,7 @@ The Apps Script Web App is the sole external API. All requests use the deployed 
 * **`get_profile`** — User inventory only. Legacy route retained for compatibility.
 * **`get_dictionary`** — Item blueprint catalogue only. Legacy route retained for compatibility.
 * **`get_weather`** — Current weather data proxied from OpenWeather. Accepts `lat` and `lon`.
+* **`get_hidden_tasks`** — Every currently hidden Task_ID, with its name and category looked up live from `Master_Task_Matrix` (so a later rename is always reflected correctly rather than stored stale). Powers the settings/gear management list.
 
 All GET requests append a client-supplied `&t=<timestamp>` cache-buster to force fresh evaluations on tab switches.
 
@@ -121,6 +134,8 @@ Asset matching, group resolution, cooldown suppression, and weather suppression 
 
 * **`add_asset`** — Creates a new `User_Profile` row from a chosen `Item_Dictionary` blueprint. Payload includes the target category, the chosen suggested name, and an optional custom reference name. The backend generates the `_NNNN` suffix and assigns `Is_Active = TRUE`.
 * **`remove_asset`** — Soft-deletes an inventory row by setting `Is_Active = FALSE`. Payload includes the target `Asset_ID`.
+* **`hide_task`** — Adds a Task_ID to `Hidden_Tasks` (creating the tab on first use). Idempotent: hiding an already-hidden task succeeds without creating a duplicate row. Payload includes `task_id`.
+* **`unhide_task`** — Removes a Task_ID from `Hidden_Tasks`, restoring it to normal matching. Payload includes `task_id`.
 * **Task logging (default POST)** — Any POST without a recognised `action` field is treated as a task completion event and appended to `Task_Log`. Payload includes the completed `Task_ID`.
 
 ---
@@ -163,6 +178,8 @@ Asset matching, group resolution, cooldown suppression, and weather suppression 
 
 6. **Content Authoring.** Adding items to `Item_Dictionary` and tasks to `Master_Task_Matrix` follows the semicolon-import process, prompts, and verification steps documented in `docs/DATABASE_WORKFLOW.md`.
 
+7. **Quality Assurance.** Run the data audit (**Garden Data → Run Audit**) after every content import and every schema change — it is the automated check on exactly the silent failures this schema invites. Structural correctness is the audit's job; horticultural correctness is not, and never can be, so it is covered separately by the editorial review prompt in `docs/DATABASE_WORKFLOW.md` §8, run per category after large content additions and otherwise annually. Editorial findings are always applied by hand, never auto-applied.
+
 ### E. Known Limitations
 
 Documented so they aren't lost between sessions. None are urgent; each will be addressed when it makes sense to bundle with related work.
@@ -173,10 +190,11 @@ Documented so they aren't lost between sessions. None are urgent; each will be a
 * **UTC midnight edge case.** `Date_Completed` is stamped in UTC. During British Summer Time, a task completed between midnight and 1am local is logged with yesterday's date.
 * **`Task_Log` grows unboundedly.** No archiving mechanism. Not a problem at current scale but should be addressed before response times noticeably degrade.
 * **Legacy two-digit asset ID suffixes.** Earlier assets used `_NN` suffixes (e.g. `LAWN_01`). The current display-name resolution assumes four-digit suffixes. Any residual two-digit-suffix items will fall back to raw ID or friendly name rather than a dictionary-derived display name.
-* **Duplicate `Task_ID` `TASK_0262`.** Assigned to both a Thalictrum task and a Tiarella task, violating the primary-key rule. No runtime impact today, but one must be renumbered.
-* **Woody plants catalogued under the `PLANT` prefix.** Clematis, Bamboo, Ivy, Jasmine, Rhododendron, Viburnum, Heather and Fuchsia are woody or sub-shrubby but carry `PLANT_*` prefixes, so they inherit generic `PLANT` care. The genuinely damaging generic tasks have been retargeted away from the category tier (see 1.3), so this is currently cosmetic — but these blueprints belong under `SHRUB_*`.
-* **Retired Task IDs.** `TASK_0050` and `TASK_0051` have been deleted (see CHANGELOG 1.3). Per the immutable primary-key rule these numbers are retired and must never be reissued.
-* **Items with no applicable tasks.** `STRUCT_WATER_BUTT` and `STRUCT_COMPOST_BIN` receive no tasks: no specific tasks have been authored and there is no generic `STRUCT` tier.
+* **Fuchsia and Heather remain under the `PLANT` prefix.** Both are woody or sub-shrubby, but both are commonly grown in pots and baskets, where the generic `PLANT` care (watering, feeding patio pots) is what they actually need. Moving them to `SHRUB_*` would cut them off from that care in exchange for shrub tasks of little relevance to them. This is a deliberate exception to the "prefix follows the plant's nature" rule, kept because the exception serves the user better than the rule would. The other six woody `PLANT_*` items were re-catalogued in 1.3.
+* **Retired Task IDs.** `TASK_0050`, `TASK_0051` and `TASK_0064` have been deleted (see CHANGELOG 1.3). Per the immutable primary-key rule these numbers are **retired and must never be reissued** — `Task_Log` still holds completions recorded against them, and a reissued ID would silently inherit a completion history belonging to a different job. The list is mirrored in `Audit.gs` (`RETIRED_TASK_IDS`), which both suppresses the expected orphaned-log warnings and raises an ERROR if a retired ID is ever reused. When retiring a task, add it in both places.
+
+  Deleting the row is the correct procedure. `Task_Log` entries for a retired task are **left in place**: the log is an append-only historical record, and the user really did complete that job on that date. Tidying the log to silence a warning would be falsifying history — and it is harmless anyway, since completions are only ever looked up *by* Task_ID.
+* **Some blueprints still have no tasks.** `STRUCT_PLANTER_BOX`, `STRUCT_PERGOLA`, `STRUCT_COLD_FRAME`, `STRUCT_ARCH` and `STRUCT_POND` have no tasks authored, and there is no generic `STRUCT` tier to fall back on, so a user adding one of these would see nothing for it. (The `TOOL` category does have a generic tier, so tools without specific tasks are still covered.) Content gap rather than an engine fault — the matcher offers no way to detect it, so new blueprints must be checked by hand.
 
 ---
 
@@ -186,4 +204,5 @@ Documented so they aren't lost between sessions. None are urgent; each will be a
 * **Phase 2 (COMPLETE):** Stateful interactivity. Checkboxes on task cards; completion writes to `Task_Log` via POST. Processing engine calculates `Date_Completed + Frequency_Days` to suppress completed tasks for their cooldown window.
 * **Phase 2.1 (COMPLETE):** Dynamic inventory management. "My Garden" tab with category tiles, item pill selector, custom-name input, and soft-delete confirmation flow. `Item_Dictionary` drives pill population; asset matching applies user-added items to relevant tasks.
 * **Phase 3 (COMPLETE):** Environmental API integration. HTML5 Geolocation on the frontend widget; secure OpenWeather API proxy through Apps Script; season and weather task filtering combined in the `get_all` route.
+* **Phase 3.1 (COMPLETE):** Task dismissal. Swipe-to-reveal "Hide" action on task cards, with an Undo grace window; a settings screen listing hidden tasks with one-tap restore. The first user-scoped data (`Hidden_Tasks`) in the schema.
 * **Phase 4 (PENDING):** Cross-platform scale. Migrate the database from Google Sheets to a hosted PostgreSQL instance (e.g. Supabase), add user authentication for multi-tenant support, and evaluate whether a native rewrite (Flutter / SwiftUI) is warranted beyond the current PWA.

@@ -67,6 +67,8 @@ Groups currently in use:
 | `GROUP_SOFT_FRUIT` | Raspberry, Strawberry, Blackberry, Goji |
 | `GROUP_BRASSICA` | Broccoli, Kale |
 | `GROUP_TENDER_BULB` | Dahlia (the other tender bulbs each have their own lift-and-store task) |
+| `GROUP_GRASS_LAWN` | Ryegrass, Fine Fescue, Bentgrass, Mixed Utility, Buffalo — conventional mown turf |
+| `GROUP_CULTIVATED_BED` | Herbaceous Border, Raised Bed, Annual Bedding, Mixed Shrub Border, Cutting Garden — beds of rich, worked garden soil |
 
 A `GROUP_HERBACEOUS_PERENNIAL` group was considered and rejected — see CHANGELOG 1.3. The lesson is worth keeping: **a group must describe what an item *is*, not what content it happens to be missing.** If the only thing the members have in common is "no specific task written yet", it is not a group.
 
@@ -237,7 +239,127 @@ Generate the CSV now.
 
 ---
 
-## 7. Notes on specific columns
+## 7. Quality assurance
+
+This data fails **silently**. A task pointing at a target that doesn't exist doesn't throw an error — it just never appears. An item with no tasks doesn't complain — it simply shows the user nothing. Every significant bug found in this project so far has been of that kind, and each one sat undetected for weeks. QA is therefore not optional polish; it is the only thing standing between a typo and a plant that quietly never gets cared for.
+
+There are two halves to it, and they catch entirely different things.
+
+### 7a. The mechanical audit — automated, run often
+
+`Audit.gs` in the Apps Script project adds a **Garden Data → Run Audit** menu to the spreadsheet. It reads every tab, checks them against the rules in this document, and writes its findings to an `Audit_Report` tab. It never modifies data.
+
+**Run it after every content import and after every schema change.** It takes seconds.
+
+It checks for:
+
+- **Targets that match nothing** — a `Target_Asset_ID` that is not a category prefix, not a prefix in `Item_Dictionary`, and not a group tag carried by any blueprint. This is the single highest-value check, and would have caught the orphaned raspberry, fruit-netting and brassica tasks the day they were written.
+- **Garden items with no blueprint** — an `Asset_ID` in `User_Profile` whose prefix no longer exists. This is the specific failure mode created by renaming a blueprint prefix and forgetting to migrate items already in the garden.
+- **Items that receive no tasks** — no specific tasks, no group tasks, and no category-tier fallback.
+- **Duplicate keys** — repeated `Task_ID` or `Asset_ID`.
+- **Duplicate blueprints** — the same plant catalogued twice under different prefixes. The name check is deliberately loose, so "Rose" and "Rose Shrub" are flagged as a likely pair.
+- **Group tags that do nothing** — carried by blueprints but targeted by no task.
+- **Schema hygiene** — invalid categories, unknown top-level prefixes, `GROUP_` misused as an asset prefix, `_NNNN` suffixes in a task target, malformed `Valid_Months`, missing `Frequency_Days` or `Estimated_Minutes`, semicolons in free text, and `Suppress_If_Raining` sitting as the *text* "TRUE" rather than a real boolean.
+- **Orphaned log entries** — completions recorded against tasks that no longer exist.
+
+The `Reference_Lists` tab is the audit's source of truth for the seven categories and nine prefixes. Add a prefix there and the audit accepts it immediately — which is that tab's real job, and the reason to keep it.
+
+Findings come in three severities: **ERROR** (silently broken now), **WARNING** (probably not intended), and **REVIEW** (the script cannot judge; a human should look).
+
+### 7b. The editorial review — human-judged, run occasionally
+
+The audit cannot tell you that scarlet lily beetle does not affect lily of the valley. No script can. Horticultural correctness needs a subject-matter pass.
+
+**When to run it:** after any large content injection into a category, whenever a new category-tier task is added (they are the highest-risk kind), and otherwise roughly annually, working through one category at a time.
+
+**How:** paste a batch of tasks — around 50 rows, quality drops off past that — into the review prompt in §8. It returns a findings table, not corrected data. **Apply nothing automatically.** The whole point of the review is that a human decides; an LLM confidently "correcting" curated horticultural data is precisely the risk being managed here.
+
+---
+
+## 8. The editorial review prompt
+
+```
+Act as an expert UK horticulturist performing a quality review of an existing
+gardening app's task database. You are REVIEWING, not authoring. Do not rewrite
+the data — report what you find and let me decide.
+
+Below is a batch of tasks from `Master_Task_Matrix`. Each row is a piece of
+gardening advice shown to a NOVICE UK gardener, who will follow it literally and
+has no knowledge to catch a mistake.
+
+TASKS UNDER REVIEW:
+[paste rows: Task_ID | Target_Asset_ID | Task_Name | Instruction | Valid_Months |
+ Frequency_Days]
+
+CONTEXT — how targeting works:
+- A bare category prefix (LAWN, PLANT, SHRUB, VEG, TREE, BED, HERB, STRUCT, TOOL)
+  means the task is shown for EVERY item in that category, without exception.
+- A GROUP_* tag means it is shown for every item declared a member of that group.
+- Anything else targets one specific item type.
+
+CHECK EACH TASK FOR:
+
+1. HORTICULTURAL ACCURACY. Is the advice correct for UK conditions? Pay particular
+   attention to pest and disease pairings — is this pest actually a problem for this
+   plant? (A real bug we found: a scarlet lily beetle task was being applied to lily
+   of the valley, which the pest does not affect.)
+
+2. TIMING. Are Valid_Months right for the UK? Would following this in the stated
+   month damage the plant or waste the effort? Is Frequency_Days plausible for the
+   real cadence of the job?
+
+3. CATEGORY-TIER SAFETY. If a task targets a bare category prefix, is the advice
+   safe for EVERY possible member of that category? (A real bug we found: "cut back
+   to within 10cm of the ground" targeted the whole PLANT category and was being
+   issued for roses, clematis, bamboo and ivy — all woody.) Flag any category-level
+   task that is right for most members but harmful to some.
+
+4. CONTRADICTIONS AND DUPLICATES. Do any two tasks in this batch give conflicting
+   advice, or tell the user to do substantially the same job twice?
+
+5. DANGEROUS OR IRREVERSIBLE ADVICE. Anything that could kill the plant, injure the
+   person, or cannot be undone. Note especially plants that must NOT be cut into old
+   wood (lavender, heather, most conifers), and plants that must be LEFT standing
+   over winter rather than cut back (penstemon, gaura, eryngium, rudbeckia,
+   echinacea, sedum, verbena bonariensis).
+
+6. NOVICE CLARITY. Would a beginner know what to do, and know when they had done it?
+   Flag jargon, vagueness, and any step that assumes knowledge the user won't have.
+
+7. OMISSIONS. For each item type in this batch, is there an important, well-known
+   seasonal job that is MISSING? (A real example: lavender had no task warning against
+   cutting into old wood — the single commonest way people kill it.)
+
+OUTPUT FORMAT:
+
+A table, most serious first:
+
+Task_ID | Verdict | Issue | Suggested fix
+
+Verdict is one of:
+  WRONG     — factually incorrect, or harmful if followed
+  RISKY     — correct for some cases but harmful in others (usually a category-tier problem)
+  TIMING    — the months or frequency are off
+  UNCLEAR   — a novice would not know what to do
+  DUPLICATE — overlaps or conflicts with another task in this batch
+  OK        — no issues
+
+List every task, including the OK ones, so I can see the whole batch was reviewed.
+
+Then a separate section:
+
+MISSING TASKS — important jobs not covered for the item types in this batch, with a
+one-line reason each.
+
+Be specific and be willing to disagree with the existing data. Cautious approval of a
+task that is wrong is worse than a false alarm I dismiss in ten seconds.
+```
+
+**Why that last line is there.** The default failure of a review prompt is sycophantic approval — hand a model fifty rows of plausible-looking advice and it will tend to nod along. Requiring every row to be listed, including the passes, and explicitly licensing disagreement is what turns it from a rubber stamp into a genuine check.
+
+---
+
+## 9. Notes on specific columns
 
 ### `Estimated_Minutes`
 
