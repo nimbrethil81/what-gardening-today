@@ -34,12 +34,14 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
 .main-app-title {
   font-size: 24px;
   text-align: center;
-  margin: 10px 0 20px 0;
+  margin: 0;
   color: var(--text-main);
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
+  flex: 1;
+  min-width: 0;
 }
 
 /* --- SECTION HEADINGS (accent bar style) --- */
@@ -392,17 +394,13 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
 
 /* --- HEADER + SETTINGS GEAR ICON --- */
 .app-header {
-  position: relative;
   display: flex;
   align-items: center;
-  justify-content: center;
+  margin: 10px 4px 20px 4px;
+  gap: 10px;
 }
 
 .settings-icon-btn {
-  position: absolute;
-  top: 50%;
-  right: 2px;
-  transform: translateY(-50%);
   background: none;
   border: none;
   font-size: 20px;
@@ -410,9 +408,10 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
   color: var(--text-main);
   cursor: pointer;
   padding: 6px;
+  flex-shrink: 0;
 }
 
-.settings-icon-btn:active { transform: translateY(-50%) scale(0.9); }
+.settings-icon-btn:active { transform: scale(0.9); }
 
 /* --- UNDO TOAST (shown briefly after hiding a task) --- */
 .undo-toast {
