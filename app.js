@@ -12,16 +12,27 @@
  * ========================================================================== */
 
 /* ---- Supabase connection -------------------------------------------------
- * Fill these in from your Supabase dashboard: Project Settings -> API.
- * The anon / publishable key is SAFE to include here — it is designed to be
- * public and is governed by Row Level Security. Do NOT paste the service_role
- * key (that one bypasses security and belongs only in the Edge Function).
+ * The project URL and anon key live in config.js (loaded before this file),
+ * NOT here — so that editing app.js can never wipe your credentials again.
+ * Copy config.example.js to config.js and fill in your values (from the
+ * Supabase dashboard: Project Settings -> API). The anon key is safe to commit
+ * — it is public by design and governed by Row Level Security. The service_role
+ * key must never appear in any frontend file.
  */
-const SUPABASE_URL = "https://YOUR-PROJECT-REF.supabase.co";
-const SUPABASE_ANON_KEY = "YOUR-ANON-PUBLIC-KEY";
+const APP_CONFIG = window.APP_CONFIG || {};
+const SUPABASE_URL = APP_CONFIG.SUPABASE_URL;
+const SUPABASE_ANON_KEY = APP_CONFIG.SUPABASE_ANON_KEY;
+
+const configLooksValid =
+  typeof SUPABASE_URL === "string" &&
+  SUPABASE_URL.indexOf("supabase.co") !== -1 &&
+  SUPABASE_URL.indexOf("YOUR-PROJECT-REF") === -1 &&
+  typeof SUPABASE_ANON_KEY === "string" &&
+  SUPABASE_ANON_KEY.length > 20 &&
+  SUPABASE_ANON_KEY.indexOf("YOUR-ANON") === -1;
 
 const { createClient } = window.supabase;
-const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const sb = configLooksValid ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
 /* ---- App state ---------------------------------------------------------- */
 let currentGardenId = null;
@@ -949,6 +960,19 @@ document.addEventListener("DOMContentLoaded", () => {
   // Register the service worker (offline app shell). Harmless if unsupported.
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("sw.js").catch(err => console.warn("SW registration failed:", err));
+  }
+
+  // If config.js is missing or still holds placeholder values, sb is null.
+  // Say so plainly, rather than letting it surface later as a misleading
+  // "couldn't send a sign-in code" message.
+  if (!sb) {
+    console.error("Supabase config missing. Create config.js from config.example.js and fill in your values.");
+    const msg = document.getElementById("splash-message");
+    if (msg) msg.textContent = "App configuration is missing. config.js was not found or still has placeholder values — add your Supabase URL and anon key to config.js, then reload.";
+    const retry = document.getElementById("splash-retry");
+    if (retry) retry.classList.add("hidden");
+    showView("splash");
+    return;
   }
 
   // --- Sign-in screen ---

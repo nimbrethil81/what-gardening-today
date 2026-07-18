@@ -2,7 +2,7 @@
 // Changing it forces the browser to treat this as a new service worker,
 // which clears out old cached files and lets your update actually reach
 // the installed app on your phone.
-const CACHE_NAME = 'gardening-v5';
+const CACHE_NAME = 'gardening-v6';
 
 // Scope-relative paths (no leading slash) so they resolve correctly whether the
 // app is served from /what-gardening-today/ or /what-gardening-today-dev/.
