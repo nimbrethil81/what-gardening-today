@@ -28,6 +28,9 @@ body {
   max-width: 440px;
 }
 
+/* --- GENERIC UTILITY --- */
+.hidden { display: none !important; }
+
 /* --- TYPOGRAPHY --- */
 h1, h2, h3 { margin: 0; font-weight: 700; }
 
@@ -178,6 +181,12 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
   border-color: var(--brand-green);
   background: var(--brand-green);
   color: #FFFFFF;
+}
+
+/* A completed task fades to half-opacity as its "done" signal. Remove its
+   swipe-to-reveal Hide action so it can't show through the translucent card. */
+.task-card-wrapper.completed .task-hide-action {
+  display: none;
 }
 
 /* --- MY GARDEN: CATEGORY TILES --- */
@@ -523,3 +532,98 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
 
 .restore-task-btn:active { transform: scale(0.96); }
 
+/* --- SIGN OUT (in the settings modal) --- */
+.signout-row {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-color);
+}
+
+.signout-btn {
+  width: 100%;
+  background: none;
+  border: 1.5px solid var(--accent-red);
+  color: var(--accent-red);
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 11px;
+  cursor: pointer;
+}
+
+.signout-btn:active { transform: scale(0.99); }
+
+/* --- FULL-SCREEN AUTH / SETUP / SPLASH VIEWS --- */
+.fullscreen-view {
+  width: 100%;
+  max-width: 440px;
+  min-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.auth-card {
+  width: 100%;
+  background: var(--bg-card);
+  border-radius: 18px;
+  padding: 28px 22px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+  box-sizing: border-box;
+}
+
+.auth-brand { font-size: 44px; text-align: center; line-height: 1; }
+.auth-title { font-size: 22px; text-align: center; margin: 10px 0 6px; }
+.auth-subtitle { font-size: 14px; color: var(--text-muted); text-align: center; margin: 0 0 18px; line-height: 1.45; }
+.auth-sent { font-size: 14px; color: var(--text-main); margin: 4px 0 6px; line-height: 1.45; }
+.auth-error { color: var(--accent-red); font-size: 13px; margin: 10px 2px 0; min-height: 1em; line-height: 1.4; }
+
+.text-btn {
+  background: none;
+  border: none;
+  color: var(--accent-blue);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 10px;
+  width: 100%;
+  margin-top: 8px;
+}
+
+.secondary-action-btn {
+  width: 100%;
+  background: var(--bg-card);
+  color: var(--brand-green);
+  font-weight: 600;
+  border: 2px solid var(--brand-green);
+  padding: 12px;
+  border-radius: 12px;
+  font-size: 15px;
+  cursor: pointer;
+  margin-top: 10px;
+  transition: transform 0.1s ease;
+}
+
+.secondary-action-btn:active { transform: scale(0.98); }
+.secondary-action-btn:disabled { border-color: #D1D1D6; color: #8E8E93; cursor: not-allowed; }
+
+.setup-or {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  margin: 14px 0;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.setup-location-confirm {
+  background: var(--brand-light);
+  color: var(--brand-green);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+  margin: 14px 0 0;
+}

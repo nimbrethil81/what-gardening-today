@@ -1,787 +1,1027 @@
-const API_URL = "https://script.google.com/macros/s/AKfycbwDA5U9Ve0EIcfDbtOnwhGCukR-2WuNLWL_xm0zj3PC5mlR7-IGAecli9E2Bao5Nix6/exec";
+/* ==========================================================================
+ *  What Gardening Today? — frontend (v2.0)
+ *
+ *  Talks to Supabase, not the old Apps Script. The daily view goes through the
+ *  `today` Edge Function (weather + tasks in one call); everything else is a
+ *  direct, Row-Level-Security-governed read or write via supabase-js.
+ *
+ *  On open, a small gate decides what to show:
+ *    - not signed in            -> the sign-in screen
+ *    - signed in, no garden yet -> the first-run garden setup screen
+ *    - signed in, has a garden  -> the app (Today, My Garden), fed from Supabase
+ * ========================================================================== */
 
-// --- LOCAL MEMORY STATE ---
-let globalDictionary = [];
-let userInventory = [];
+/* ---- Supabase connection -------------------------------------------------
+ * Fill these in from your Supabase dashboard: Project Settings -> API.
+ * The anon / publishable key is SAFE to include here — it is designed to be
+ * public and is governed by Row Level Security. Do NOT paste the service_role
+ * key (that one bypasses security and belongs only in the Edge Function).
+ */
+const SUPABASE_URL = "https://YOUR-PROJECT-REF.supabase.co";
+const SUPABASE_ANON_KEY = "YOUR-ANON-PUBLIC-KEY";
+
+const { createClient } = window.supabase;
+const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+/* ---- App state ---------------------------------------------------------- */
+let currentGardenId = null;
+let routedUserId = undefined;      // guards against redundant re-routing on focus
+let pendingSigninEmail = null;
+
+let globalDictionary = [];         // picker catalogue: {Category, Suggested_Name, blueprint_id}
+let userInventory = [];            // {item_id, friendly_name, category, blueprint_name}
 let selectedCategoryRef = null;
-let selectedSubItemObj = null; // Stores the actual dictionary row object
+let selectedSubItemObj = null;
+
+// Location captured on the setup screen
+let setupLat = null;
+let setupLon = null;
+
+// Display order for inventory category groups (mirrors the picker tiles)
+const CATEGORY_ORDER = [
+  "Lawn", "Beds", "Trees & shrubs", "Plants & flowers",
+  "Veg & herbs", "Garden structures", "Tools"
+];
 
 // --- HIDE-THIS-TASK STATE ---
 const HIDE_REVEAL_WIDTH = 76; // px — must match .task-hide-action's width in style.css
-let currentlyRevealedWrapper = null; // the one task card currently swiped open, if any
-let dragState = null;                // in-progress swipe gesture, or null when idle
+let currentlyRevealedWrapper = null;
+let dragState = null;
 let undoToastTimeout = null;
 let undoToastTaskId = null;
 
-// ------------------------------
-// ------------------------------
-// LOAD ALL DATA FROM BACKEND
-// ------------------------------
-async function loadAppData() {
-  try {
-    const currentMonth = new Date().getMonth() + 1;
-    const url = `${API_URL}?action=get_all&month=${currentMonth}&t=${Date.now()}`;
-    const response = await fetch(url, { cache: "no-store" });
-    const json = await response.json();
 
-    if (json.status !== "success") {
-      console.error("Backend error:", json);
-      document.getElementById("task-container").innerHTML = 'Backend returned an error.';
-      return;
-    }
+/* ==========================================================================
+ *  THE GATE: which screen do we show?
+ * ========================================================================== */
 
-    // 1. Update Global State (WITH PROPER CASING MAPPING)
-    const rawCategories = json.categories || [];
-    globalDictionary = rawCategories.map(item => ({
-        Category: item.category || '',
-        Suggested_Name: item.suggested_name || '',
-        Default_Asset_ID_Prefix: item.prefix || ''
-    }));
-    
-    userInventory = json.inventory || [];
-    const tasks = json.tasks || [];
-
-    // 2. Render UI using your ACTUAL function names
-    renderTaskCards(tasks);
-    renderGroupedInventory();
-
-  } catch (err) {
-    console.error("Fetch failed:", err);
-    const taskContainer = document.getElementById("task-container");
-    if (taskContainer) {
-        taskContainer.innerHTML = 'Unable to load data from server.';
-    }
-  }
+function showView(which) {
+  ["splash", "signin", "setup"].forEach(v => {
+    const el = document.getElementById("view-" + v);
+    if (el) el.classList.toggle("hidden", v !== which);
+  });
+  document.getElementById("app-root").classList.toggle("hidden", which !== "app");
 }
 
-// --- NAVIGATION LOGIC ---
-function switchTab(viewId, element) {
-  // 1. Toggle nav active state
-  document.querySelectorAll('.nav-item').forEach(btn => btn.classList.remove('active'));
-  element.classList.add('active');
+async function route() {
+  showView("splash");
+  setSplashMessage("");
 
-  // 2. Swap view panels
-  document.querySelectorAll('.view-section').forEach(section => section.classList.remove('active-view'));
-  document.getElementById(`view-${viewId}`).classList.add('active-view');
-
-  // 3. SMART REFRESH: If returning to the Today view, re-fetch the tasks!
-  if (viewId === 'today') {
-      fetchGardeningTasks();
-  }
-}
-
-// --- API FETCHERS ---
-async function fetchDictionary() {
-    try {
-        const response = await fetch(API_URL + "?action=get_dictionary");
-        const result = await response.json();
-        if(result.status === "success") {
-            // Normalise to PascalCase regardless of what casing the API returns
-            globalDictionary = result.data.map(item => ({
-                Category:                item.Category                || item.category                || '',
-                Suggested_Name:          item.Suggested_Name          || item.suggested_name          || '',
-                Default_Asset_ID_Prefix: item.Default_Asset_ID_Prefix || item.prefix                  || ''
-            }));
-        }
-    } catch (error) {
-        console.error("Error fetching dictionary:", error);
-    }
-}
-
-async function fetchGardeningTasks() {
-    const taskContainer = document.getElementById("task-container");
-    taskContainer.innerHTML = '<div class="loading-spinner-box">Gathering seasonal rules...</div>';
-
-    try {
-        // 2. Query data based on the client's current system calendar month (1-12)
-
-const currentMonth = new Date().getMonth() + 1;
-
-// Add a cache-buster timestamp to force Safari to fetch fresh data
-const cacheBuster = new Date().getTime();
-const targetRequestUrl = `${API_URL}?month=${currentMonth}&t=${cacheBuster}`;
-
-// Add the 'no-store' directive for modern browsers
-const response = await fetch(targetRequestUrl, { cache: 'no-store' });
-
-        const result = await response.json();
-        
-        if (result.status === "success") {
-            renderTaskCards(result.data);
-        } else {
-            throw new Error(result.message || "Unknown API Error");
-        }
-    } catch (error) {
-        console.error("API Pipeline Error:", error);
-        taskContainer.innerHTML = `<div class="loading-spinner-box" style="color:red;">Pipeline Error: ${error.message}</div>`;
-    }
-}
-
-async function fetchInventory() {
-    const inventoryList = document.getElementById('inventory-list');
-    inventoryList.innerHTML = '<div class="loading-spinner-box">Growing garden...</div>';
-
-    try {
-        const response = await fetch(API_URL + "?action=get_profile");
-        const result = await response.json();
-        if (result.status === "success") {
-            userInventory = result.data;
-            renderGroupedInventory();
-        }
-    } catch (error) {
-        console.error("Error fetching inventory:", error);
-        inventoryList.innerHTML = '<div class="loading-spinner-box" style="color:red;">Failed to load inventory.</div>';
-    }
-}
-// --- GEOLOCATION & WEATHER LOGIC ---
-function requestLocalWeather() {
-  if (!navigator.geolocation) {
-    updateWeatherFallback();
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) {
+    currentGardenId = null;
+    showSigninEmailStep();
+    showView("signin");
     return;
   }
 
-  navigator.geolocation.getCurrentPosition(
-    async (pos) => {
-      const lat = pos.coords.latitude;
-      const lon = pos.coords.longitude;
+  try {
+    const { data, error } = await sb.from("garden").select("id, name").limit(1);
+    if (error) throw error;
 
-      try {
-        const url = `${API_URL}?action=get_weather&lat=${lat}&lon=${lon}`;
-        const response = await fetch(url);
-        const json = await response.json();
-
-        if (json.status === "success") {
-  const temp = Math.round(json.data.main.temp);
-  const desc = json.data.weather[0].description;
-  const icon = json.data.weather[0].icon;
-
-  // Capitalise description
-  const niceDesc = desc.charAt(0).toUpperCase() + desc.slice(1);
-
-  document.getElementById("weather-temp").textContent = `${temp}°C`;
-  document.getElementById("weather-desc").textContent = niceDesc;
-
-  // Add icon
-  document.getElementById("weather-icon").src =
-    `https://openweathermap.org/img/wn/${icon}@2x.png`;
-}
- else {
-          updateWeatherFallback();
-        }
-      } catch (err) {
-        updateWeatherFallback();
-      }
-    },
-
-    // ❗ This was missing — without it, the widget never updates
-    (err) => {
-      console.warn("Geolocation blocked:", err);
-      updateWeatherFallback();
-    }
-  );
-}
-
-function updateWeatherFallback() {
-  document.getElementById("weather-temp").textContent = "--°C";
-  document.getElementById("weather-desc").textContent = "Weather unavailable";
-}
-
-
-function updateWeatherWidget(weatherData) {
-    // Selectors for your UI
-    const tempDisplay = document.querySelector('.weather-widget h1');
-    const conditionDisplay = document.querySelector('.weather-widget p');
-    
-    if (tempDisplay && conditionDisplay) {
-        // Round the temperature and grab the main condition (e.g., "Rain", "Clear")
-        const temp = Math.round(weatherData.main.temp);
-        const condition = weatherData.weather[0].main;
-        
-        // Simple mapping to add an emoji based on the condition
-        let emoji = "☁️";
-        if (condition === "Clear") emoji = "☀️";
-        if (condition === "Rain" || condition === "Drizzle") emoji = "🌧️";
-        
-        tempDisplay.innerHTML = `${temp}°C ${emoji}`;
-        conditionDisplay.textContent = weatherData.weather[0].description;
-    }
-}
-
-// --- UI RENDERING LOGIC ---
-function renderTaskCards(tasks) {
-    const taskContainer = document.getElementById("task-container");
-    taskContainer.innerHTML = "";
-    currentlyRevealedWrapper = null; // any previous swipe-open state no longer applies
-
-    if (tasks.length === 0) {
-        taskContainer.innerHTML = `<div class="loading-spinner-box">✨ Your garden is up to date!</div>`;
-        return;
+    if (!data || data.length === 0) {
+      showView("setup");
+      return;
     }
 
-    tasks.forEach(task => {
-        const wrapper = document.createElement("div");
-        wrapper.className = "task-card-wrapper";
+    currentGardenId = data[0].id;
+    showView("app");
+    await loadCatalogue();
+    loadToday();
+    loadInventory();
+  } catch (err) {
+    console.error("Routing failed:", err);
+    setSplashMessage("Something went wrong loading your garden. Check your connection, then tap Retry.", true);
+    showView("splash");
+  }
+}
 
-        // Build the modern UI card, now sitting on top of a Hide action
-        // that's revealed by swiping the card sideways.
-        wrapper.innerHTML = `
-            <div class="task-hide-action">
-                <button class="hide-task-btn" data-task-id="${task.task_id}">Hide</button>
-            </div>
-            <div class="task-card">
-                <div class="task-info">
-                    <h3>${task.task_name}</h3>
-                    <p>${task.category} • ${task.instruction}</p>
-                </div>
-                <button class="task-action-btn task-check" data-task-id="${task.task_id}" data-asset-id="${task.asset_id}">✓</button>
-            </div>
-        `;
-        taskContainer.appendChild(wrapper);
+function setSplashMessage(text, showRetry) {
+  const msg = document.getElementById("splash-message");
+  const retry = document.getElementById("splash-retry");
+  if (msg) msg.textContent = text || "Loading…";
+  if (retry) retry.classList.toggle("hidden", !showRetry);
+}
+
+
+/* ==========================================================================
+ *  SIGN IN  (emailed 6-digit code, with the magic-link return handled too)
+ * ========================================================================== */
+
+function showSigninEmailStep() {
+  document.getElementById("signin-email-step").classList.remove("hidden");
+  document.getElementById("signin-code-step").classList.add("hidden");
+  document.getElementById("signin-error").textContent = "";
+  document.getElementById("signin-code-error").textContent = "";
+}
+
+function showSigninCodeStep() {
+  document.getElementById("signin-email-step").classList.add("hidden");
+  document.getElementById("signin-code-step").classList.remove("hidden");
+}
+
+async function handleSendCode() {
+  const email = document.getElementById("signin-email").value.trim();
+  const errEl = document.getElementById("signin-error");
+  errEl.textContent = "";
+
+  if (!email || email.indexOf("@") === -1) {
+    errEl.textContent = "Please enter a valid email address.";
+    return;
+  }
+
+  const btn = document.getElementById("signin-send-btn");
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Sending…";
+
+  try {
+    const redirect = window.location.origin + window.location.pathname;
+    const { error } = await sb.auth.signInWithOtp({
+      email,
+      options: { shouldCreateUser: false, emailRedirectTo: redirect }
     });
+    if (error) throw error;
+
+    pendingSigninEmail = email;
+    document.getElementById("signin-sent-to").textContent = email;
+    document.getElementById("signin-code").value = "";
+    showSigninCodeStep();
+  } catch (err) {
+    console.error("Sign-in send failed:", err);
+    const msg = String(err && err.message ? err.message : "").toLowerCase();
+    if (msg.indexOf("rate") !== -1 || (err && err.status === 429)) {
+      errEl.textContent = "You just asked for a code — check your inbox, or wait a minute before trying again.";
+    } else {
+      // Friendly / specific message (configurable — see docs/CONFIG_ITEMS.md #4)
+      errEl.textContent = "We couldn't send a sign-in code to that address. It may not be on the guest list — ask Dan for an invite.";
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
 }
 
-// Look up the canonical Suggested_Name for an asset using its ID prefix
-function getSuggestedName(assetId) {
-    // Strip the trailing _NNNN random suffix to recover the dictionary prefix
-    // e.g. "VEG_TOMATO_4821" → "VEG_TOMATO", "LAWN_1034" → "LAWN"
-    const prefix = assetId.replace(/_\d{4}$/, '');
-    const entry = globalDictionary.find(d => d.Default_Asset_ID_Prefix === prefix);
-    return entry ? entry.Suggested_Name : null;
+async function handleVerifyCode() {
+  const code = document.getElementById("signin-code").value.trim();
+  const errEl = document.getElementById("signin-code-error");
+  errEl.textContent = "";
+
+  if (!code) { errEl.textContent = "Enter the code from your email."; return; }
+  if (!pendingSigninEmail) { showSigninEmailStep(); return; }
+
+  const btn = document.getElementById("signin-verify-btn");
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Signing in…";
+
+  try {
+    const { error } = await sb.auth.verifyOtp({ email: pendingSigninEmail, token: code, type: "email" });
+    if (error) throw error;
+    // onAuthStateChange (SIGNED_IN) will fire and route() us onward.
+  } catch (err) {
+    console.error("Verify failed:", err);
+    errEl.textContent = "That code didn't work. Check it and try again, or request a new one.";
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
+}
+
+async function handleSignOut() {
+  try { await sb.auth.signOut(); } catch (e) { console.error("Sign out error:", e); }
+  closeHiddenTasksModal();
+  // onAuthStateChange (SIGNED_OUT) will route() us back to the sign-in screen.
+}
+
+
+/* ==========================================================================
+ *  FIRST-RUN GARDEN SETUP  (a new friend sees this; you skip it)
+ * ========================================================================== */
+
+async function handleFindPostcode() {
+  const pc = document.getElementById("setup-postcode").value.trim();
+  const errEl = document.getElementById("setup-error");
+  const confirmEl = document.getElementById("setup-location-confirm");
+  errEl.textContent = "";
+
+  if (!pc) { errEl.textContent = "Enter a postcode."; return; }
+
+  const btn = document.getElementById("setup-find-btn");
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Finding…";
+
+  try {
+    const res = await fetch("https://api.postcodes.io/postcodes/" + encodeURIComponent(pc));
+    if (!res.ok) throw new Error("not found");
+    const json = await res.json();
+    const r = json.result;
+    setupLat = r.latitude;
+    setupLon = r.longitude;
+    const area = [r.admin_ward || r.parish, r.admin_district].filter(Boolean).join(", ");
+    confirmEl.textContent = "📍 " + (area || "Location found");
+    confirmEl.classList.remove("hidden");
+  } catch (err) {
+    setupLat = null; setupLon = null;
+    confirmEl.classList.add("hidden");
+    errEl.textContent = "Hmm, we couldn't find that postcode. Check it and try again.";
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+    validateSetup();
+  }
+}
+
+function handleUseLocation() {
+  const errEl = document.getElementById("setup-error");
+  const confirmEl = document.getElementById("setup-location-confirm");
+  errEl.textContent = "";
+
+  if (!navigator.geolocation) {
+    errEl.textContent = "Your device can't share its location — enter a postcode instead.";
+    return;
+  }
+
+  const btn = document.getElementById("setup-locate-btn");
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Locating…";
+
+  navigator.geolocation.getCurrentPosition(async (pos) => {
+    setupLat = pos.coords.latitude;
+    setupLon = pos.coords.longitude;
+
+    let area = "Current location";
+    try {
+      const res = await fetch(`https://api.postcodes.io/postcodes?lon=${setupLon}&lat=${setupLat}`);
+      if (res.ok) {
+        const j = await res.json();
+        if (j.result && j.result[0]) {
+          const r = j.result[0];
+          area = [r.admin_ward || r.parish, r.admin_district].filter(Boolean).join(", ") || area;
+        }
+      }
+    } catch (e) { /* keep the generic label */ }
+
+    confirmEl.textContent = "📍 " + area;
+    confirmEl.classList.remove("hidden");
+    btn.disabled = false;
+    btn.textContent = orig;
+    validateSetup();
+  }, (err) => {
+    console.warn("Geolocation blocked:", err);
+    errEl.textContent = "Couldn't get your location — enter a postcode instead.";
+    btn.disabled = false;
+    btn.textContent = orig;
+  });
+}
+
+function validateSetup() {
+  const name = document.getElementById("setup-name").value.trim();
+  const ready = !!name && setupLat !== null && setupLon !== null;
+  document.getElementById("setup-create-btn").disabled = !ready;
+}
+
+async function handleCreateGarden() {
+  const name = document.getElementById("setup-name").value.trim();
+  const errEl = document.getElementById("setup-error");
+  errEl.textContent = "";
+
+  if (!name || setupLat === null || setupLon === null) return;
+
+  const btn = document.getElementById("setup-create-btn");
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Creating…";
+
+  try {
+    const { data, error } = await sb.rpc("create_garden", {
+      p_name: name,
+      p_latitude: setupLat,
+      p_longitude: setupLon
+    });
+    if (error) throw error;
+
+    currentGardenId = data; // create_garden returns the new garden's id
+    showView("app");
+    await loadCatalogue();
+    loadToday();
+    loadInventory();
+  } catch (err) {
+    console.error("Create garden failed:", err);
+    errEl.textContent = "Couldn't create your garden. Check your connection and try again.";
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
+}
+
+
+/* ==========================================================================
+ *  NAVIGATION
+ * ========================================================================== */
+
+function switchTab(viewId, element) {
+  document.querySelectorAll(".nav-item").forEach(btn => btn.classList.remove("active"));
+  element.classList.add("active");
+
+  document.querySelectorAll(".view-section").forEach(section => section.classList.remove("active-view"));
+  document.getElementById(`view-${viewId}`).classList.add("active-view");
+
+  // Returning to Today re-runs the daily call, so the list is always current.
+  if (viewId === "today") loadToday();
+}
+
+
+/* ==========================================================================
+ *  TODAY  (weather + tasks, via the `today` Edge Function)
+ * ========================================================================== */
+
+async function loadToday() {
+  if (!currentGardenId) return;
+  const taskContainer = document.getElementById("task-container");
+  taskContainer.innerHTML = '<div class="loading-spinner-box">Gathering seasonal rules...</div>';
+
+  try {
+    const { data, error } = await sb.functions.invoke("today", {
+      body: { garden_id: currentGardenId }
+    });
+    if (error) throw error;
+
+    renderWeather(data.weather);
+    renderTaskCards(data.tasks || []);
+  } catch (err) {
+    console.error("Today failed:", err);
+    renderWeather(null);
+    taskContainer.innerHTML = '<div class="loading-spinner-box">Couldn\'t reach your garden. Check your connection and try again.</div>';
+  }
+}
+
+function renderWeather(weather) {
+  const tempEl = document.getElementById("weather-temp");
+  const descEl = document.getElementById("weather-desc");
+  const iconEl = document.getElementById("weather-icon");
+
+  if (weather && weather.available) {
+    tempEl.textContent = `${weather.temp_c}°C`;
+    const d = weather.description || "";
+    descEl.textContent = d ? d.charAt(0).toUpperCase() + d.slice(1) : "";
+    if (weather.icon) {
+      iconEl.src = `https://openweathermap.org/img/wn/${weather.icon}@2x.png`;
+      iconEl.style.display = "";
+    } else {
+      iconEl.removeAttribute("src");
+    }
+  } else {
+    tempEl.textContent = "--°C";
+    descEl.textContent = "Weather unavailable";
+    iconEl.removeAttribute("src");
+  }
+}
+
+function renderTaskCards(tasks) {
+  const taskContainer = document.getElementById("task-container");
+  taskContainer.innerHTML = "";
+  currentlyRevealedWrapper = null;
+
+  if (tasks.length === 0) {
+    taskContainer.innerHTML = `<div class="loading-spinner-box">✨ Your garden is up to date!</div>`;
+    return;
+  }
+
+  tasks.forEach(task => {
+    const wrapper = document.createElement("div");
+    wrapper.className = "task-card-wrapper";
+    wrapper.innerHTML = `
+      <div class="task-hide-action">
+        <button class="hide-task-btn" data-task-id="${task.task_id}">Hide</button>
+      </div>
+      <div class="task-card">
+        <div class="task-info">
+          <h3>${task.name}</h3>
+          <p>${task.category} • ${task.instruction}</p>
+        </div>
+        <button class="task-action-btn task-check" data-task-id="${task.task_id}">✓</button>
+      </div>
+    `;
+    taskContainer.appendChild(wrapper);
+  });
+}
+
+
+/* ==========================================================================
+ *  MY GARDEN — inventory
+ * ========================================================================== */
+
+async function loadInventory() {
+  if (!currentGardenId) return;
+  const inventoryList = document.getElementById("inventory-list");
+  inventoryList.innerHTML = '<div class="loading-spinner-box">Growing garden...</div>';
+
+  try {
+    const { data, error } = await sb
+      .from("garden_item")
+      .select("id, friendly_name, legacy_category, blueprint:blueprint_id ( name )")
+      .eq("garden_id", currentGardenId)
+      .is("removed_at", null)
+      .order("id");
+    if (error) throw error;
+
+    userInventory = (data || []).map(r => ({
+      item_id: r.id,
+      friendly_name: r.friendly_name || "",
+      category: r.legacy_category || "Other",
+      blueprint_name: (r.blueprint && r.blueprint.name) ? r.blueprint.name : ""
+    }));
+    renderGroupedInventory();
+  } catch (err) {
+    console.error("Inventory failed:", err);
+    inventoryList.innerHTML = '<div class="loading-spinner-box">Couldn\'t load your garden. Check your connection.</div>';
+  }
 }
 
 function renderGroupedInventory() {
-    const displayArea = document.getElementById('inventory-list');
-    displayArea.innerHTML = '';
+  const displayArea = document.getElementById("inventory-list");
+  displayArea.innerHTML = "";
 
-    if(userInventory.length === 0) {
-        displayArea.innerHTML = '<p class="form-instruction">Your garden is empty.</p>';
-        return;
-    }
+  if (userInventory.length === 0) {
+    displayArea.innerHTML = '<p class="form-instruction">Your garden is empty.</p>';
+    return;
+  }
 
-    // Group items by category
-    const groupedItems = {};
-    userInventory.forEach(item => {
-        if(!groupedItems[item.category]) {
-            groupedItems[item.category] = [];
-        }
-        groupedItems[item.category].push(item);
+  const groupedItems = {};
+  userInventory.forEach(item => {
+    if (!groupedItems[item.category]) groupedItems[item.category] = [];
+    groupedItems[item.category].push(item);
+  });
+
+  const orderedNames = Object.keys(groupedItems).sort((a, b) => {
+    const ia = CATEGORY_ORDER.indexOf(a);
+    const ib = CATEGORY_ORDER.indexOf(b);
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+  });
+
+  orderedNames.forEach(categoryName => {
+    const items = groupedItems[categoryName];
+    const groupDiv = document.createElement("div");
+    groupDiv.className = "inventory-group";
+
+    const groupTitle = document.createElement("div");
+    groupTitle.className = "inventory-group-title";
+    groupTitle.innerText = categoryName;
+    groupDiv.appendChild(groupTitle);
+
+    items.forEach(item => {
+      const cardDiv = document.createElement("div");
+      cardDiv.className = "inventory-item-card";
+
+      const displayName = item.blueprint_name || item.friendly_name || "Item";
+      // Show the user's custom reference only when it differs from the item's name
+      const customRef = (item.friendly_name && item.blueprint_name && item.friendly_name !== item.blueprint_name)
+        ? item.friendly_name
+        : null;
+
+      cardDiv.innerHTML = `
+        <div>
+          <strong>${displayName}</strong>
+          ${customRef ? `<div class="inventory-item-meta">📌 ${customRef}</div>` : ""}
+        </div>
+        <button class="remove-asset-btn" data-item-id="${item.item_id}" data-friendly-name="${displayName}">✕</button>
+      `;
+      groupDiv.appendChild(cardDiv);
     });
 
-    for (const [categoryName, items] of Object.entries(groupedItems)) {
-        const groupDiv = document.createElement('div');
-        groupDiv.className = 'inventory-group';
-        
-        const groupTitle = document.createElement('div');
-        groupTitle.className = 'inventory-group-title';
-        groupTitle.innerText = categoryName;
-        groupDiv.appendChild(groupTitle);
-
-        items.forEach(item => {
-            const cardDiv = document.createElement('div');
-            cardDiv.className = 'inventory-item-card';
-
-            const suggestedName = getSuggestedName(item.asset_id);
-            const displayName   = suggestedName || item.friendly_name || item.asset_id;
-            // Only show the user's custom reference if it differs from the suggested name
-            const customRef     = (item.friendly_name && suggestedName && item.friendly_name !== suggestedName)
-                                    ? item.friendly_name
-                                    : null;
-
-            cardDiv.innerHTML = `
-                <div>
-                    <strong>${displayName}</strong>
-                    ${customRef ? `<div class="inventory-item-meta">📌 ${customRef}</div>` : ''}
-                </div>
-                <button class="remove-asset-btn" data-asset-id="${item.asset_id}" data-friendly-name="${displayName}">✕</button>
-            `;
-            groupDiv.appendChild(cardDiv);
-        });
-
-        displayArea.appendChild(groupDiv);
-    }
+    displayArea.appendChild(groupDiv);
+  });
 }
 
-// --- FORM INTERACTION LOGIC (MY GARDEN) ---
-function selectCategory(categoryKey, element) {
-    document.querySelectorAll('.tile-btn').forEach(tile => tile.classList.remove('selected'));
-    element.classList.add('selected');
-    
-    selectedCategoryRef = categoryKey;
-    selectedSubItemObj = null;
 
-    const pillBox = document.getElementById('pill-box');
-    pillBox.innerHTML = '';
+/* ==========================================================================
+ *  MY GARDEN — the picker (catalogue) and adding an item
+ * ========================================================================== */
 
-    // Filter dictionary based on actual Google Sheet categories
-    const relevantItems = globalDictionary.filter(item => item.Category === categoryKey);
+async function loadCatalogue() {
+  try {
+    const { data, error } = await sb
+      .from("blueprint")
+      .select("id, name, retired_at, blueprint_category ( category:category_id ( name ) )")
+      .is("retired_at", null)
+      .order("name");
+    if (error) throw error;
 
-  // ADD THIS NEW LINE TO SORT THE ITEMS ALPHABETICALLY:
-  relevantItems.sort((a, b) => a.Suggested_Name.localeCompare(b.Suggested_Name));
-  
-    if(relevantItems.length === 0) {
-        pillBox.innerHTML = '<div class="pill-placeholder">Loading items... (or none found)</div>';
-        validateForm();
-        return;
-    }
-
-    relevantItems.forEach(item => {
-        const pill = document.createElement('button');
-        pill.className = 'item-pill';
-        pill.innerText = item.Suggested_Name;
-        pill.onclick = () => {
-            document.querySelectorAll('.item-pill').forEach(p => p.classList.remove('selected'));
-            pill.classList.add('selected');
-            selectedSubItemObj = item; // Store full object to grab prefix later
-            validateForm();
-        };
-        pillBox.appendChild(pill);
+    globalDictionary = [];
+    (data || []).forEach(bp => {
+      (bp.blueprint_category || []).forEach(bc => {
+        const cn = bc.category && bc.category.name;
+        if (cn) globalDictionary.push({ Category: cn, Suggested_Name: bp.name, blueprint_id: bp.id });
+      });
     });
+  } catch (err) {
+    console.error("Catalogue failed:", err);
+  }
+}
 
+function selectCategory(categoryKey, element) {
+  document.querySelectorAll(".tile-btn").forEach(tile => tile.classList.remove("selected"));
+  element.classList.add("selected");
+
+  selectedCategoryRef = categoryKey;
+  selectedSubItemObj = null;
+
+  const pillBox = document.getElementById("pill-box");
+  pillBox.innerHTML = "";
+
+  const relevantItems = globalDictionary.filter(item => item.Category === categoryKey);
+  relevantItems.sort((a, b) => a.Suggested_Name.localeCompare(b.Suggested_Name));
+
+  if (relevantItems.length === 0) {
+    pillBox.innerHTML = '<div class="pill-placeholder">No items in this category yet.</div>';
     validateForm();
+    return;
+  }
+
+  relevantItems.forEach(item => {
+    const pill = document.createElement("button");
+    pill.className = "item-pill";
+    pill.innerText = item.Suggested_Name;
+    pill.onclick = () => {
+      document.querySelectorAll(".item-pill").forEach(p => p.classList.remove("selected"));
+      pill.classList.add("selected");
+      selectedSubItemObj = item;
+      validateForm();
+    };
+    pillBox.appendChild(pill);
+  });
+
+  validateForm();
 }
 
 function validateForm() {
-    const submitBtn = document.getElementById('add-asset-btn');
-    if(selectedCategoryRef && selectedSubItemObj) {
-        submitBtn.disabled = false;
-    } else {
-        submitBtn.disabled = true;
-    }
+  const submitBtn = document.getElementById("add-asset-btn");
+  submitBtn.disabled = !(selectedCategoryRef && selectedSubItemObj);
 }
 
-// --- POST REQUESTS ---
 async function handleAddAsset() {
-    const customNameInput = document.getElementById('custom-name').value.trim();
-    const btn = document.getElementById('add-asset-btn');
-    
-    if (!selectedCategoryRef || !selectedSubItemObj) return;
+  const customName = document.getElementById("custom-name").value.trim();
+  const btn = document.getElementById("add-asset-btn");
+  if (!selectedCategoryRef || !selectedSubItemObj) return;
 
-    // Use custom name if provided, otherwise default to the dictionary's suggested name
-    const finalFriendlyName = customNameInput.length > 0 ? customNameInput : selectedSubItemObj.Suggested_Name;
+  btn.disabled = true;
+  btn.textContent = "Planting...";
 
-    // Generate unique ID based on the dictionary prefix
-    const uniqueAssetId = `${selectedSubItemObj.Default_Asset_ID_Prefix}_${Math.floor(1000 + Math.random() * 9000)}`;
+  try {
+    const { error } = await sb.from("garden_item").insert({
+      garden_id: currentGardenId,
+      blueprint_id: selectedSubItemObj.blueprint_id,
+      friendly_name: customName.length > 0 ? customName : null,
+      legacy_category: selectedCategoryRef   // the tile it was added under -> grouping
+    });
+    if (error) throw error;
 
-    btn.disabled = true;
-    btn.textContent = "Planting...";
+    document.getElementById("custom-name").value = "";
+    document.querySelectorAll(".item-pill").forEach(p => p.classList.remove("selected"));
+    selectedSubItemObj = null;
+    validateForm();
 
-    try {
-        const response = await fetch(API_URL, {
-            method: "POST",
-            body: JSON.stringify({
-                action: "add_asset",
-                asset_id: uniqueAssetId,
-                category: selectedCategoryRef,
-                friendly_name: finalFriendlyName
-            })
-        });
+    btn.textContent = "Added! 🎉";
+    setTimeout(() => { btn.textContent = "Add to My Garden"; }, 2000);
 
-        const result = await response.json();
-        if(result.status === "success") {
-            // Clear Form
-            document.getElementById('custom-name').value = '';
-            document.querySelectorAll('.item-pill').forEach(p => p.classList.remove('selected'));
-            selectedSubItemObj = null;
-            validateForm();
-            
-            btn.textContent = "Added! 🎉";
-            setTimeout(() => { btn.textContent = "Add to My Garden"; }, 2000);
-            
-            // Refresh Inventory List
-            fetchInventory();
-        }
-    } catch (error) {
-        console.error("Add Asset Error:", error);
-        btn.textContent = "Network Error.";
-        btn.style.backgroundColor = "#f44336";
-        setTimeout(() => { 
-            btn.textContent = "Add to My Garden"; 
-            btn.style.backgroundColor = ""; 
-            btn.disabled = false;
-        }, 3000);
-    }
+    loadInventory();
+    loadToday();
+  } catch (error) {
+    console.error("Add item error:", error);
+    btn.textContent = "Couldn't add — try again";
+    btn.style.backgroundColor = "#f44336";
+    setTimeout(() => {
+      btn.textContent = "Add to My Garden";
+      btn.style.backgroundColor = "";
+      btn.disabled = false;
+    }, 3000);
+  }
 }
 
-// --- REMOVE ASSET LOGIC ---
+
+/* ==========================================================================
+ *  MY GARDEN — removing an item (two-tap confirm, then soft delete)
+ * ========================================================================== */
+
 function handleRemoveAsset(event) {
-    const btn = event.target.closest('.remove-asset-btn');
-    if (!btn) return;
+  const btn = event.target.closest(".remove-asset-btn");
+  if (!btn) return;
 
-    if (btn.dataset.confirming === 'true') {
-        // Second tap — execute removal
-        const assetId = btn.getAttribute('data-asset-id');
-        executeRemoveAsset(assetId, btn);
-    } else {
-        // First tap — ask for confirmation
-        btn.dataset.confirming = 'true';
-        btn.textContent = 'Remove?';
-        btn.classList.add('confirming');
+  if (btn.dataset.confirming === "true") {
+    const itemId = btn.getAttribute("data-item-id");
+    executeRemoveAsset(itemId, btn);
+  } else {
+    btn.dataset.confirming = "true";
+    btn.textContent = "Remove?";
+    btn.classList.add("confirming");
 
-        // Auto-reset after 3 seconds if no second tap
-        setTimeout(() => {
-            if (btn.dataset.confirming === 'true') {
-                btn.dataset.confirming = 'false';
-                btn.textContent = '✕';
-                btn.classList.remove('confirming');
-            }
-        }, 3000);
-    }
+    setTimeout(() => {
+      if (btn.dataset.confirming === "true") {
+        btn.dataset.confirming = "false";
+        btn.textContent = "✕";
+        btn.classList.remove("confirming");
+      }
+    }, 3000);
+  }
 }
 
-async function executeRemoveAsset(assetId, btn) {
-    btn.disabled = true;
-    btn.textContent = '⏳';
+async function executeRemoveAsset(itemId, btn) {
+  btn.disabled = true;
+  btn.textContent = "⏳";
 
-    try {
-        const response = await fetch(API_URL, {
-            method: 'POST',
-            body: JSON.stringify({
-                action: 'remove_asset',
-                asset_id: assetId
-            })
-        });
+  try {
+    const { error } = await sb
+      .from("garden_item")
+      .update({ removed_at: new Date().toISOString() })
+      .eq("id", itemId)
+      .eq("garden_id", currentGardenId);
+    if (error) throw error;
 
-        const result = await response.json();
-        if (result.status === 'success') {
-            btn.textContent = '✓';
-            btn.classList.remove('confirming');
-            btn.classList.add('removed');
+    btn.textContent = "✓";
+    btn.classList.remove("confirming");
+    btn.classList.add("removed");
 
-            // Refresh inventory and today's tasks after a short delay
-            setTimeout(() => {
-                fetchInventory();
-                fetchGardeningTasks();
-            }, 600);
-        } else {
-            throw new Error(result.message || 'Remove failed');
-        }
-    } catch (error) {
-        console.error('Remove Asset Error:', error);
-        btn.disabled = false;
-        btn.textContent = '✕';
-        btn.dataset.confirming = 'false';
-        btn.classList.remove('confirming');
-    }
+    setTimeout(() => {
+      loadInventory();
+      loadToday();
+    }, 600);
+  } catch (error) {
+    console.error("Remove item error:", error);
+    btn.disabled = false;
+    btn.textContent = "✕";
+    btn.dataset.confirming = "false";
+    btn.classList.remove("confirming");
+  }
 }
 
-// --- SWIPE-TO-REVEAL "HIDE" GESTURE ---
-// A horizontal drag on a task card slides it aside to reveal the Hide button
-// sitting underneath. Direction-locked against startY/startX so a vertical
-// scroll gesture is left alone and never mistaken for a swipe.
+
+/* ==========================================================================
+ *  SWIPE-TO-REVEAL "HIDE" GESTURE  (unchanged — purely visual)
+ * ========================================================================== */
 
 function onCardPointerDown(e) {
-    const wrapper = e.target.closest('.task-card-wrapper');
-    if (!wrapper) return;
+  const wrapper = e.target.closest(".task-card-wrapper");
+  if (!wrapper) return;
+  if (wrapper.classList.contains("completed")) return; // completed cards don't swipe
 
-    const card = wrapper.querySelector('.task-card');
-    const wasRevealed = wrapper.classList.contains('revealed');
+  const card = wrapper.querySelector(".task-card");
+  const wasRevealed = wrapper.classList.contains("revealed");
 
-    dragState = {
-        wrapper, card,
-        startX: e.clientX,
-        startY: e.clientY,
-        startTransform: wasRevealed ? -HIDE_REVEAL_WIDTH : 0,
-        locked: false,
-        isHorizontal: false,
-        lastX: undefined
-    };
-    card.style.transition = 'none';
+  dragState = {
+    wrapper, card,
+    startX: e.clientX,
+    startY: e.clientY,
+    startTransform: wasRevealed ? -HIDE_REVEAL_WIDTH : 0,
+    locked: false,
+    isHorizontal: false,
+    lastX: undefined
+  };
+  card.style.transition = "none";
 }
 
 function onCardPointerMove(e) {
-    if (!dragState) return;
+  if (!dragState) return;
 
-    const deltaX = e.clientX - dragState.startX;
-    const deltaY = e.clientY - dragState.startY;
+  const deltaX = e.clientX - dragState.startX;
+  const deltaY = e.clientY - dragState.startY;
 
-    if (!dragState.locked) {
-        if (Math.abs(deltaX) < 6 && Math.abs(deltaY) < 6) return; // not enough movement to decide yet
-        dragState.locked = true;
-        dragState.isHorizontal = Math.abs(deltaX) > Math.abs(deltaY);
-        if (!dragState.isHorizontal) {
-            // Vertical gesture — this is a page scroll, not our swipe. Hand it back.
-            dragState.card.style.transition = '';
-            dragState = null;
-            return;
-        }
+  if (!dragState.locked) {
+    if (Math.abs(deltaX) < 6 && Math.abs(deltaY) < 6) return;
+    dragState.locked = true;
+    dragState.isHorizontal = Math.abs(deltaX) > Math.abs(deltaY);
+    if (!dragState.isHorizontal) {
+      dragState.card.style.transition = "";
+      dragState = null;
+      return;
     }
+  }
 
-    if (!dragState.isHorizontal) return;
+  if (!dragState.isHorizontal) return;
 
-    let newX = dragState.startTransform + deltaX;
-    newX = Math.max(-HIDE_REVEAL_WIDTH, Math.min(0, newX));
-    dragState.card.style.transform = `translateX(${newX}px)`;
-    dragState.lastX = newX;
+  let newX = dragState.startTransform + deltaX;
+  newX = Math.max(-HIDE_REVEAL_WIDTH, Math.min(0, newX));
+  dragState.card.style.transform = `translateX(${newX}px)`;
+  dragState.lastX = newX;
 }
 
 function onCardPointerUp() {
-    if (!dragState || !dragState.isHorizontal) { dragState = null; return; }
+  if (!dragState || !dragState.isHorizontal) { dragState = null; return; }
 
-    const { wrapper, card } = dragState;
-    const finalX = dragState.lastX !== undefined ? dragState.lastX : dragState.startTransform;
-    card.style.transition = '';
+  const { wrapper, card } = dragState;
+  const finalX = dragState.lastX !== undefined ? dragState.lastX : dragState.startTransform;
+  card.style.transition = "";
 
-    if (finalX < -(HIDE_REVEAL_WIDTH / 2)) {
-        if (currentlyRevealedWrapper && currentlyRevealedWrapper !== wrapper) {
-            closeSwipeWrapper(currentlyRevealedWrapper);
-        }
-        openSwipeWrapper(wrapper);
-    } else {
-        closeSwipeWrapper(wrapper);
+  if (finalX < -(HIDE_REVEAL_WIDTH / 2)) {
+    if (currentlyRevealedWrapper && currentlyRevealedWrapper !== wrapper) {
+      closeSwipeWrapper(currentlyRevealedWrapper);
     }
+    openSwipeWrapper(wrapper);
+  } else {
+    closeSwipeWrapper(wrapper);
+  }
 
-    dragState = null;
+  dragState = null;
 }
 
 function openSwipeWrapper(wrapper) {
-    wrapper.classList.add('revealed');
-    wrapper.querySelector('.task-card').style.transform = `translateX(-${HIDE_REVEAL_WIDTH}px)`;
-    currentlyRevealedWrapper = wrapper;
+  wrapper.classList.add("revealed");
+  wrapper.querySelector(".task-card").style.transform = `translateX(-${HIDE_REVEAL_WIDTH}px)`;
+  currentlyRevealedWrapper = wrapper;
 }
 
 function closeSwipeWrapper(wrapper) {
-    wrapper.classList.remove('revealed');
-    wrapper.querySelector('.task-card').style.transform = 'translateX(0)';
-    if (currentlyRevealedWrapper === wrapper) currentlyRevealedWrapper = null;
+  wrapper.classList.remove("revealed");
+  wrapper.querySelector(".task-card").style.transform = "translateX(0)";
+  if (currentlyRevealedWrapper === wrapper) currentlyRevealedWrapper = null;
 }
 
-// --- HIDE THIS TASK ---
-// Tapping Hide removes the card immediately and fires the request in the
-// background, with a few seconds' grace via the Undo toast before it's final.
+
+/* ==========================================================================
+ *  HIDE / UNHIDE A TASK
+ * ========================================================================== */
 
 async function handleHideTaskClick(event) {
-    const hideBtn = event.target.closest('.hide-task-btn');
-    if (!hideBtn) return;
+  const hideBtn = event.target.closest(".hide-task-btn");
+  if (!hideBtn) return;
 
-    const taskId = hideBtn.getAttribute('data-task-id');
-    const wrapper = hideBtn.closest('.task-card-wrapper');
-    const nameEl = wrapper ? wrapper.querySelector('.task-info h3') : null;
-    const taskName = nameEl ? nameEl.textContent : 'Task';
+  const taskId = parseInt(hideBtn.getAttribute("data-task-id"), 10);
+  const wrapper = hideBtn.closest(".task-card-wrapper");
+  const nameEl = wrapper ? wrapper.querySelector(".task-info h3") : null;
+  const taskName = nameEl ? nameEl.textContent : "Task";
 
-    if (currentlyRevealedWrapper === wrapper) currentlyRevealedWrapper = null;
-    if (wrapper) wrapper.remove();
+  if (currentlyRevealedWrapper === wrapper) currentlyRevealedWrapper = null;
+  if (wrapper) wrapper.remove();
 
-    showUndoToast(taskId, taskName);
+  showUndoToast(taskId, taskName);
 
-    try {
-        const response = await fetch(API_URL, {
-            method: 'POST',
-            body: JSON.stringify({ action: 'hide_task', task_id: taskId })
-        });
-        const result = await response.json();
-        if (result.status !== 'success') {
-            console.error('Hide task failed:', result.message);
-        }
-    } catch (error) {
-        console.error('Hide Task Error:', error);
-    }
+  try {
+    const { error } = await sb.from("hidden_task").insert({
+      garden_id: currentGardenId,
+      task_id: taskId
+    });
+    // 23505 = already hidden (unique key). That's a success, not a failure.
+    if (error && error.code !== "23505") console.error("Hide task failed:", error);
+  } catch (error) {
+    console.error("Hide task error:", error);
+  }
 }
 
 function showUndoToast(taskId, taskName) {
-    if (undoToastTimeout) clearTimeout(undoToastTimeout);
+  if (undoToastTimeout) clearTimeout(undoToastTimeout);
 
-    undoToastTaskId = taskId;
-    const toast = document.getElementById('undo-toast');
-    const message = document.getElementById('undo-toast-message');
-    message.textContent = `"${taskName}" hidden.`;
-    toast.classList.add('visible');
+  undoToastTaskId = taskId;
+  const toast = document.getElementById("undo-toast");
+  const message = document.getElementById("undo-toast-message");
+  message.textContent = `"${taskName}" hidden.`;
+  toast.classList.add("visible");
 
-    undoToastTimeout = setTimeout(() => {
-        toast.classList.remove('visible');
-        undoToastTimeout = null;
-        undoToastTaskId = null;
-    }, 5000);
+  undoToastTimeout = setTimeout(() => {
+    toast.classList.remove("visible");
+    undoToastTimeout = null;
+    undoToastTaskId = null;
+  }, 5000);
 }
 
 async function handleUndoHide() {
-    if (!undoToastTaskId) return;
-    const taskId = undoToastTaskId;
+  if (undoToastTaskId === null || undoToastTaskId === undefined) return;
+  const taskId = undoToastTaskId;
 
-    if (undoToastTimeout) { clearTimeout(undoToastTimeout); undoToastTimeout = null; }
-    document.getElementById('undo-toast').classList.remove('visible');
-    undoToastTaskId = null;
+  if (undoToastTimeout) { clearTimeout(undoToastTimeout); undoToastTimeout = null; }
+  document.getElementById("undo-toast").classList.remove("visible");
+  undoToastTaskId = null;
 
-    try {
-        const response = await fetch(API_URL, {
-            method: 'POST',
-            body: JSON.stringify({ action: 'unhide_task', task_id: taskId })
-        });
-        const result = await response.json();
-        if (result.status === 'success') {
-            fetchGardeningTasks(); // bring the restored task straight back
-        } else {
-            console.error('Undo failed:', result.message);
-        }
-    } catch (error) {
-        console.error('Undo Hide Error:', error);
-    }
+  try {
+    const { error } = await sb.from("hidden_task")
+      .delete()
+      .eq("garden_id", currentGardenId)
+      .eq("task_id", taskId);
+    if (error) throw error;
+    loadToday(); // bring the restored task straight back
+  } catch (error) {
+    console.error("Undo hide error:", error);
+  }
 }
 
-// --- HIDDEN TASKS MANAGEMENT (settings gear icon) ---
+
+/* ==========================================================================
+ *  HIDDEN TASKS MANAGEMENT (settings gear icon)
+ * ========================================================================== */
 
 function openHiddenTasksModal() {
-    document.getElementById('hidden-tasks-modal').classList.remove('hidden');
-    fetchHiddenTasks();
+  document.getElementById("hidden-tasks-modal").classList.remove("hidden");
+  fetchHiddenTasks();
 }
 
 function closeHiddenTasksModal() {
-    document.getElementById('hidden-tasks-modal').classList.add('hidden');
+  document.getElementById("hidden-tasks-modal").classList.add("hidden");
 }
 
 async function fetchHiddenTasks() {
-    const listEl = document.getElementById('hidden-tasks-list');
-    listEl.innerHTML = '<div class="loading-spinner-box">Loading...</div>';
+  const listEl = document.getElementById("hidden-tasks-list");
+  listEl.innerHTML = '<div class="loading-spinner-box">Loading...</div>';
 
-    try {
-        const response = await fetch(API_URL + '?action=get_hidden_tasks&t=' + Date.now(), { cache: 'no-store' });
-        const result = await response.json();
+  try {
+    const { data, error } = await sb
+      .from("hidden_task")
+      .select("task_id, hidden_at, task:task_id ( name, category:category_id ( name ) )")
+      .eq("garden_id", currentGardenId)
+      .order("hidden_at", { ascending: false });
+    if (error) throw error;
 
-        if (result.status !== 'success') throw new Error(result.message || 'Unknown error');
-        renderHiddenTasksList(result.data);
-    } catch (error) {
-        console.error('Fetch Hidden Tasks Error:', error);
-        listEl.innerHTML = '<div class="loading-spinner-box" style="color:red;">Failed to load hidden tasks.</div>';
-    }
+    const rows = (data || []).map(r => ({
+      task_id: r.task_id,
+      task_name: r.task ? r.task.name : "(this task no longer exists)",
+      category: (r.task && r.task.category) ? r.task.category.name : "",
+      date_hidden: r.hidden_at
+    }));
+    renderHiddenTasksList(rows);
+  } catch (error) {
+    console.error("Fetch hidden tasks error:", error);
+    listEl.innerHTML = '<div class="loading-spinner-box">Failed to load hidden tasks.</div>';
+  }
 }
 
 function renderHiddenTasksList(hiddenTasks) {
-    const listEl = document.getElementById('hidden-tasks-list');
-    listEl.innerHTML = '';
+  const listEl = document.getElementById("hidden-tasks-list");
+  listEl.innerHTML = "";
 
-    if (hiddenTasks.length === 0) {
-        listEl.innerHTML = '<div class="loading-spinner-box">You haven\'t hidden any tasks.</div>';
-        return;
-    }
+  if (hiddenTasks.length === 0) {
+    listEl.innerHTML = '<div class="loading-spinner-box">You haven\'t hidden any tasks.</div>';
+    return;
+  }
 
-    hiddenTasks.forEach(task => {
-        const card = document.createElement('div');
-        card.className = 'hidden-task-card';
-        card.innerHTML = `
-            <div class="hidden-task-info">
-                <h4>${task.task_name}</h4>
-                <p>${task.category}</p>
-            </div>
-            <button class="restore-task-btn" data-task-id="${task.task_id}">Restore</button>
-        `;
-        listEl.appendChild(card);
-    });
+  hiddenTasks.forEach(task => {
+    const card = document.createElement("div");
+    card.className = "hidden-task-card";
+    card.innerHTML = `
+      <div class="hidden-task-info">
+        <h4>${task.task_name}</h4>
+        <p>${task.category}</p>
+      </div>
+      <button class="restore-task-btn" data-task-id="${task.task_id}">Restore</button>
+    `;
+    listEl.appendChild(card);
+  });
 }
 
 async function handleRestoreTask(event) {
-    const btn = event.target.closest('.restore-task-btn');
-    if (!btn) return;
+  const btn = event.target.closest(".restore-task-btn");
+  if (!btn) return;
 
-    const taskId = btn.getAttribute('data-task-id');
-    btn.disabled = true;
-    btn.textContent = '⏳';
+  const taskId = parseInt(btn.getAttribute("data-task-id"), 10);
+  btn.disabled = true;
+  btn.textContent = "⏳";
 
-    try {
-        const response = await fetch(API_URL, {
-            method: 'POST',
-            body: JSON.stringify({ action: 'unhide_task', task_id: taskId })
-        });
-        const result = await response.json();
+  try {
+    const { error } = await sb.from("hidden_task")
+      .delete()
+      .eq("garden_id", currentGardenId)
+      .eq("task_id", taskId);
+    if (error) throw error;
 
-        if (result.status === 'success') {
-            const card = btn.closest('.hidden-task-card');
-            if (card) card.remove();
+    const card = btn.closest(".hidden-task-card");
+    if (card) card.remove();
 
-            fetchGardeningTasks(); // keep Today's Tasks in sync in the background
+    loadToday();
 
-            const listEl = document.getElementById('hidden-tasks-list');
-            if (listEl.children.length === 0) {
-                listEl.innerHTML = '<div class="loading-spinner-box">You haven\'t hidden any tasks.</div>';
-            }
-        } else {
-            throw new Error(result.message || 'Restore failed');
-        }
-    } catch (error) {
-        console.error('Restore Task Error:', error);
-        btn.disabled = false;
-        btn.textContent = 'Restore';
+    const listEl = document.getElementById("hidden-tasks-list");
+    if (listEl.children.length === 0) {
+      listEl.innerHTML = '<div class="loading-spinner-box">You haven\'t hidden any tasks.</div>';
     }
+  } catch (error) {
+    console.error("Restore task error:", error);
+    btn.disabled = false;
+    btn.textContent = "Restore";
+  }
 }
+
+
+/* ==========================================================================
+ *  COMPLETING A TASK
+ * ========================================================================== */
 
 async function handleTaskCompletion(event) {
-    if (!event.target.classList.contains("task-check")) return;
+  if (!event.target.classList.contains("task-check")) return;
 
-    const checkbox = event.target;
-    const card = checkbox.closest(".task-card");
-    const taskId = checkbox.getAttribute("data-task-id");
-    const assetId = checkbox.getAttribute("data-asset-id");
+  const checkbox = event.target;
+  const card = checkbox.closest(".task-card");
+  const taskId = parseInt(checkbox.getAttribute("data-task-id"), 10);
 
-    checkbox.disabled = true;
-    checkbox.innerText = "⏳";
+  checkbox.disabled = true;
+  checkbox.innerText = "⏳";
 
-    try {
-        const response = await fetch(API_URL, {
-            method: "POST",
-            body: JSON.stringify({
-                task_id: taskId,
-                asset_id: assetId,
-                notes: "Completed via PWA client"
-            })
-        });
+  try {
+    const { error } = await sb.from("task_completion").insert({
+      garden_id: currentGardenId,
+      task_id: taskId,
+      notes: "Completed via PWA client"
+    });
+    if (error) throw error;
 
-        const result = await response.json();
-        
-        if(result.status === "success") {
-            checkbox.classList.add("completed");
-            checkbox.innerText = "✓";
-            card.style.opacity = "0.5";
-        }
-    } catch (error) {
-        console.error("POST Error:", error);
-        checkbox.disabled = false;
-        checkbox.innerText = "❌";
+    checkbox.classList.add("completed");
+    checkbox.innerText = "✓";
+    card.style.opacity = "0.5";
+
+    // Mark the whole card completed: this removes the Hide action sitting behind
+    // it (so it can't show through the now-translucent card) and takes the card
+    // out of the swipe gesture.
+    const wrapper = card.closest(".task-card-wrapper");
+    if (wrapper) {
+      wrapper.classList.add("completed");
+      if (currentlyRevealedWrapper === wrapper) currentlyRevealedWrapper = null;
+      card.style.transform = "translateX(0)";
     }
+  } catch (error) {
+    console.error("Completion error:", error);
+    checkbox.disabled = false;
+    checkbox.innerText = "❌";
+  }
 }
 
-// 1. Initial Data Fetches
+
+/* ==========================================================================
+ *  INIT
+ * ========================================================================== */
+
 document.addEventListener("DOMContentLoaded", () => {
 
-    // 1. Fire these independently! If tasks fail, weather still loads.
-    loadAppData();
-    requestLocalWeather();
+  // Register the service worker (offline app shell). Harmless if unsupported.
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("sw.js").catch(err => console.warn("SW registration failed:", err));
+  }
 
-    // 2. Setup Event Listeners using your ACTUAL function names
-    const taskContainer = document.getElementById("task-container");
-    if (taskContainer) {
-        taskContainer.addEventListener("click", handleTaskCompletion);
-        taskContainer.addEventListener("click", handleHideTaskClick);
+  // --- Sign-in screen ---
+  const sendBtn = document.getElementById("signin-send-btn");
+  if (sendBtn) sendBtn.addEventListener("click", handleSendCode);
+  const verifyBtn = document.getElementById("signin-verify-btn");
+  if (verifyBtn) verifyBtn.addEventListener("click", handleVerifyCode);
+  const backBtn = document.getElementById("signin-back-btn");
+  if (backBtn) backBtn.addEventListener("click", showSigninEmailStep);
+  const emailInput = document.getElementById("signin-email");
+  if (emailInput) emailInput.addEventListener("keydown", e => { if (e.key === "Enter") handleSendCode(); });
+  const codeInput = document.getElementById("signin-code");
+  if (codeInput) codeInput.addEventListener("keydown", e => { if (e.key === "Enter") handleVerifyCode(); });
 
-        // Swipe-to-reveal gesture on task cards
-        taskContainer.addEventListener("pointerdown", onCardPointerDown);
-        taskContainer.addEventListener("pointermove", onCardPointerMove);
-        taskContainer.addEventListener("pointerup", onCardPointerUp);
-        taskContainer.addEventListener("pointercancel", onCardPointerUp);
+  // --- Garden setup screen ---
+  const findBtn = document.getElementById("setup-find-btn");
+  if (findBtn) findBtn.addEventListener("click", handleFindPostcode);
+  const locateBtn = document.getElementById("setup-locate-btn");
+  if (locateBtn) locateBtn.addEventListener("click", handleUseLocation);
+  const createBtn = document.getElementById("setup-create-btn");
+  if (createBtn) createBtn.addEventListener("click", handleCreateGarden);
+  const setupName = document.getElementById("setup-name");
+  if (setupName) setupName.addEventListener("input", validateSetup);
+  const setupPostcode = document.getElementById("setup-postcode");
+  if (setupPostcode) setupPostcode.addEventListener("keydown", e => { if (e.key === "Enter") handleFindPostcode(); });
+
+  // --- Splash retry ---
+  const splashRetry = document.getElementById("splash-retry");
+  if (splashRetry) splashRetry.addEventListener("click", route);
+
+  // --- Today view: completion, hide, swipe ---
+  const taskContainer = document.getElementById("task-container");
+  if (taskContainer) {
+    taskContainer.addEventListener("click", handleTaskCompletion);
+    taskContainer.addEventListener("click", handleHideTaskClick);
+    taskContainer.addEventListener("pointerdown", onCardPointerDown);
+    taskContainer.addEventListener("pointermove", onCardPointerMove);
+    taskContainer.addEventListener("pointerup", onCardPointerUp);
+    taskContainer.addEventListener("pointercancel", onCardPointerUp);
+  }
+
+  // --- My Garden ---
+  const inventoryList = document.getElementById("inventory-list");
+  if (inventoryList) inventoryList.addEventListener("click", handleRemoveAsset);
+  const addAssetBtn = document.getElementById("add-asset-btn");
+  if (addAssetBtn) addAssetBtn.addEventListener("click", handleAddAsset);
+
+  // --- Undo toast ---
+  const undoBtn = document.getElementById("undo-toast-btn");
+  if (undoBtn) undoBtn.addEventListener("click", handleUndoHide);
+
+  // --- Settings modal ---
+  const settingsBtn = document.getElementById("settings-btn");
+  if (settingsBtn) settingsBtn.addEventListener("click", openHiddenTasksModal);
+  const closeModalBtn = document.getElementById("close-hidden-modal");
+  if (closeModalBtn) closeModalBtn.addEventListener("click", closeHiddenTasksModal);
+  const hiddenModal = document.getElementById("hidden-tasks-modal");
+  if (hiddenModal) {
+    hiddenModal.addEventListener("click", (e) => { if (e.target === hiddenModal) closeHiddenTasksModal(); });
+  }
+  const hiddenTasksList = document.getElementById("hidden-tasks-list");
+  if (hiddenTasksList) hiddenTasksList.addEventListener("click", handleRestoreTask);
+  const signOutBtn = document.getElementById("signout-btn");
+  if (signOutBtn) signOutBtn.addEventListener("click", handleSignOut);
+
+  // --- The gate: react to sign-in / sign-out / initial session ---
+  sb.auth.onAuthStateChange((event, session) => {
+    if (event === "INITIAL_SESSION" || event === "SIGNED_IN" || event === "SIGNED_OUT") {
+      const uid = session && session.user ? session.user.id : null;
+      if (uid !== routedUserId) {
+        routedUserId = uid;
+        route();
+      }
     }
-
-    const inventoryList = document.getElementById("inventory-list");
-    if (inventoryList) inventoryList.addEventListener("click", handleRemoveAsset);
-    
-    const addAssetBtn = document.getElementById("add-asset-btn");
-    if (addAssetBtn) addAssetBtn.addEventListener("click", handleAddAsset);
-
-    // 3. Undo toast
-    const undoBtn = document.getElementById("undo-toast-btn");
-    if (undoBtn) undoBtn.addEventListener("click", handleUndoHide);
-
-    // 4. Hidden tasks settings modal
-    const settingsBtn = document.getElementById("settings-btn");
-    if (settingsBtn) settingsBtn.addEventListener("click", openHiddenTasksModal);
-
-    const closeModalBtn = document.getElementById("close-hidden-modal");
-    if (closeModalBtn) closeModalBtn.addEventListener("click", closeHiddenTasksModal);
-
-    const hiddenModal = document.getElementById("hidden-tasks-modal");
-    if (hiddenModal) {
-        // Tapping the dimmed backdrop (not the panel itself) closes the modal
-        hiddenModal.addEventListener("click", (e) => {
-            if (e.target === hiddenModal) closeHiddenTasksModal();
-        });
-    }
-
-    const hiddenTasksList = document.getElementById("hidden-tasks-list");
-    if (hiddenTasksList) hiddenTasksList.addEventListener("click", handleRestoreTask);
+  });
 });

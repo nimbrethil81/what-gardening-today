@@ -4,16 +4,20 @@ How to add new **items** (to `Item_Dictionary`) and new **tasks** (to `Master_Ta
 
 This covers the manual authoring process only — generating content with an LLM, importing it cleanly into the sheet, and verifying it. It does not cover the app's runtime behaviour; see `SPEC.md` for the schema and matching rules this document depends on.
 
+**As of v2.0, the workbook is an authoring workbench, not a live database.** Content is written here exactly as before, but it reaches the app only when it is *published* to the hosted database (Supabase) via an explicit **Garden Data → Publish to app** step. Authoring is unchanged; publishing is new. See §10.
+
 ---
 
 ## 1. Where the data lives
 
-Two tabs in the backend Google Sheet:
+The authoring tabs in the Google Sheet:
 
 - **`Item_Dictionary`** — the catalogue of item *blueprints* shown in the "Add to My Garden" picker. Four columns: `Category`, `Suggested_Name`, `Default_Asset_ID_Prefix`, `Groups`.
-- **`Master_Task_Matrix`** — the care tasks matched to those items. Eleven columns: `Task_ID`, `Target_Asset_ID`, `Task_Name`, `Category`, `Instruction`, `Valid_Months`, `Frequency_Days`, `Suppress_If_Raining`, `Suppress_If_Temp_Below`, `Requires_Wind_Above`, `Estimated_Minutes`.
+- **`Master_Task_Matrix`** — the care tasks matched to those items. Twelve columns: `Task_ID`, `Target_Asset_ID`, `Task_Name`, `Category`, `Instruction`, `Valid_Months`, `Frequency_Days`, `Suppress_If_Raining`, `Suppress_If_Temp_Below`, `Requires_Wind_Above`, `Estimated_Minutes`, and `Retired` (column L; see §2). The twelfth column was added in v2.0 to mark tombstoned tasks.
+- **`Collections`** — added in v2.0. Two columns, `Code` and `Name`, declaring every `GROUP_*` collection that exists and giving it a human display name. Membership still lives in the `Groups` column of `Item_Dictionary`; this tab declares the collections that column may reference. See §2.
+- **`Reference_Lists`** — maps the seven display categories to their top-level prefixes; the audit's source of truth for valid categories and prefixes.
 
-**Order of operations:** always add the item to `Item_Dictionary` first, then add its tasks. A task's `Target_Asset_ID` must reference a prefix or a group tag that already exists.
+**Order of operations:** always add the item to `Item_Dictionary` first, then add its tasks. A task's `Target_Asset_ID` must reference a prefix or a group tag that already exists — and, for a group tag, one that is declared on the `Collections` tab.
 
 ---
 
@@ -101,6 +105,24 @@ Consequence: **no free-text field may contain a semicolon.** `Task_Name` and `In
 ### The rain column is a true/false value, not text
 
 `Suppress_If_Raining` is read by the backend as a real boolean. After import, a `TRUE` in that column should sit **right-aligned** (Sheets treats it as a logical value). If it lands **left-aligned** as the text "TRUE", suppression silently does nothing. Leave the cell **blank** when the task is unaffected by rain — don't type `FALSE`.
+
+### The `Collections` tab declares every collection (v2.0)
+
+A collection is a named set of blueprints — the successor of the `GROUP_*` tags — that a task can target. The `Groups` column of `Item_Dictionary` still records *which blueprints belong to* a collection; the `Collections` tab records *that the collection exists* and gives it a display name.
+
+- Two columns: `Code` (e.g. `GROUP_SOFT_FRUIT`) and `Name` (e.g. `Soft fruit`).
+- **Every `GROUP_*` tag you use** — in a `Groups` cell or as a task target — **must be declared here.** Publishing needs the declaration so it can create the collection with a name and reference it by key; an undeclared tag is a publish-blocking error, not a silent miss.
+- A collection may be declared before any blueprint carries it (the audit flags this as REVIEW, not an error) — useful when setting up a group ahead of the tasks that will target it.
+- Collections are never deleted by publishing. Removing a code from this tab does not remove the collection from the database; it simply stops being maintained. Empty it by clearing its members if you want it to reach nothing.
+
+### The `Retired` column tombstones a task (v2.0)
+
+Column **L** of `Master_Task_Matrix`, headed `Retired`. Any non-blank value marks the task as retired: put a short reason in the cell (it stays as editorial context). This replaces the old procedure of *deleting* a task's row and listing its ID in an `Audit.gs` constant.
+
+- A retired task **keeps its row** — name, instruction and all — but is published as a tombstone: `retired_at` is set in the database and it is given **no targets**, so it never appears in the app.
+- Retirement preserves history. `Task_Log` completions recorded against the task keep a valid reference, and the retired ID can never be reissued (a second row with the same ID is caught as a duplicate primary key).
+- A retired row still needs a valid `Task_ID`, `Valid_Months`, `Frequency_Days` and `Category`, because the database stores the tombstone. A pure tombstone for a task that never had a real row (recovered from an orphaned log entry) can use nominal values: `Valid_Months` `1`, `Frequency_Days` `365`. Its target may be left blank.
+- The old `RETIRED_TASK_IDS` constant in `Audit.gs` is **gone.** Retirement is now a property of the data, exactly here. To withdraw a task, fill its `Retired` cell and publish — do not delete the row.
 
 ---
 
@@ -222,7 +244,8 @@ Generate the CSV now.
 
 ## 6. Verification checklist (after importing tasks)
 
-- Columns line up: eleven filled columns, headers in the right order, nothing shifted.
+- Columns line up: the eleven authored columns, headers in the right order, nothing shifted. (The twelfth column, `Retired`, is filled by hand only when tombstoning a task, and the semicolon import never touches it.)
+- `Retired` is blank for every ordinary new task; it carries a value only on tombstones.
 - `Valid_Months` sits as a single cell like `3,4,5` — **not** spread across several columns.
 - `Task_ID` values continue the sequence with no gaps or duplicates.
 - Every `Target_Asset_ID` is a category prefix, a full item prefix that exists in `Item_Dictionary`, or a `GROUP_*` tag that exists in `Item_Dictionary.Groups` — with no `_0001`-style suffix and no partial prefixes.
@@ -263,6 +286,8 @@ It checks for:
 - **Orphaned log entries** — completions recorded against tasks that no longer exist.
 
 The `Reference_Lists` tab is the audit's source of truth for the seven categories and nine prefixes. Add a prefix there and the audit accepts it immediately — which is that tab's real job, and the reason to keep it.
+
+**v2.0 changes to the audit.** It now reads the `Retired` column and exempts tombstoned tasks from the target and coverage checks (a retired task is *meant* to reach nothing), while still requiring them to carry a valid ID, months, frequency and category, because the database stores them. If the `Collections` tab is present, the audit flags any `GROUP_*` tag used but not declared there. And the `RETIRED_TASK_IDS` constant is gone: because retired tasks are now real rows, reissuing an ID is caught by the ordinary duplicate-key check, and their log entries are no longer orphaned.
 
 Findings come in three severities: **ERROR** (silently broken now), **WARNING** (probably not intended), and **REVIEW** (the script cannot judge; a human should look).
 
@@ -372,3 +397,39 @@ Wind handling is a known limitation under review (see `SPEC.md` §5E): the exist
 ### `Groups` — a warning about silent failure
 
 A task targeting a group tag that no blueprint carries will match nothing, with no error. If a group-level task never appears, check the spelling of the tag in both places before assuming the matcher is broken.
+
+---
+
+## 10. Publishing to the app (v2.0)
+
+Authoring changes nothing that flows to users on its own. Content reaches the app only when you **publish** the workbook to the live database. This is deliberate: bulk editing stays where it is pleasant (the sheet), and the database stays where integrity is enforced.
+
+### One-time setup
+
+The publish tool talks to Supabase using a **service-role key**, which can read and write the whole database. It must never live in a code file or the repository, so it is stored in Apps Script's Script Properties, with the workbook kept unshared.
+
+1. Supabase dashboard → **Project Settings → API**. Copy the **Project URL** and reveal-and-copy the **`service_role`** secret.
+2. Apps Script editor (**Extensions → Apps Script**) → **Project Settings** (gear) → **Script properties** → add two:
+   - `SUPABASE_URL` = the Project URL.
+   - `SUPABASE_SERVICE_ROLE_KEY` = the service_role secret.
+
+There is nothing to set up in the sheet; the `Publish_Report` tab is created on first use.
+
+### The three movements of a publish
+
+Choosing **Garden Data → Publish to app** runs, in order:
+
+1. **The gate.** It runs the full audit and **refuses to publish on any ERROR.** It then adds three publish-specific blocks: every live (non-retired) task must resolve to a real blueprint or a *declared* collection — a bare category prefix is no longer a valid target and will block; every `GROUP_*` tag carried by a blueprint must be declared on the `Collections` tab; and every task's category must be one of the seven. Finally it computes a **coverage report** — blueprints that no live task reaches — which is a **warning only** and never blocks (some items may legitimately await content).
+2. **The push.** It reads the live catalogue first (to preserve tombstone dates and detect rows you have removed), then upserts categories, blueprints, collections and tasks by their natural key (`legacy_code` / `code` / `name`), and reconciles the three membership tables (`blueprint_category`, `collection_member`, `task_target`) to mirror the workbook exactly. **Nothing curated is deleted.** A blueprint or task removed from the workbook is *retired* (a tombstone), not erased.
+3. **The report.** A `Publish_Report` tab records what was pushed, the live row counts read back, the coverage report, and the retirement roll-call.
+
+### The dry run
+
+**Garden Data → Check before publish (no changes)** runs the gate and writes the report **without touching the database.** Run it before a real publish, and after any large authoring session, to see what would block and what coverage gaps exist. It is always safe.
+
+### Habits worth keeping
+
+- **Publish after authoring, or the app won't see your edits.** A silent gap between the workbook and the app is the one failure this workflow invites; the post-publish report and the dry run are the guard against it.
+- **Fix ERRORs, weigh WARNINGs, judge REVIEWs — then publish.** The gate enforces the ERRORs; the rest are yours to decide.
+- **A retired task is withdrawn by filling its `Retired` cell, then publishing** — never by deleting its row.
+- **Re-running a publish is safe.** Every write is an upsert or an idempotent reconcile, so a second run with no authoring changes reports zero membership churn.

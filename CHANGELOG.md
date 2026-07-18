@@ -9,6 +9,67 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.0] — 2026-07-17
+
+**Status:** shipped. The v2 frontend is now the live app, replacing the 1.x Google Sheets / Apps Script stack. A few operational follow-ups remain open — see *Post-cutover follow-ups* below.
+
+v2.0 is the Phase 4 architectural transition in `SPEC.md` §6: the backend moves from Google Sheets + Google Apps Script to Supabase (PostgreSQL), the app gains email sign-in and per-garden Row-Level Security, and the frontend is rewired to talk to the new backend directly. The Google Sheet is retained but demoted from live database to content-authoring surface, published into Postgres by a dedicated pipeline. `SPEC.md` has been rewritten as the authoritative description of the new system; `DESIGN_V2.md` is retained as the point-in-time migration-design record.
+
+This entry consolidates the three build stages (database foundations, publish pipeline, frontend + cutover), replacing the earlier stage-1 note.
+
+### Added
+- **The v2.0 relational schema** (`db/01_schema.sql`) — real tables replacing the string-encoded spreadsheet relationships with foreign keys and constraints. Integrity the workbook could only ask for is now enforced at write time: `valid_months` is a checked 1–12 integer array; `suppress_if_raining` is a real boolean (the `"TRUE"`-as-text failure class is untypeable); every task target is a real foreign key (a phantom target cannot be stored); a composite key guarantees a manual task's item belongs to the same garden. Adversarial constraint test (`db/tests/01_constraints_test.sql`): 23 checks, all passing.
+- **Row-Level Security** (`db/02_rls.sql`) — per-garden isolation enforced by the database on every query. Signed-in users read the shared catalogue but cannot alter it; each garden's data is invisible and unwritable to non-members; completion history is append-only by policy; the mixed `task` table (global read-only rows alongside per-garden writable rows) carries the most intricate policies. Test matrix written before the policies (`db/tests/02_rls_test.sql`): 49 checks, all passing.
+- **The matching engine as one Postgres function** (`db/03_functions.sql`) — `select_tasks(garden, month, temp, is_raining, wind_mph)`, the sole implementation of the matching rule, plus `create_garden(name, lat, lon, timezone)`, the atomic onboarding function. Behaviour test (`db/tests/03_functions_test.sql`): 26 checks, all passing.
+- **Email authentication and the "guest list."** Supabase Auth with passwordless email sign-in (one-time code and/or magic link). Public sign-up is disabled: an account exists only once its email is added from the dashboard, which is what keeps the app private.
+- **Sign-in and first-run garden setup screens** (frontend). A signed-out visitor sees a sign-in screen; a signed-in visitor with no garden sees a one-screen setup — garden name plus location by postcode (via postcodes.io) or current location — which calls `create_garden`. Existing users land straight on Today's Tasks. A sign-out control lives in the settings panel.
+- **The `today` Edge Function** (`supabase/functions/today/`) — one server-side call returning the day's weather and filtered tasks for a garden. It holds the OpenWeather key (never shipped to the browser), reads the garden's own coordinates, serves weather from a shared cache, and degrades to an unfiltered list if weather fails.
+- **`weather_cache` table** (`db/07_weather_cache.sql`) — a short-lived, location-rounded, service-role-only cache so nearby gardens share one weather fetch.
+- **Free-tier keep-alive** (`db/08_keepalive.sql`, `.github/workflows/keepalive.yml`) — a scheduled GitHub Action calls a minimal `keepalive()` function twice a week (Mondays and Thursdays), so the free-tier database registers activity and never pauses for inactivity.
+- **The content-publish pipeline** (`Publish.gs`) — pushes audited Sheet content into the Postgres catalogue and task tables, reconciling the live database to the Sheet and handling retirement via `retired_at`. `Audit.gs` is retained as the pre-publish integrity check.
+- **Ten collections** — the five pre-existing groups plus five created during the category-tier review (`GROUP_ALL_BEDS`, `GROUP_SHRUB_GENERIC`, `GROUP_TREE_GENERIC`, `GROUP_HERBS`, `GROUP_HAND_TOOLS`).
+- **`docs/CONFIG_ITEMS.md`** — a running register of tunable values and operational settings (weather-cache freshness and rounding, sign-in delivery, keep-alive cadence, service-worker version, allowed origins, and more).
+
+### Changed
+- **The matching engine moved from Apps Script to the database.** `select_tasks` is now the single authoritative implementation; the frontend no longer carries or calls a bespoke matching API.
+- **The frontend data layer was rewired to Supabase.** `index.html`, `app.js`, and `style.css` were rebuilt: the daily view calls the `today` function; inventory, the catalogue picker, completions, and hide/unhide are direct Row-Level-Security-governed reads and writes via `supabase-js`. What the user sees is unchanged; how it's fed is entirely new.
+- **The bare-category matching tier was abolished in the data.** The 26 tasks that targeted a bare category were reviewed one by one: 19 re-homed to explicit collections, 7 retired. "Applies to all shrubs" is now a curated, inspectable set rather than a prefix match. Re-homings touching Dan's garden: all lawn tasks → `GROUP_GRASS_LAWN`; the three bed-weeding tasks → `GROUP_ALL_BEDS` (which, unlike `GROUP_CULTIVATED_BED`, includes his Woodland Shade bed); the four generic shrub tasks → `GROUP_SHRUB_GENERIC` (Lavender included); and "End of Season Tool Clean" → `GROUP_HAND_TOOLS`, so it no longer offers rust-and-linseed care to his chainsaw.
+- **Categories carry a display sort order** (Lawn, Beds, Trees & shrubs, Plants & flowers, Veg & herbs, Garden structures, Tools).
+- **`SPEC.md` rewritten** as the self-contained authoritative reference for the v2.0 architecture; the v1 Google Sheets / Apps Script schema and API sections are replaced by the Postgres schema, the access model, and the data-access-and-functions description.
+- **Service worker** (`sw.js`): registration added (the app had none, so there was no offline shell before); `CACHE_NAME` bumped `gardening-v3` → `gardening-v4`; it now caches only our own same-origin files and never the Supabase, OpenWeather, or postcode calls.
+
+### Fixed
+Four long-standing 1.x limitations are resolved by the new architecture:
+- **Weather location.** Tasks are filtered against weather at the garden's own stored coordinates, and the widget and the filter are fed from the same reading — the v1 hardcoded-location and widget-versus-filter disagreement are both gone.
+- **Wind suppression direction.** A task is now correctly hidden when wind is *above* its threshold (v1 had it inverted).
+- **Drifted data-fetch paths.** There is one daily call, re-run on return to the Today view, so weather-suppressed tasks can no longer briefly reappear on a tab switch.
+- **British Summer Time date-stamping.** Day maths is timezone-aware and completions are stored as `timestamptz`, so a late-evening completion is no longer logged a day early.
+
+### Removed
+- **Google Sheets as the live database, and the Apps Script Web App as the runtime API.** The v1 runtime routes (`get_all`, `get_tasks`, `get_profile`, `get_dictionary`, `get_weather`, `get_hidden_tasks`, and the POST routes) are retired at cutover; their work is done by the `today` function and direct RLS operations. Apps Script itself lives on, repurposed to the publish pipeline.
+- **The bare-category targeting tier** (see Changed) — no task may target a bare category any longer.
+- **Seven tasks retired in the category-tier review**, each a seasonal *activity* or a subset-only task rather than asset-care for an owned item: "Re-edge Bed Borders" (`TASK_0027` — really a lawn-edge job, for future re-authoring) and six generic `PLANT` tasks — "Deadhead Flowers", "Water Plants", "Stake Tall Plants", "Plant Spring Bulbs", "Feed Patio Pots", "Protect Plants from Frost" (`TASK_0042`–`0044`, `0047`, `0052`, `0053`). Retirement is a tombstone (`retired_at`), not a deletion; the tasks remain for history's sake but never match.
+
+### Migration and verification
+- **Real data migrated in full** (`db/04_staging.sql` → `05_transform.sql`): 248 blueprints, 255 blueprint-category links, 10 collections with 101 members, 612 curated tasks, 25 garden items, 68 completions, 1 hidden task — every table reconciled exactly to its predicted count.
+- **Five tombstones**, not the three anticipated in `DESIGN_V2.md` §8: beyond `TASK_0050`, `TASK_0051` and `TASK_0064`, the real completion history also referenced `TASK_0082` and `TASK_0083` (no longer in the matrix, never added to `RETIRED_TASK_IDS`). Both are recreated as retired rows with placeholder names so those completions keep a valid reference; their workbook history is worth investigating separately.
+- **Coverage:** 247 of 248 blueprints receive at least one task. The one exception, `TOOL_WATERING_CAN` (not in Dan's garden), lost its only task when tool-cleaning was narrowed to hand tools; it joins the five structures (`STRUCT_PLANTER_BOX`, `STRUCT_PERGOLA`, `STRUCT_COLD_FRAME`, `STRUCT_ARCH`, `STRUCT_POND`) on the "needs a task authored" list. Lavender is covered via `GROUP_SHRUB_GENERIC`.
+- **Parity check passed.** `select_tasks` was compared against the live app's output for Dan's garden across all twelve months: no over-matching in any month, and every difference across the year is a deliberate one from this migration (the seven retirements and the hand-tool narrowing). Full expected-differences list in `DESIGN_V2.md` §13.
+
+### Post-cutover follow-ups
+The live switch is done — the production app now serves the v2 frontend against Supabase. These operational items remain open:
+- Confirm the OpenWeather API key was never committed to the public repo (current files *and* git history) or placed in any frontend file. It was authored only in the Apps Script (private, in Google Drive), so exposure is not expected; rotate the key only if that check finds it somewhere public. Either way, in v2 the key belongs solely in the `today` function secret, never in the browser.
+- Retire the old Apps Script *runtime* Web App deployment (the publish pipeline stays).
+- Custom email is required before friends can be invited; a single-user cutover does not need it.
+
+### Developer notes
+- **The migrated garden is ownerless until first sign-in** and must be *linked* to an account — add the account from the dashboard, then insert an `owner` membership row for garden `a0000000-0000-0000-0000-000000000001` — rather than provisioned via `create_garden`. Recorded in `DESIGN_V2.md` §13.
+- `create_garden` is deliberately **permissive** about a second garden; the UI, not the database, limits a user to one. `select_tasks` **refuses** a garden the caller doesn't belong to outright, rather than returning an empty list, so the boundary is testable. When weather is unknown, no weather filtering is applied.
+- Sign-in supports both an emailed code and a magic link; which is delivered is a dashboard email-template setting. On an installed iOS PWA the code avoids the "link opens in the browser instead of the app" quirk.
+- Every SQL file is re-runnable, and each shows a visible results grid or confirmation readout rather than relying on notices (which the Supabase web editor does not surface).
+
+---
+
 ## [1.5] — 2026-07-14
 
 The first purely additive feature since the matching engine was fixed, and the first user-scoped data in the schema: a way to tell the app "I don't want this task," without deleting it from the matrix for anyone else.

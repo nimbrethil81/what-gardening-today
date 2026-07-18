@@ -13,130 +13,214 @@
 </head>
 <body>
 
-  <div class="app-container">
-
-    <div class="app-header">
-      <h2 class="main-app-title">🌱 What Gardening Today?</h2>
-      <button id="settings-btn" class="settings-icon-btn" aria-label="Settings">⚙️</button>
+  <!-- ============================================================= -->
+  <!--  SPLASH — shown briefly while we work out where to send you   -->
+  <!-- ============================================================= -->
+  <div id="view-splash" class="fullscreen-view">
+    <div class="auth-card" style="text-align:center;">
+      <div class="auth-brand">🌱</div>
+      <p id="splash-message" class="auth-subtitle" style="margin-top:12px;">Loading…</p>
+      <button id="splash-retry" class="secondary-action-btn hidden">Retry</button>
     </div>
-
-    <main id="main-content">
-      
-      <section id="view-today" class="view-section active-view">
-        
-<div class="weather-widget">
-  <div class="weather-main">
-    <img id="weather-icon" class="weather-icon" alt="Weather icon">
-    <h1 id="weather-temp">--°C</h1>
-  </div>
-  <p id="weather-desc">Loading weather...</p>
-</div>
-
-
-
-
-        <div id="task-container">
-          <div class="loading-spinner-box">Loading your garden tasks...</div>
-        </div>
-      </section>
-
-      <section id="view-garden" class="view-section">
-
-        <div class="section-header">
-          <div class="section-accent-bar"></div>
-          <h2 class="section-title">Add to My Garden</h2>
-        </div>
-        <div class="app-card">
-          <p class="form-instruction">1. Choose a Category</p>
-          
-          <div class="category-tiles-grid">
-            <button class="tile-btn" onclick="selectCategory('Lawn', this)">
-              <span class="tile-icon">🌱</span>
-              <span class="tile-label">Lawn</span>
-            </button>
-            <button class="tile-btn" onclick="selectCategory('Beds', this)">
-              <span class="tile-icon">🪵</span>
-              <span class="tile-label">Beds</span>
-            </button>
-            <button class="tile-btn" onclick="selectCategory('Trees & shrubs', this)">
-              <span class="tile-icon">🌳</span>
-              <span class="tile-label">Trees & Shrubs</span>
-            </button>
-            <button class="tile-btn" onclick="selectCategory('Veg & herbs', this)">
-              <span class="tile-icon">🥕</span>
-              <span class="tile-label">Veg & Herbs</span>
-            </button>
-            <button class="tile-btn" onclick="selectCategory('Garden structures', this)">
-              <span class="tile-icon">🏡</span>
-              <span class="tile-label">Structures</span>
-            </button>
-            <button class="tile-btn" onclick="selectCategory('Tools', this)">
-              <span class="tile-icon">🛠️</span>
-              <span class="tile-label">Tools</span>
-            </button>
-            <button class="tile-btn full-width" onclick="selectCategory('Plants & flowers', this)">
-              <span class="tile-icon">🌸</span>
-              <span class="tile-label">Plants & Flowers</span>
-            </button>
-          </div>
-
-          <p class="form-instruction">2. Select Item</p>
-          <div id="pill-box" class="pill-cloud">
-            <div class="pill-placeholder">Select a category above...</div>
-          </div>
-
-          <p class="form-instruction">3. My Reference (Optional)</p>
-          <div class="modern-input-wrapper">
-            <input type="text" id="custom-name" placeholder="e.g., Front Yard, Red Planter" oninput="validateForm()">
-          </div>
-
-          <button id="add-asset-btn" class="primary-action-btn" disabled>Add to My Garden</button>
-        </div>
-
-        <div class="section-header">
-          <div class="section-accent-bar"></div>
-          <h2 class="section-title">My Garden</h2>
-        </div>
-        <div id="inventory-list" class="garden-container">
-          <div class="loading-spinner-box">Loading inventory...</div>
-        </div>
-
-      </section>
-
-    </main>
-
-    <nav class="app-nav-bar">
-      <button id="nav-today" class="nav-item active" onclick="switchTab('today', this)">
-        <span class="nav-item-icon">📋</span>
-        <span>Today's Tasks</span>
-      </button>
-      <button id="nav-profile" class="nav-item" onclick="switchTab('garden', this)">
-        <span class="nav-item-icon">🏡</span>
-        <span>My Garden</span>
-      </button>
-    </nav>
-
   </div>
 
-  <!-- Brief "Undo" banner shown right after hiding a task -->
-  <div id="undo-toast" class="undo-toast">
-    <span id="undo-toast-message"></span>
-    <button id="undo-toast-btn" class="undo-toast-btn">Undo</button>
-  </div>
+  <!-- ============================================================= -->
+  <!--  SIGN IN                                                      -->
+  <!-- ============================================================= -->
+  <div id="view-signin" class="fullscreen-view hidden">
+    <div class="auth-card">
+      <div class="auth-brand">🌱</div>
+      <h1 class="auth-title">What Gardening Today?</h1>
+      <p class="auth-subtitle">Sign in with your email to see today's jobs in your garden.</p>
 
-  <!-- Settings: list of hidden tasks, opened via the gear icon -->
-  <div id="hidden-tasks-modal" class="modal-overlay hidden">
-    <div class="modal-panel">
-      <div class="modal-header">
-        <h2 class="section-title">Hidden Tasks</h2>
-        <button id="close-hidden-modal" class="modal-close-btn" aria-label="Close">✕</button>
+      <!-- Step 1: email -->
+      <div id="signin-email-step">
+        <p class="form-instruction">Your email</p>
+        <div class="modern-input-wrapper">
+          <input type="email" id="signin-email" placeholder="you@example.com" autocomplete="email" inputmode="email">
+        </div>
+        <button id="signin-send-btn" class="primary-action-btn">Email me a sign-in code</button>
+        <p id="signin-error" class="auth-error"></p>
       </div>
-      <div id="hidden-tasks-list" class="hidden-tasks-list">
-        <div class="loading-spinner-box">Loading...</div>
+
+      <!-- Step 2: code -->
+      <div id="signin-code-step" class="hidden">
+        <p class="auth-sent">We've emailed <strong id="signin-sent-to"></strong>. Enter the 6-digit code below, or tap the link in the email.</p>
+        <p class="form-instruction">Code from your email</p>
+        <div class="modern-input-wrapper">
+          <input type="text" id="signin-code" placeholder="123456" inputmode="numeric" autocomplete="one-time-code" maxlength="6">
+        </div>
+        <button id="signin-verify-btn" class="primary-action-btn">Sign in</button>
+        <button id="signin-back-btn" class="text-btn">Use a different email</button>
+        <p id="signin-code-error" class="auth-error"></p>
       </div>
     </div>
   </div>
 
+  <!-- ============================================================= -->
+  <!--  FIRST-RUN GARDEN SETUP                                       -->
+  <!-- ============================================================= -->
+  <div id="view-setup" class="fullscreen-view hidden">
+    <div class="auth-card">
+      <div class="auth-brand">🌱</div>
+      <h1 class="auth-title">Set up your garden</h1>
+      <p class="auth-subtitle">Just a name and a location, and you're ready to go.</p>
+
+      <p class="form-instruction">Garden name</p>
+      <div class="modern-input-wrapper">
+        <input type="text" id="setup-name" placeholder="e.g. Home, The allotment">
+      </div>
+
+      <p class="form-instruction">Location</p>
+      <div class="modern-input-wrapper">
+        <input type="text" id="setup-postcode" placeholder="Postcode, e.g. HP7 0AA" autocomplete="postal-code">
+      </div>
+      <button id="setup-find-btn" class="secondary-action-btn">Find postcode</button>
+
+      <div class="setup-or">or</div>
+      <button id="setup-locate-btn" class="secondary-action-btn">📍 Use my current location</button>
+
+      <p id="setup-location-confirm" class="setup-location-confirm hidden"></p>
+      <p id="setup-error" class="auth-error"></p>
+
+      <button id="setup-create-btn" class="primary-action-btn" disabled>Create my garden</button>
+    </div>
+  </div>
+
+  <!-- ============================================================= -->
+  <!--  THE APP  (only shown once signed in with a garden)           -->
+  <!-- ============================================================= -->
+  <div id="app-root" class="hidden">
+
+    <div class="app-container">
+
+      <div class="app-header">
+        <h2 class="main-app-title">🌱 What Gardening Today?</h2>
+        <button id="settings-btn" class="settings-icon-btn" aria-label="Settings">⚙️</button>
+      </div>
+
+      <main id="main-content">
+
+        <section id="view-today" class="view-section active-view">
+
+          <div class="weather-widget">
+            <div class="weather-main">
+              <img id="weather-icon" class="weather-icon" alt="Weather icon">
+              <h1 id="weather-temp">--°C</h1>
+            </div>
+            <p id="weather-desc">Loading weather...</p>
+          </div>
+
+          <div id="task-container">
+            <div class="loading-spinner-box">Loading your garden tasks...</div>
+          </div>
+        </section>
+
+        <section id="view-garden" class="view-section">
+
+          <div class="section-header">
+            <div class="section-accent-bar"></div>
+            <h2 class="section-title">Add to My Garden</h2>
+          </div>
+          <div class="app-card">
+            <p class="form-instruction">1. Choose a Category</p>
+
+            <div class="category-tiles-grid">
+              <button class="tile-btn" onclick="selectCategory('Lawn', this)">
+                <span class="tile-icon">🌱</span>
+                <span class="tile-label">Lawn</span>
+              </button>
+              <button class="tile-btn" onclick="selectCategory('Beds', this)">
+                <span class="tile-icon">🪵</span>
+                <span class="tile-label">Beds</span>
+              </button>
+              <button class="tile-btn" onclick="selectCategory('Trees & shrubs', this)">
+                <span class="tile-icon">🌳</span>
+                <span class="tile-label">Trees & Shrubs</span>
+              </button>
+              <button class="tile-btn" onclick="selectCategory('Veg & herbs', this)">
+                <span class="tile-icon">🥕</span>
+                <span class="tile-label">Veg & Herbs</span>
+              </button>
+              <button class="tile-btn" onclick="selectCategory('Garden structures', this)">
+                <span class="tile-icon">🏡</span>
+                <span class="tile-label">Structures</span>
+              </button>
+              <button class="tile-btn" onclick="selectCategory('Tools', this)">
+                <span class="tile-icon">🛠️</span>
+                <span class="tile-label">Tools</span>
+              </button>
+              <button class="tile-btn full-width" onclick="selectCategory('Plants & flowers', this)">
+                <span class="tile-icon">🌸</span>
+                <span class="tile-label">Plants & Flowers</span>
+              </button>
+            </div>
+
+            <p class="form-instruction">2. Select Item</p>
+            <div id="pill-box" class="pill-cloud">
+              <div class="pill-placeholder">Select a category above...</div>
+            </div>
+
+            <p class="form-instruction">3. My Reference (Optional)</p>
+            <div class="modern-input-wrapper">
+              <input type="text" id="custom-name" placeholder="e.g., Front Yard, Red Planter" oninput="validateForm()">
+            </div>
+
+            <button id="add-asset-btn" class="primary-action-btn" disabled>Add to My Garden</button>
+          </div>
+
+          <div class="section-header">
+            <div class="section-accent-bar"></div>
+            <h2 class="section-title">My Garden</h2>
+          </div>
+          <div id="inventory-list" class="garden-container">
+            <div class="loading-spinner-box">Loading inventory...</div>
+          </div>
+
+        </section>
+
+      </main>
+
+      <nav class="app-nav-bar">
+        <button id="nav-today" class="nav-item active" onclick="switchTab('today', this)">
+          <span class="nav-item-icon">📋</span>
+          <span>Today's Tasks</span>
+        </button>
+        <button id="nav-profile" class="nav-item" onclick="switchTab('garden', this)">
+          <span class="nav-item-icon">🏡</span>
+          <span>My Garden</span>
+        </button>
+      </nav>
+
+    </div>
+
+    <!-- Brief "Undo" banner shown right after hiding a task -->
+    <div id="undo-toast" class="undo-toast">
+      <span id="undo-toast-message"></span>
+      <button id="undo-toast-btn" class="undo-toast-btn">Undo</button>
+    </div>
+
+    <!-- Settings: list of hidden tasks + sign out, opened via the gear icon -->
+    <div id="hidden-tasks-modal" class="modal-overlay hidden">
+      <div class="modal-panel">
+        <div class="modal-header">
+          <h2 class="section-title">Settings</h2>
+          <button id="close-hidden-modal" class="modal-close-btn" aria-label="Close">✕</button>
+        </div>
+        <p class="form-instruction">Hidden Tasks</p>
+        <div id="hidden-tasks-list" class="hidden-tasks-list">
+          <div class="loading-spinner-box">Loading...</div>
+        </div>
+        <div class="signout-row">
+          <button id="signout-btn" class="signout-btn">Sign out</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- supabase-js must load before app.js -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="app.js"></script>
 </body>
 </html>
