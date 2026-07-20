@@ -81,7 +81,7 @@ async function route() {
   const { data: { session } } = await sb.auth.getSession();
   if (!session) {
     currentGardenId = null;
-    showSigninEmailStep();
+    showSigninDefault();
     showView("signin");
     return;
   }
@@ -116,8 +116,45 @@ function setSplashMessage(text, showRetry) {
 
 
 /* ==========================================================================
- *  SIGN IN  (emailed 6-digit code, with the magic-link return handled too)
+ *  SIGN IN  (Google — primary; emailed 6-digit code — kept working as a
+ *  fallback, reachable via "Use email instead")
  * ========================================================================== */
+
+function showSigninDefault() {
+  // The screen you land on: Google front and centre, email flow tucked away.
+  document.getElementById("signin-google-step").classList.remove("hidden");
+  document.getElementById("signin-email-flow").classList.add("hidden");
+  document.getElementById("signin-google-error").textContent = "";
+  showSigninEmailStep(); // reset the email flow's internal state for next time
+}
+
+function showEmailFlow() {
+  document.getElementById("signin-google-step").classList.add("hidden");
+  document.getElementById("signin-email-flow").classList.remove("hidden");
+}
+
+async function handleGoogleSignIn() {
+  const errEl = document.getElementById("signin-google-error");
+  errEl.textContent = "";
+
+  const btn = document.getElementById("signin-google-btn");
+  btn.disabled = true;
+
+  try {
+    const redirect = window.location.origin + window.location.pathname;
+    const { error } = await sb.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: redirect }
+    });
+    if (error) throw error;
+    // On success the browser navigates away to Google, then back again —
+    // onAuthStateChange picks up the returned session and calls route().
+  } catch (err) {
+    console.error("Google sign-in failed:", err);
+    errEl.textContent = "Couldn't start Google sign-in. Check your connection and try again.";
+    btn.disabled = false;
+  }
+}
 
 function showSigninEmailStep() {
   document.getElementById("signin-email-step").classList.remove("hidden");
@@ -976,6 +1013,13 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // --- Sign-in screen ---
+  const googleBtn = document.getElementById("signin-google-btn");
+  if (googleBtn) googleBtn.addEventListener("click", handleGoogleSignIn);
+  const useEmailBtn = document.getElementById("signin-use-email-btn");
+  if (useEmailBtn) useEmailBtn.addEventListener("click", showEmailFlow);
+  const useGoogleBtn = document.getElementById("signin-use-google-btn");
+  if (useGoogleBtn) useGoogleBtn.addEventListener("click", showSigninDefault);
+
   const sendBtn = document.getElementById("signin-send-btn");
   if (sendBtn) sendBtn.addEventListener("click", handleSendCode);
   const verifyBtn = document.getElementById("signin-verify-btn");

@@ -591,6 +591,29 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
   margin-top: 8px;
 }
 
+/* --- GOOGLE SIGN-IN BUTTON --- */
+.google-signin-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: #FFFFFF;
+  color: #3C4043;
+  font-weight: 600;
+  font-size: 15px;
+  border: 1.5px solid var(--border-color);
+  padding: 13px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, transform 0.1s ease;
+}
+
+.google-signin-btn:active { transform: scale(0.98); background-color: #F8F8F8; }
+.google-signin-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.google-signin-icon { width: 18px; height: 18px; flex-shrink: 0; }
+
+
 .secondary-action-btn {
   width: 100%;
   background: var(--bg-card);
