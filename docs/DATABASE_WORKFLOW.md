@@ -427,6 +427,14 @@ Choosing **Garden Data → Publish to app** runs, in order:
 
 **Garden Data → Check before publish (no changes)** runs the gate and writes the report **without touching the database.** Run it before a real publish, and after any large authoring session, to see what would block and what coverage gaps exist. It is always safe.
 
+### If a publish fails
+
+The report's **"Where the push stopped"** section is the first thing to read. It gives the step the push was on, how many rows were outstanding at that moment, and which steps had already completed. That tells you immediately whether the failure was in reading the workbook, upserting the catalogue, or reconciling one of the three membership tables.
+
+Because the reconcilers delete before they insert, a push that fails during a membership step can leave rows removed and their replacements unwritten. Nothing curated is ever lost — blueprints and tasks are only ever retired, never deleted — but a task can be left with no target, which means it silently stops appearing. **The fix is always to complete a successful publish**, which rebuilds the desired set from scratch and repairs anything left half-done.
+
+If a failure resists a straight re-run, the shape of the outstanding rows is the usual culprit. PostgREST rejects a batch whose objects do not all carry an identical set of fields. The immediate workaround is to split the work across two publishes so that each carries only one shape: fill the `Retired` cell on the tasks carrying one kind of target, publish, clear those cells, and publish again. `Publish.gs` now groups rows by shape before sending, so this should not recur — but the technique is worth knowing.
+
 ### Habits worth keeping
 
 - **Publish after authoring, or the app won't see your edits.** A silent gap between the workbook and the app is the one failure this workflow invites; the post-publish report and the dry run are the guard against it.
