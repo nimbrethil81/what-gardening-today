@@ -8,6 +8,82 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **MINOR** (e.g. 1.0 → 1.1) — user-facing features, UI changes, and bug fixes within the current phase.
 
 ---
+## [2.2] — 2026-07-23
+
+The first batch of a horticultural quality review of `Master_Task_Matrix`, covering `TASK_0001`–`TASK_0049`. The app's architecture has been sound since 2.0; its *advice* had never been read end to end by a horticultural eye. This entry is mostly content, and it found more than expected — including one recommendation that was illegal and several that would damage the plant or the person following them.
+
+It also records a latent fault in the publish pipeline that these edits happened to be the first ever to expose.
+
+### Added
+- **Three collections**, each created because a task was right for most of its audience and wrong for some:
+  - `GROUP_LAWN_RENOVATION` (Ryegrass, Fine Fescue, Mixed Utility) — the lawns that tolerate autumn scarification, hollow-tine aeration, overseeding and top dressing. Bentgrass is excluded because hard two-directional scarification damages a stoloniferous surface; Buffalo Grass because it is a warm-season grass and an autumn renovation strips it just as it enters dormancy, with no growth left to recover.
+  - `GROUP_LAWN_STANDARD_FEED` (Ryegrass, Mixed Utility) — the lawns that take a full-rate high-nitrogen spring feed. Fine turf wants low nitrogen; high nitrogen encourages annual meadow-grass, thatch and fusarium.
+  - `GROUP_BED_CLEARED` (Raised, Annual Bedding, Cutting Garden) — beds that are genuinely empty between plantings, and can therefore have manure forked into them.
+- **`TASK_0623` "Recut Lawn Edges"** — split out of `TASK_0011`, which had merged two different jobs at one cadence (see Fixed). Twice a year, half-moon iron.
+- **`TASK_0624` "Check Shed Roof Felt"** — split out of `TASK_0037`, so that replacing roof felt carries its own working-at-height warning rather than sitting inside a 60-minute painting job. Suppressed above 15mph wind.
+- **A standard chemical-safety line** on every task naming a pesticide, herbicide or fungicide (`TASK_0014`, `0015`, `0038`, `0046`): read and follow the label, wear gloves, don't apply in wind, keep children and pets off until dry. In the UK the label is the law, and none of these tasks said so. A shorter wood-treatment variant on `TASK_0034` and `TASK_0037`.
+- **Ordering hints across the spring and autumn lawn programmes.** September made a lawn owner eligible for nine tasks with an implied order (moss treatment → scarify → aerate → overseed → top dress → feed) that nothing in the data expressed. Each task now says where it sits. Overseeding before scarification wastes the seed, and nothing previously prevented it.
+- **A "Where the push stopped" section in the publish report**, showing the step reached, the rows outstanding at that point, and the steps completed first.
+
+### Changed
+- **Thirty-seven tasks rewritten** across the batch, and five `Retired` cells corrected. Details in Fixed below.
+- **Weather gates applied where they were missing.** Rain suppression on mowing (`TASK_0001`–`0003` — mowing wet grass tears it, clogs the mower and is a slip risk), on weedkiller application (`TASK_0014`, `0038`), on top dressing (`TASK_0017`) and on patio and timber work (`TASK_0033`, `0034`, `0037`). A 10°C floor on the two timber-treatment tasks, which will not cure below it.
+- **`Estimated_Minutes` made honest.** Hand hollow-tining a lawn was 60 minutes (now 150); treating a whole fence boundary was 90 (now 240); top dressing 60 (now 120). The old figures were out by multiples, which matters now the value is destined for the UI.
+- **`TASK_0011` narrowed to shear-trimming only**, its recut work moving to `TASK_0623`.
+- **`TASK_0048` retargeted** from `GROUP_TENDER_BULB` to `PLANT_DAHLIA` and renamed "Lift and Store Dahlia Tubers", the instruction being dahlia-specific throughout (see Fixed).
+- **Publish pipeline (`Publish.gs`) hardened.** Every `task_target` row now carries a uniform key set; `sbInsert_` and `sbUpsert_` group rows by key signature before sending; and the push now refuses to build targeting links it cannot complete, naming the offending tasks, before the reconcile runs rather than silently skipping them.
+
+### Fixed
+
+**Illegal or dangerous**
+- **`TASK_0038` recommended sodium chlorate**, banned in the UK since 2009 and illegal to sell or use. It also recommended glyphosate on a drive without noting that most amateur labels prohibit use where run-off can reach a drain, and offered a flame gun with no fire warning. Rewritten around hand-weeding and boiling water, with the chemical names removed.
+- **`TASK_0040` told a novice to run a paraffin heater in a sealed glass box** with no ventilation warning — paraffin produces carbon monoxide and large volumes of water vapour — and said nothing about greenhouse electrics needing an RCD-protected outdoor circuit. The only genuine injury risk in the batch.
+- **`TASK_0037` presented re-felting a shed roof as part of a 60-minute painting job.** Now split, with an explicit working-at-height warning.
+
+**Horticulturally wrong**
+- **`TASK_0024` recommended forking grit into clay at 5kg/m² to a depth of 30cm.** That quantity is a dusting — far too little to change clay's structure, and small additions can make it worse. Digging 30cm through an established herbaceous or shrub border destroys it, and the months included October and November, when clay is wet. Rewritten around bulky organic matter, with raised beds as the fallback and an explicit "never work soil wet enough to stick to your boots".
+- **`TASK_0047` gave bulb planting depth as two to three times the bulb's *diameter*.** The rule is the bulb's *height*. For tall narrow bulbs like tulips and daffodils that halves the correct depth. Corrected despite the task being retired, so the error isn't inherited when the job is re-authored.
+- **`TASK_0048` applied one recipe to three genera.** "After the first frost blackens the foliage" is dahlia-correct and wrong for gladioli, which are lifted before frost. "Dry for 24 hours" is far too short — dahlia tubers need two to three weeks upside down or they rot in storage. Cannas want slightly moist compost, not dry.
+- **`TASK_0008` applied a full-rate high-nitrogen feed to fine-turf and warm-season lawns**, and `TASK_0004` applied an autumn renovation to a warm-season grass. Both resolved by the new collections.
+- **`TASK_0023` forked manure into the top 25cm of established herbaceous and mixed shrub borders**, severing feeding roots and spearing dormant crowns. It also overlapped `TASK_0029`'s liming window, and lime and manure applied together cancel each other out — and said nothing about manured ground making carrots and parsnips fork.
+- **`TASK_0046` was a calendar fungicide programme**, firing every 14 days from May to September whether or not the rose had blackspot: up to ten applications, far beyond any amateur label's annual maximum. Reframed as condition-triggered, with hygiene and resistant varieties promoted to the front.
+
+**Internally contradictory**
+- **`TASK_0002` said "mow more frequently in peak growing season" while its `Frequency_Days` was 14** — twice as long as spring's 7. The data said the opposite of the text.
+- **`TASK_0001` told the user to cut 50-60mm grass down to 25mm while never removing more than a third of the blade.** Both instructions in one sentence, impossible to follow.
+- **`TASK_0013` said not to mow overseeded areas for 6-8 weeks**, which in April meant an unmown lawn until late June, contradicting the mowing tasks firing every 7-14 days. It also isn't right: new grass is topped once it reaches about 5cm.
+- **`TASK_0014` ran a selective weedkiller every 28 days from April to September** — up to six applications where labels almost universally cap at one or two, which is both illegal and damaging — and its window ran straight over both overseeding tasks, killing the seedlings.
+- **`TASK_0011` recut the lawn edge with a half-moon iron every 14 days.** Each recut takes a slice off the lawn and it does not grow back; over a season that is several centimetres of lawn, irreversibly. The fortnightly job is shear-trimming.
+- **`TASK_0039` targeted the shed but instructed the user to check drainage "around the greenhouse and patio".** A shed-only owner was told to inspect things they don't have; a greenhouse-only owner never got the check at all.
+
+**Smaller**
+- **`TASK_0025` had a novice forking a bed in February**, when bulbs are just below the surface and herbaceous crowns are invisible.
+- **`TASK_0032` stopped sweeping the patio in November**, excluding exactly the months when algae on wet paving is at its most slippery.
+- **`TASK_0033` recommended a pressure washer** with no warning that it permanently pits soft stone and blows the sand out of block paving joints, and no eye protection.
+- **`TASK_0034` had no rain suppression or temperature floor**, so the app would suggest painting a fence in October drizzle, and did not warn that fence treatment scorches plants growing against the panel.
+- **`TASK_0015` could fire alongside `TASK_0008`**, and lawn sand already contains nitrogen — a double feed. It also invited confusion between "lawn sand" (a moss killer) and the "sharp sand" of `TASK_0006` and `TASK_0017`.
+- **`TASK_0030` read "remove algae and green algae"**, garbled. **`TASK_0017` used "lute"**, professional greenkeeping jargon, with no finishing point given. **`TASK_0036` said "dispose of chemicals safely"** without saying how. **`TASK_0045` used "drip zone"**. **`TASK_0035` used "postcrete"** unexplained, and neither fence task mentioned that you cannot alter a neighbour's fence without asking.
+- **The `Retired` column read "Tomestone" rather than "Tombstone"** on `TASK_0027`, `0042`, `0043`, `0044` and `0047`.
+
+**Publish pipeline**
+- **A publish that needed to add both a blueprint-targeted and a collection-targeted `task_target` row in the same run failed** with PostgREST error `PGRST102` — "All object keys must match". Section 7 of `pushToSupabase_` built `{ task_id, blueprint_id }` for one kind of link and `{ task_id, collection_id }` for the other, and `reconcileById_` sent them as one batch; PostgREST rejects a batch whose objects carry different key sets. The fault has been latent since Stage 2 and never fired because every previous publish happened to add only one kind of link at a time. Nothing in the authored content was at fault.
+
+### Removed
+- **`TASK_0026` "Apply Compost"**, retired as a duplicate. It overlapped `TASK_0021` (Spring Mulching), `TASK_0022` (Autumn Mulching) and `TASK_0023` (Dig In Manure) on identical beds in identical months — in October a Cultivated Bed owner was told three separate times to put organic matter on the same bed. Tombstone, not deletion.
+
+### Known gaps and deferred work
+- **`TASK_0028` (Autumn Bed Clearance) and the three `GROUP_ALL_BEDS` weeding tasks (`TASK_0018`–`0020`) are unchanged and still carry known faults.** `TASK_0028` tells a novice to cut back herbaceous stems in October, which kills penstemon outright and strips winter structure from echinacea, rudbeckia, sedum, eryngium, gaura and verbena bonariensis — the same list `DESIGN_V2` cites as the reason `GROUP_HERBACEOUS_PERENNIAL` was abandoned. It also reaches the Mixed Shrub Border, where "cut back" invites cutting shrubs. The weeding tasks reach Gravel, Rock, Bog and Woodland beds, where hoeing and forking are wrong or impossible. All four are held pending review of the full matrix, because narrowing their targets would remove coverage that later tasks may already provide.
+- **Fine Fescue, Bentgrass and Buffalo Grass now have no spring feed task**, a direct consequence of narrowing `TASK_0008`. They need a half-rate fine-turf feed and, for Buffalo, a summer one. The coverage report does not flag this, because coverage asks only whether a blueprint receives *any* task.
+- **A missing-tasks list from this batch is held** for a review across the whole matrix, to avoid duplicating content that may already exist beyond `TASK_0049`. It includes rose pruning — the most important job in the rose year, with no task anywhere in this batch — slug and snail protection, lawn winter care, the dahlia lifecycle before planting out, and greenhouse shading.
+- **Four core jobs remain uncovered** since the 2.0 category-tier review retired them: deadheading, watering, staking and bulb planting (`TASK_0042`–`0044`, `0047`). Nothing live replaces them.
+- **`LAWN_BUFFALO` is worth questioning as a blueprint.** Buffalo grass is a warm-season grass not grown outdoors in the UK in any meaningful quantity, and its presence is what forced the exclusions on five separate lawn tasks. Retiring it would let them all return to a single `GROUP_GRASS_LAWN` target.
+
+### Developer notes
+- **A failed push can leave junction rows deleted and not replaced.** `reconcileById_` deletes before it inserts, so when the `task_target` insert failed, seven tasks (`TASK_0004`, `0006`, `0008`, `0012`, `0017`, `0023`, `0048`) were left with no targeting and would not have appeared for anyone. The damage was invisible only because every one of them is out of season in July. Repaired by a subsequent successful publish, which rebuilds the desired set from scratch. Reversing the order — insert first, delete second — would remove this exposure entirely and is safe, since the two sets are disjoint by construction; not done, and worth a decision.
+- **The gate and the push validate against different things.** The gate proves a task's target exists *in the workbook*; the push needs that target's *live database id*. A newly-declared collection satisfies the first and not yet the second, which is why the gate can pass while the push cannot complete. The new refusal in section 7 makes that failure explicit and, crucially, non-destructive.
+- **The immediate workaround, should anything like this recur**, is to publish twice with only one shape of link outstanding each time — retire the tasks carrying the other kind of target, publish, clear the cells, publish again. This is what restored the seven links before the code fix landed.
+- **No frontend file changed, so `CACHE_NAME` is not bumped.** This release is content and Apps Script only.
+- **Semicolon-delimited CSV remains mandatory** for authoring prompts covering `Master_Task_Matrix`, since `Valid_Months` uses internal commas.
 
 ## [2.0] — 2026-07-17
 
