@@ -84,6 +84,27 @@ It also records a latent fault in the publish pipeline that these edits happened
 - **The immediate workaround, should anything like this recur**, is to publish twice with only one shape of link outstanding each time — retire the tasks carrying the other kind of target, publish, clear the cells, publish again. This is what restored the seven links before the code fix landed.
 - **No frontend file changed, so `CACHE_NAME` is not bumped.** This release is content and Apps Script only.
 - **Semicolon-delimited CSV remains mandatory** for authoring prompts covering `Master_Task_Matrix`, since `Valid_Months` uses internal commas.
+---
+## [2.1] — 2026-07-20
+
+Google sign-in becomes the primary way into the app, removing the dependency on email delivery — and, in particular, curing the installed-iOS-PWA sign-in problem that emailed magic links couldn't. This entry also records two changes that shipped shortly after 2.0 but weren't yet written up.
+
+### Added
+- **Google sign-in (OAuth).** A "Continue with Google" button, now the primary sign-in method. Invite-only is preserved: public sign-ups stay disabled, so only email addresses added to the Supabase user list can get in, whichever provider they use. Google was chosen as the one free, viable social provider — Apple's Sign in with Apple needs a paid developer account, and Facebook Login needs heavy app/business review — and because an app-initiated OAuth flow returns cleanly into an installed iOS PWA, where an emailed magic link opens in Safari and never reaches the installed app.
+- **`config.js`** (with `config.example.js` as its template). The Supabase URL and anon key moved out of `app.js` into a separate config file the app never regenerates, so deploying a new `app.js` can no longer overwrite the credentials. `app.js` now shows a clear message if the config is missing or still holds placeholder values, instead of failing later as a misleading sign-in error.
+
+### Changed
+- **The sign-in screen leads with Google.** The emailed-code flow is retained but tucked behind a "Use email instead" link, and stays fully functional for reviving later (e.g. once custom email is configured for friend invitations).
+- **Service worker** bumped `gardening-v4` → `gardening-v7` across these changes.
+
+### Fixed
+- **The Hide button no longer shows through a completed task.** Completing a task fades its card to half-opacity; the red swipe-to-hide action sits behind the card and was bleeding through the translucent card. A completed card now removes that action entirely and stops responding to the swipe.
+
+### Notes
+- Email sign-in (and the Resend / custom-SMTP path toward it) is deliberately parked while the app is single-user. It becomes relevant again only for inviting friends, which independently requires a verified sending domain.
+- **Updating an installed iOS PWA can be stubborn.** Deleting the home-screen icon does not clear the site's cached files; a full update may require clearing the site under iOS Settings → Apps → Safari → Advanced → Website Data. Also note the PWA manifest's `start_url`/`scope` are fixed to the live path (`/what-gardening-today/`), so an icon added from the dev URL will open the live app — install from the intended environment.
+
+---
 
 ## [2.0] — 2026-07-17
 
