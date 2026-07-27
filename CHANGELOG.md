@@ -8,9 +8,181 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **MINOR** (e.g. 1.0 → 1.1) — user-facing features, UI changes, and bug fixes within the current phase.
 
 ---
-## [2.2] — 2026-07-23
+---
+## [2.3] — 2026-07-27
 
-The first batch of a horticultural quality review of `Master_Task_Matrix`, covering `TASK_0001`–`TASK_0049`. The app's architecture has been sound since 2.0; its *advice* had never been read end to end by a horticultural eye. This entry is mostly content, and it found more than expected — including one recommendation that was illegal and several that would damage the plant or the person following them.
+The second editorial review pass, and the first run under the item-scoped method
+introduced after 2.2: the Tools group reviewed as one complete set — all eighteen
+blueprints, every live task that reaches them, and the collection memberships and
+month coverage that determine what a user actually sees. Forty rows touched.
+
+The largest finding was not horticultural. Fifteen tasks carried `Valid_Months` of
+`1,12`, written meaning "January to December" and stored as the array `{1, 12}` —
+so they had been firing in January and December only since the day they were
+authored. That put strimmer-line replacement in midwinter, pressure-washer
+maintenance in the months nobody pressure-washes, and left leaf-blower care absent
+in October and November. Every instruction on those rows described a per-use or
+in-season job; none of them described a midwinter one. The data and the prose had
+been contradicting each other in plain sight.
+
+### Added
+- **Two collections**, each created because a task was right for part of its audience
+  and meaningless or unsafe for the rest:
+  - `GROUP_CUTTING_TOOLS` (Secateurs, Loppers, Hand Shears) — the bypass cutters that
+    carry infection between plants on their blades. Wiping blades with disinfectant is
+    a real job for these three and a nonsense one for a trowel or a wheelbarrow, which
+    is what `GROUP_HAND_TOOLS` would have reached.
+  - `GROUP_MAINS_POWERED` (Lawn Mower, Hedge Trimmer, Strimmer, Leaf Blower, Pressure
+    Washer, Chainsaw) — cable inspection and RCD use. Without a collection this would
+    have been six near-identical rows; the awkward member is the cordless machine with
+    no cable, and the instruction opens by telling battery users they can tick it off.
+- **Eleven tasks (`TASK_0651`–`TASK_0661`)** closing the gaps the review identified:
+  - **Winter storage** for the pressure washer (`0651`), chainsaw (`0652`), strimmer
+    (`0658`) and hedge trimmer (`0659`). Water left in a pressure-washer pump over a
+    UK winter cracks the housing, which usually costs more than the machine is worth,
+    and there was no task anywhere telling anyone to drain it.
+  - **`TASK_0653` "Chainsaw Safety Refresher"** — annual, before the winter cutting
+    season. Nothing in the matrix had told a novice that chainsaw work needs training,
+    what kickback is, or that anything overhead belongs to a tree surgeon.
+  - **`TASK_0654` "Clean Under the Mower Deck"** and **`TASK_0655` "Check Power Cable
+    and Use an RCD"** — the mower had three winter service tasks and nothing at all
+    across the six months it is used weekly.
+  - **`TASK_0656`/`TASK_0657` (watering can)** — rinsing out, and filling ahead so
+    seedlings are not watered straight from a cold tap. The can previously had one
+    task a year.
+  - **`TASK_0660` (hose spring check)** and **`TASK_0661` (leaf rake pre-season check)`**.
+- **A standard power-tool safety line**, in the manner of the chemical-safety line
+  added in 2.2: isolate the machine before touching a blade, wear eye protection, use
+  an RCD outdoors. It previously appeared on exactly one of the fifteen rows that
+  needed it.
+
+### Changed
+- **Twenty-nine tasks rewritten.** Details in Fixed below.
+- **Every `1,12` row re-monthed to the season the tool is actually used** rather than
+  a blanket twelve: hedge trimmer April–October, strimmer April–September, leaf blower
+  September–January, pressure washer March–October, gloves and chainsaw all year.
+- **The mower, strimmer and blower rewritten electric-first**, with petrol content kept
+  but clearly labelled as a branch. Every one of them previously opened with spark
+  plugs and air filters, leaving the majority of users hunting for a component their
+  machine does not have.
+- **"Check your handbook" added throughout the powered-tool set**, as the standing rule
+  for anything where the correct figure varies by machine.
+- **Cooldowns corrected where a second seasonal window was unreachable.** `TASK_0056`,
+  `0059`, `0062` and `0067` each declared two months with a 365-day cooldown, so the
+  later window could never fire — the task ran once a year in the earlier month and the
+  second window was decorative. `TASK_0061` and `0063` had the same fault at 180 days.
+- **`TASK_0066` "End of Season Tool Clean" broadened** to absorb the retired spade and
+  fork tasks, and to distinguish linseed oil (digging tools, wooden handles) from light
+  machine oil (anything that cuts).
+- **`TASK_0461` retargeted** from `TOOL_LOPPERS` to `GROUP_CUTTING_TOOLS` and renamed
+  "Sanitise Blades Before and After Pruning". Secateurs are what people actually prune
+  with and had no sanitising task at all.
+- **`TASK_0477` consolidated into "Chainsaw Pre-Use Checks"**, absorbing the chain
+  brake test and a bar-oil check. Chain tension, oil level and brake function all
+  happen in the same two minutes before starting the saw; as separate cards the
+  chainsaw became eligible for eight tasks a month, which is nagging rather than
+  maintenance.
+- **`TASK_0622` "Store watering can" rewritten** and renamed. Its instruction was a
+  restatement of its title, and it told the user to put the can away in October —
+  during the main autumn planting season, when new trees, shrubs and potted bulbs still
+  need watering.
+- **Column M (`Reviewed`) stamped `E 2026-07-27`** on the forty live rows in this group.
+
+### Fixed
+- **Fifteen tasks firing in the wrong two months of the year.** See the note above.
+  `TASK_0460`, `0461`, `0462`, `0463`, `0465`, `0467`, `0469`, `0473`, `0474`, `0475`,
+  `0476`, `0477`, `0478`, `0479` and `0480`.
+- **A wrong disease-and-tool pairing** — the same class of error as the scarlet lily
+  beetle on lily of the valley. `TASK_0461` gave honey fungus as its reason for
+  sanitising blades, but honey fungus spreads underground through rhizomorphs and does
+  not travel on pruning tools. Replaced with diseases that genuinely do: canker, coral
+  spot, fireblight, silver leaf.
+- **A chainsaw file size stated as universal.** `TASK_0478` specified a 5.5mm round
+  file. File diameter is set by chain pitch, and most domestic saws take 4.0mm; a
+  novice following this would round the cutters over and ruin the chain. Now defers to
+  the handbook. The same task omitted depth gauges entirely, without which a chain
+  eventually stops cutting and starts grabbing.
+- **`TASK_0479` instructed chain oil into a nose sprocket**, which takes grease from a
+  grease gun, on bars that mostly have no grease point at all. Rewritten as bar-groove
+  cleaning and bar flipping, with the grease step conditional on the handbook.
+- **`TASK_0459` told the user to sharpen both lopper blades.** Filing the flat hooked
+  counter-blade of a bypass lopper stops the two blades passing cleanly and cannot be
+  undone. `TASK_0060` had this right for secateurs since it was written.
+- **`TASK_0066` sent linseed oil to cutting tools.** Applied across `GROUP_HAND_TOOLS`
+  it reached secateurs, loppers and shears, where linseed dries to a sticky film that
+  gums the pivot — and it contradicted `TASK_0059`, `0060` and `0460`, which all
+  correctly specify machine oil. The 2.0 narrowing kept this task off the chainsaw; it
+  did not make it safe for every member it kept.
+- **Two duplicate jobs.** In November a spade or fork owner was told to clean and oil
+  the same tool twice, by `TASK_0066` and by `TASK_0061`/`0063`. In March a mower owner
+  was told to sharpen the blade twice, by `TASK_0056` and by `TASK_0057`, which
+  includes sharpening in the full service.
+- **Eleven tasks put a novice's hands next to a blade without saying to isolate the
+  machine.** `TASK_0056`, `0057`, `0058`, `0466`, `0467`, `0468`, `0469`, `0470`,
+  `0472`, `0473` and `0478`. `TASK_0465` was the only row in the powered set that said
+  it.
+- **No pressure-washer task mentioned injection injury.** A lance jet can drive water
+  through skin and needs hospital treatment; nor was there any mention of eye protection
+  or RCD use for mains equipment operated in the wet.
+- **`TASK_0480` had a novice running a chainsaw** to test the brake with no protective
+  equipment, footing or grip mentioned — the single most hazardous instruction in the
+  group.
+- **`TASK_0462` told leather gloves to be washed in warm soapy water**, which shrinks
+  and stiffens them, while `TASK_0464` separately treated them as leather to be
+  conditioned. Now split by material.
+- **`TASK_0461` specified a 10% bleach solution**, which pits blade steel and rusts the
+  pivot, with no rinse-and-oil step afterwards. It also used "rubbing alcohol", a term
+  a UK user will not find on a shelf.
+
+### Removed
+- **`TASK_0061` "Clean and Oil Spade"** and **`TASK_0063` "Inspect and Clean Garden
+  Fork"** — absorbed into `TASK_0066`, which now carries their tine and handle checks
+  for every hand tool. Tombstones, not deletions.
+- **`TASK_0460` "Oil Loppers Pivot Joint"** — pivot oiling is now covered once a year
+  by `TASK_0066` for all three cutting tools, not just loppers.
+- **`TASK_0480` "Check Chainsaw Chain Brake"** — absorbed into `TASK_0477`.
+
+### Known gaps and deferred work
+- **The spade and fork drop from two annual touchpoints to one**, the direct
+  consequence of folding `TASK_0061` and `0063` into a November-only group task. A
+  deliberate trade, reversible by running `TASK_0066` in March as well at a 140-day
+  cooldown.
+- **Hedge cutting during the bird nesting season is still unaddressed.** Damaging an
+  active nest is an offence, which effectively rules out hedge cutting from March to
+  August. That warning belongs on the hedge-*cutting* task, which lives outside the
+  Tools group, and is logged for the review pass that covers it.
+- **`TASK_0082` and `TASK_0083` can never be editorially reviewed.** Both are retired
+  migration placeholders with no instruction text. They are excluded from the review
+  count because the audit counts live tasks only, which is the correct behaviour.
+- **The remaining categories are unreviewed.** Lawn, Beds, Trees & shrubs, Plants &
+  flowers, Veg & herbs and Garden structures have had no item-scoped pass, and the
+  twenty-six tasks authored in 2.2 (`0625`–`0650`) still need the independent review
+  that entry flagged.
+
+### Developer notes
+- **`Valid_Months` is a set, never a range.** `1,12` means January and December. There
+  is no range syntax and the schema will never reject the shorter reading, because
+  `{1,12}` is a perfectly valid two-element array. This is worth an explicit line in
+  `docs/DATABASE_WORKFLOW.md` §9 and a WARNING in `Audit.gs`: a task whose months are
+  exactly `{1,12}` with a cooldown of 90 days or less is almost certainly a mis-written
+  "all year".
+- **The Coverage_Grid tab needs rebuilding after this publish.** The pre-change grid
+  faithfully reported the `1,12` blanks, which is what surfaced the fault — it was
+  right, and the data was wrong.
+- **Rows 644–647 of `Master_Task_Matrix` are out of ID order** (`TASK_0018`–`0020` and
+  `0028`, cut and re-pasted at the bottom during the 2.2 retargeting). Harmless, since
+  nothing depends on row order, but "the last row" and "the highest Task ID" are no
+  longer the same row.
+- **`TASK_0471` does not exist.** A numbering gap, not a lost task — confirmed against
+  a cut of the matrix that included retired rows.
+- **No frontend file changed, so `CACHE_NAME` is not bumped.** This release is content
+  only.
+
+## [2.2] — 2026-07-25
+
+A horticultural quality review of `Master_Task_Matrix`. The app's architecture has been sound since 2.0; its *advice* had never been read end to end by a horticultural eye. This entry is mostly content, and it found more than expected — including one recommendation that was illegal and several that would damage the plant or the person following them.
+
+The review ran in two stages. First, a detailed pass over `TASK_0001`–`TASK_0049` — where the bulk of the fixes below come from. Then, a lighter sweep over the whole matrix to close the gaps that first pass could only *suspect*, since a fifty-row slice can't tell you what's missing for an item whose other tasks sit hundreds of rows away. The second stage both authored the missing content and corrected several first-stage conclusions (rose pruning, for instance, was reported missing but already existed further down the file).
 
 It also records a latent fault in the publish pipeline that these edits happened to be the first ever to expose.
 
@@ -21,16 +193,27 @@ It also records a latent fault in the publish pipeline that these edits happened
   - `GROUP_BED_CLEARED` (Raised, Annual Bedding, Cutting Garden) — beds that are genuinely empty between plantings, and can therefore have manure forked into them.
 - **`TASK_0623` "Recut Lawn Edges"** — split out of `TASK_0011`, which had merged two different jobs at one cadence (see Fixed). Twice a year, half-moon iron.
 - **`TASK_0624` "Check Shed Roof Felt"** — split out of `TASK_0037`, so that replacing roof felt carries its own working-at-height warning rather than sitting inside a 60-minute painting job. Suppressed above 15mph wind.
+- **Twenty-six new tasks (`TASK_0625`–`TASK_0650`)** authored in the second stage to close coverage gaps the first pass identified:
+  - **Lawn winter set (`0625`–`0628`)** — clear fallen leaves, stay off frosted or waterlogged turf, brush off worm casts, and check for chafer grubs and leatherjackets. A grass lawn previously received no task at all in December, January or February; it now has coverage in every month.
+  - **Red thread (`0635`)** — the commonest UK lawn disease, and counter-intuitive: it signals the lawn is underfed, so the fix is a summer feed rather than a fungicide (of which none is approved for amateur use anyway). Respects the `TASK_0008` narrowing by calling for a half rate on fine turf.
+  - **Dahlia lifecycle (`0629`–`0634`)** — a plant that had two tasks for a year-round cycle now has a complete loop: check stored tubers, start into growth, slug-protect the shoots, plant out, stake, deadhead. This also resolves `TASK_0049`'s dangling reference to a staking task that didn't exist.
+  - **Rose (`0636`–`0638`)** — deadheading, sucker removal (pull, don't cut) and greenfly, three jobs the retired category-tier tasks used to cover generically.
+  - **Greenhouse (`0639`–`0642`)** — shading, ventilate-and-damp-down, pest checks and winter insulation. The building was well covered; growing *in* it was not.
+  - **Miscellaneous gaps (`0643`–`0650`)** — protect new bedding and planters from late frost, clear the fence base, reduce climber weight before winter gales, plan crop rotation, plant daffodil bulbs, water newly planted trees (on `GROUP_TREE_GENERIC`), and bed-level spring slug protection.
 - **A standard chemical-safety line** on every task naming a pesticide, herbicide or fungicide (`TASK_0014`, `0015`, `0038`, `0046`): read and follow the label, wear gloves, don't apply in wind, keep children and pets off until dry. In the UK the label is the law, and none of these tasks said so. A shorter wood-treatment variant on `TASK_0034` and `TASK_0037`.
 - **Ordering hints across the spring and autumn lawn programmes.** September made a lawn owner eligible for nine tasks with an implied order (moss treatment → scarify → aerate → overseed → top dress → feed) that nothing in the data expressed. Each task now says where it sits. Overseeding before scarification wastes the seed, and nothing previously prevented it.
 - **A "Where the push stopped" section in the publish report**, showing the step reached, the rows outstanding at that point, and the steps completed first.
 
 ### Changed
-- **Thirty-seven tasks rewritten** across the batch, and five `Retired` cells corrected. Details in Fixed below.
+- **Thirty-seven tasks rewritten** in the first-stage pass over `TASK_0001`–`TASK_0049`, and five `Retired` cells corrected. Details in Fixed below.
 - **Weather gates applied where they were missing.** Rain suppression on mowing (`TASK_0001`–`0003` — mowing wet grass tears it, clogs the mower and is a slip risk), on weedkiller application (`TASK_0014`, `0038`), on top dressing (`TASK_0017`) and on patio and timber work (`TASK_0033`, `0034`, `0037`). A 10°C floor on the two timber-treatment tasks, which will not cure below it.
 - **`Estimated_Minutes` made honest.** Hand hollow-tining a lawn was 60 minutes (now 150); treating a whole fence boundary was 90 (now 240); top dressing 60 (now 120). The old figures were out by multiples, which matters now the value is destined for the UI.
 - **`TASK_0011` narrowed to shear-trimming only**, its recut work moving to `TASK_0623`.
 - **`TASK_0048` retargeted** from `GROUP_TENDER_BULB` to `PLANT_DAHLIA` and renamed "Lift and Store Dahlia Tubers", the instruction being dahlia-specific throughout (see Fixed).
+- **`TASK_0018`–`0020` (bed weeding) retargeted** from `GROUP_ALL_BEDS` to `GROUP_CULTIVATED_BED`. Hoeing and forking are wrong or impossible in Gravel, Rock, Bog and Woodland Shade beds. Gravel keeps coverage through its own `TASK_0502`; Bog, Rock and Woodland now have no weeding task and are logged as a content gap for a future pass.
+- **`TASK_0028` (Autumn Bed Clearance) rewritten** to name the seven plants that must be left standing over winter — penstemon, echinacea, rudbeckia, sedum, eryngium, gaura, verbena bonariensis — and to point the user to their spring cut-back tasks instead. It previously told a Herbaceous Border owner to cut these down in October, directly contradicting each plant's own leave-standing task.
+- **Per-tree watering tasks consolidated.** Six near-identical tasks (`TASK_0391`, `0402`, `0419`, `0422`, `0522`, `0535` — cherry, rowan, field maple, oak, willow, ash) retired in favour of one `Water Newly Planted Trees` task on `GROUP_TREE_GENERIC` (`TASK_0649`), which also extends the same care to the sixteen trees that previously had none.
+- **`TASK_0077` / `TASK_0078` given distinct names** — both read "Mulch/Feed Trees", identical target and months, showing a tree owner two identically-named cards in the same month. Now "Mulch Trees and Shrubs" and "Feed Trees and Shrubs". (The 2.0 entry records an earlier rename of this pair; the collision had re-formed since.)
 - **Publish pipeline (`Publish.gs`) hardened.** Every `task_target` row now carries a uniform key set; `sbInsert_` and `sbUpsert_` group rows by key signature before sending; and the push now refuses to build targeting links it cannot complete, naming the offending tasks, before the reconcile runs rather than silently skipping them.
 
 ### Fixed
@@ -42,7 +225,7 @@ It also records a latent fault in the publish pipeline that these edits happened
 
 **Horticulturally wrong**
 - **`TASK_0024` recommended forking grit into clay at 5kg/m² to a depth of 30cm.** That quantity is a dusting — far too little to change clay's structure, and small additions can make it worse. Digging 30cm through an established herbaceous or shrub border destroys it, and the months included October and November, when clay is wet. Rewritten around bulky organic matter, with raised beds as the fallback and an explicit "never work soil wet enough to stick to your boots".
-- **`TASK_0047` gave bulb planting depth as two to three times the bulb's *diameter*.** The rule is the bulb's *height*. For tall narrow bulbs like tulips and daffodils that halves the correct depth. Corrected despite the task being retired, so the error isn't inherited when the job is re-authored.
+- **`TASK_0047` gave bulb planting depth as two to three times the bulb's *diameter*.** The rule is the bulb's *height*. For tall narrow bulbs like tulips and daffodils that halves the correct depth. Corrected despite the task being retired, so the error isn't inherited when the job is re-authored — and the second-stage daffodil-planting task (`TASK_0648`) uses the corrected height rule.
 - **`TASK_0048` applied one recipe to three genera.** "After the first frost blackens the foliage" is dahlia-correct and wrong for gladioli, which are lifted before frost. "Dry for 24 hours" is far too short — dahlia tubers need two to three weeks upside down or they rot in storage. Cannas want slightly moist compost, not dry.
 - **`TASK_0008` applied a full-rate high-nitrogen feed to fine-turf and warm-season lawns**, and `TASK_0004` applied an autumn renovation to a warm-season grass. Both resolved by the new collections.
 - **`TASK_0023` forked manure into the top 25cm of established herbaceous and mixed shrub borders**, severing feeding roots and spearing dormant crowns. It also overlapped `TASK_0029`'s liming window, and lime and manure applied together cancel each other out — and said nothing about manured ground making carrots and parsnips fork.
@@ -72,11 +255,11 @@ It also records a latent fault in the publish pipeline that these edits happened
 - **`TASK_0026` "Apply Compost"**, retired as a duplicate. It overlapped `TASK_0021` (Spring Mulching), `TASK_0022` (Autumn Mulching) and `TASK_0023` (Dig In Manure) on identical beds in identical months — in October a Cultivated Bed owner was told three separate times to put organic matter on the same bed. Tombstone, not deletion.
 
 ### Known gaps and deferred work
-- **`TASK_0028` (Autumn Bed Clearance) and the three `GROUP_ALL_BEDS` weeding tasks (`TASK_0018`–`0020`) are unchanged and still carry known faults.** `TASK_0028` tells a novice to cut back herbaceous stems in October, which kills penstemon outright and strips winter structure from echinacea, rudbeckia, sedum, eryngium, gaura and verbena bonariensis — the same list `DESIGN_V2` cites as the reason `GROUP_HERBACEOUS_PERENNIAL` was abandoned. It also reaches the Mixed Shrub Border, where "cut back" invites cutting shrubs. The weeding tasks reach Gravel, Rock, Bog and Woodland beds, where hoeing and forking are wrong or impossible. All four are held pending review of the full matrix, because narrowing their targets would remove coverage that later tasks may already provide.
-- **Fine Fescue, Bentgrass and Buffalo Grass now have no spring feed task**, a direct consequence of narrowing `TASK_0008`. They need a half-rate fine-turf feed and, for Buffalo, a summer one. The coverage report does not flag this, because coverage asks only whether a blueprint receives *any* task.
-- **A missing-tasks list from this batch is held** for a review across the whole matrix, to avoid duplicating content that may already exist beyond `TASK_0049`. It includes rose pruning — the most important job in the rose year, with no task anywhere in this batch — slug and snail protection, lawn winter care, the dahlia lifecycle before planting out, and greenhouse shading.
-- **Four core jobs remain uncovered** since the 2.0 category-tier review retired them: deadheading, watering, staking and bulb planting (`TASK_0042`–`0044`, `0047`). Nothing live replaces them.
-- **`LAWN_BUFFALO` is worth questioning as a blueprint.** Buffalo grass is a warm-season grass not grown outdoors in the UK in any meaningful quantity, and its presence is what forced the exclusions on five separate lawn tasks. Retiring it would let them all return to a single `GROUP_GRASS_LAWN` target.
+- **Bog, Rock and Woodland Shade beds now have no weeding task.** A consequence of narrowing `TASK_0018`–`0020` to `GROUP_CULTIVATED_BED` (Gravel is separately covered by `TASK_0502`). Bed-specific weeding for these three — hand-weeding only, no hoeing or forking near alpines and bulbs — is logged for a future authoring pass rather than written here.
+- **Fine Fescue, Bentgrass and Buffalo Grass have no spring feed task**, a direct consequence of narrowing `TASK_0008`. They need a half-rate fine-turf feed and, for Buffalo, a summer one. The coverage report does not flag this, because coverage asks only whether a blueprint receives *any* task, and these lawns receive plenty of others.
+- **`LAWN_BUFFALO` is worth questioning as a blueprint.** Buffalo grass is a warm-season grass not grown outdoors in the UK in any meaningful quantity, and its presence is what forced the exclusions on five separate lawn tasks and the two new lawn collections. Retiring it would let much of that return to a single `GROUP_GRASS_LAWN` target.
+- **The generation and QA process itself is being overhauled** in light of what this review exposed — the fixed task-count quota, the two-sentence instruction cap, and the row-batched (rather than item-scoped) review that made the first stage report gaps which didn't exist. That work targets `docs/DATABASE_WORKFLOW.md` and `Audit.gs` and is tracked separately.
+- **The 26 second-stage tasks (`0625`–`0650`) have not themselves been through an independent editorial review** — they were authored and checked in the same session, which the workflow explicitly warns against. They should go through a fresh item-scoped pass with the rest of the matrix.
 
 ### Developer notes
 - **A failed push can leave junction rows deleted and not replaced.** `reconcileById_` deletes before it inserts, so when the `task_target` insert failed, seven tasks (`TASK_0004`, `0006`, `0008`, `0012`, `0017`, `0023`, `0048`) were left with no targeting and would not have appeared for anyone. The damage was invisible only because every one of them is out of season in July. Repaired by a subsequent successful publish, which rebuilds the desired set from scratch. Reversing the order — insert first, delete second — would remove this exposure entirely and is safe, since the two sets are disjoint by construction; not done, and worth a decision.
