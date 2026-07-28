@@ -147,39 +147,52 @@
             <p class="form-instruction">1. Choose a Category</p>
 
             <div class="category-tiles-grid">
-              <button class="tile-btn" onclick="selectCategory('Lawn', this)">
+              <button class="tile-btn" data-category="Lawn" onclick="selectCategory('Lawn', this)">
                 <span class="tile-icon">🌱</span>
                 <span class="tile-label">Lawn</span>
               </button>
-              <button class="tile-btn" onclick="selectCategory('Beds', this)">
+              <button class="tile-btn" data-category="Beds" onclick="selectCategory('Beds', this)">
                 <span class="tile-icon">🪵</span>
                 <span class="tile-label">Beds</span>
               </button>
-              <button class="tile-btn" onclick="selectCategory('Trees & shrubs', this)">
+              <button class="tile-btn" data-category="Trees &amp; shrubs" onclick="selectCategory('Trees &amp; shrubs', this)">
                 <span class="tile-icon">🌳</span>
                 <span class="tile-label">Trees & Shrubs</span>
               </button>
-              <button class="tile-btn" onclick="selectCategory('Veg & herbs', this)">
+              <button class="tile-btn" data-category="Veg &amp; herbs" onclick="selectCategory('Veg &amp; herbs', this)">
                 <span class="tile-icon">🥕</span>
                 <span class="tile-label">Veg & Herbs</span>
               </button>
-              <button class="tile-btn" onclick="selectCategory('Garden structures', this)">
+              <button class="tile-btn" data-category="Garden structures" onclick="selectCategory('Garden structures', this)">
                 <span class="tile-icon">🏡</span>
                 <span class="tile-label">Structures</span>
               </button>
-              <button class="tile-btn" onclick="selectCategory('Tools', this)">
+              <button class="tile-btn" data-category="Tools" onclick="selectCategory('Tools', this)">
                 <span class="tile-icon">🛠️</span>
                 <span class="tile-label">Tools</span>
               </button>
-              <button class="tile-btn full-width" onclick="selectCategory('Plants & flowers', this)">
+              <button class="tile-btn full-width" data-category="Plants &amp; flowers" onclick="selectCategory('Plants &amp; flowers', this)">
                 <span class="tile-icon">🌸</span>
                 <span class="tile-label">Plants & Flowers</span>
               </button>
             </div>
 
             <p class="form-instruction">2. Select Item</p>
+
+            <!-- Searches the whole catalogue, not just the selected tile, so you
+                 don't have to know which category something lives under. -->
+            <div class="pill-search-wrapper">
+              <span class="pill-search-icon" aria-hidden="true">🔍</span>
+              <input type="text" id="pill-search" class="pill-search-input"
+                     placeholder="Search all plants, tools and structures"
+                     autocomplete="off" autocorrect="off" autocapitalize="off"
+                     spellcheck="false" inputmode="search"
+                     aria-label="Search the catalogue">
+              <button type="button" id="pill-search-clear" class="pill-search-clear hidden" aria-label="Clear search">✕</button>
+            </div>
+
             <div id="pill-box" class="pill-cloud">
-              <div class="pill-placeholder">Select a category above...</div>
+              <div class="pill-placeholder">Select a category above, or search.</div>
             </div>
 
             <p class="form-instruction">3. My Reference (Optional)</p>

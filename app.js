@@ -39,10 +39,21 @@ let currentGardenId = null;
 let routedUserId = undefined;      // guards against redundant re-routing on focus
 let pendingSigninEmail = null;
 
-let globalDictionary = [];         // picker catalogue: {Category, Suggested_Name, blueprint_id}
+// Picker catalogue. One entry per (blueprint, category) pair, so a blueprint
+// listed under two tiles appears twice — which is correct: the tile it is added
+// under decides how it is grouped in My Garden.
+//   {Category, Suggested_Name, blueprint_id, browseGroup, browseSort, botanical}
+// browseGroup is null for anything the workbook has not assigned a heading to;
+// those are shown under "Other" at the bottom rather than being hidden.
+let globalDictionary = [];
 let userInventory = [];            // {item_id, friendly_name, category, blueprint_name}
 let selectedCategoryRef = null;
 let selectedSubItemObj = null;
+
+// Sort key used for blueprints with no browse group, so "Other" always lands at
+// the bottom regardless of what Sort_Order values the workbook uses.
+const UNGROUPED_SORT = 32000;
+const UNGROUPED_LABEL = "Other";
 
 // Location captured on the setup screen
 let setupLat = null;
@@ -551,21 +562,231 @@ async function loadCatalogue() {
   try {
     const { data, error } = await sb
       .from("blueprint")
-      .select("id, name, retired_at, blueprint_category ( category:category_id ( name ) )")
+      .select(
+        "id, name, botanical_name, retired_at, " +
+        "browse_group:browse_group_id ( name, sort_order ), " +
+        "blueprint_category ( category:category_id ( name ) )"
+      )
       .is("retired_at", null)
       .order("name");
     if (error) throw error;
 
     globalDictionary = [];
     (data || []).forEach(bp => {
+      const bg = bp.browse_group || null;
       (bp.blueprint_category || []).forEach(bc => {
         const cn = bc.category && bc.category.name;
-        if (cn) globalDictionary.push({ Category: cn, Suggested_Name: bp.name, blueprint_id: bp.id });
+        if (!cn) return;
+        globalDictionary.push({
+          Category: cn,
+          Suggested_Name: bp.name,
+          blueprint_id: bp.id,
+          browseGroup: bg ? bg.name : null,
+          browseSort: bg && bg.sort_order !== null ? bg.sort_order : UNGROUPED_SORT,
+          botanical: bp.botanical_name || null
+        });
       });
     });
   } catch (err) {
     console.error("Catalogue failed:", err);
   }
+}
+
+/* --- Building one pill ----------------------------------------------------
+ * A pill always shows the common name. It additionally shows:
+ *   - the botanical name, inline in brackets, when the workbook has set one
+ *     (only for genuinely ambiguous common names, so most pills won't have it);
+ *   - which tile it belongs to, on a second line, but ONLY in search results,
+ *     where matches can come from a category other than the one you're looking
+ *     at and tapping blind would file the item in the wrong place.
+ */
+function createItemPill(item, showSource) {
+  const pill = document.createElement("button");
+  pill.className = "item-pill" + (showSource ? " item-pill--result" : "");
+
+  const nameLine = document.createElement("span");
+  nameLine.className = "item-pill-name";
+  nameLine.appendChild(document.createTextNode(item.Suggested_Name));
+
+  if (item.botanical) {
+    const latin = document.createElement("span");
+    latin.className = "item-pill-latin";
+    latin.textContent = "(" + item.botanical + ")";
+    nameLine.appendChild(document.createTextNode(" "));
+    nameLine.appendChild(latin);
+  }
+  pill.appendChild(nameLine);
+
+  if (showSource) {
+    const source = document.createElement("span");
+    source.className = "item-pill-source";
+    source.textContent = item.Category;
+    pill.appendChild(source);
+  }
+
+  pill.onclick = () => {
+    document.querySelectorAll(".item-pill").forEach(p => p.classList.remove("selected"));
+    pill.classList.add("selected");
+    selectedSubItemObj = item;
+
+    // A search result may belong to a tile other than the one currently lit up.
+    // Follow it, so the item is filed under the category it was chosen from.
+    if (item.Category !== selectedCategoryRef) {
+      selectedCategoryRef = item.Category;
+      highlightCategoryTile(item.Category);
+    }
+    validateForm();
+  };
+
+  return pill;
+}
+
+function highlightCategoryTile(categoryKey) {
+  document.querySelectorAll(".tile-btn").forEach(tile => {
+    tile.classList.toggle("selected", tile.dataset.category === categoryKey);
+  });
+}
+
+function setPillPlaceholder(text) {
+  const pillBox = document.getElementById("pill-box");
+  pillBox.innerHTML = "";
+  const ph = document.createElement("div");
+  ph.className = "pill-placeholder";
+  ph.textContent = text;
+  pillBox.appendChild(ph);
+}
+
+/* --- Browsing: pills clustered under headings ------------------------------
+ * Headings come from the workbook and appear in its Sort_Order. Anything with
+ * no heading assigned collects under "Other" at the end — visible rather than
+ * lost. A category where nothing has been assigned a heading renders as one
+ * unlabelled block, exactly as the picker looked before.
+ */
+function renderCategoryPills(categoryKey) {
+  const pillBox = document.getElementById("pill-box");
+  pillBox.innerHTML = "";
+
+  const items = globalDictionary.filter(item => item.Category === categoryKey);
+  if (items.length === 0) {
+    setPillPlaceholder("No items in this category yet.");
+    return;
+  }
+
+  // Bucket by heading, remembering each heading's sort position.
+  const buckets = new Map(); // label -> { sort, items: [] }
+  items.forEach(item => {
+    const label = item.browseGroup || UNGROUPED_LABEL;
+    if (!buckets.has(label)) {
+      buckets.set(label, { sort: item.browseGroup ? item.browseSort : UNGROUPED_SORT, items: [] });
+    }
+    buckets.get(label).items.push(item);
+  });
+
+  const groups = Array.from(buckets.entries())
+    .map(([label, v]) => ({ label: label, sort: v.sort, items: v.items }))
+    .sort((a, b) => (a.sort - b.sort) || a.label.localeCompare(b.label));
+
+  // Nothing in this category is grouped: render one plain block, no headings.
+  const anyGrouped = groups.some(g => g.label !== UNGROUPED_LABEL);
+
+  groups.forEach(group => {
+    group.items.sort((a, b) => a.Suggested_Name.localeCompare(b.Suggested_Name));
+
+    const wrap = document.createElement("div");
+    wrap.className = "pill-group";
+
+    if (anyGrouped) {
+      const title = document.createElement("div");
+      title.className = "pill-group-title";
+      title.textContent = group.label;
+      wrap.appendChild(title);
+    }
+
+    const row = document.createElement("div");
+    row.className = "pill-row";
+    group.items.forEach(item => row.appendChild(createItemPill(item, false)));
+    wrap.appendChild(row);
+
+    pillBox.appendChild(wrap);
+  });
+}
+
+/* --- Searching: a flat list across every category --------------------------
+ * Deliberately not limited to the tile you're on: a beginner may not know
+ * whether Lavender lives under Trees & shrubs or Plants & flowers, and a search
+ * that finds nothing because they guessed the wrong tile reads as "the app
+ * doesn't have it". Every result carries its category, so nothing is added
+ * blind. Botanical names are matched too where one has been set, so typing
+ * "Pelargonium" finds Geranium.
+ */
+function renderSearchResults(rawQuery) {
+  const q = rawQuery.trim().toLowerCase();
+  const pillBox = document.getElementById("pill-box");
+  pillBox.innerHTML = "";
+
+  const matches = globalDictionary.filter(item => {
+    const name = item.Suggested_Name.toLowerCase();
+    const latin = (item.botanical || "").toLowerCase();
+    return name.indexOf(q) !== -1 || (latin && latin.indexOf(q) !== -1);
+  });
+
+  if (matches.length === 0) {
+    setPillPlaceholder("Nothing matches \u201C" + rawQuery.trim() + "\u201D.");
+    return;
+  }
+
+  // Names that START with what was typed are almost always what was meant, so
+  // they come first; everything else falls in behind, alphabetically.
+  matches.sort((a, b) => {
+    const aStarts = a.Suggested_Name.toLowerCase().indexOf(q) === 0;
+    const bStarts = b.Suggested_Name.toLowerCase().indexOf(q) === 0;
+    if (aStarts !== bStarts) return aStarts ? -1 : 1;
+    return a.Suggested_Name.localeCompare(b.Suggested_Name) ||
+           a.Category.localeCompare(b.Category);
+  });
+
+  const row = document.createElement("div");
+  row.className = "pill-row";
+  matches.forEach(item => row.appendChild(createItemPill(item, true)));
+  pillBox.appendChild(row);
+}
+
+/* --- What the pill box should be showing right now ------------------------ */
+function refreshPillBox() {
+  const searchInput = document.getElementById("pill-search");
+  const query = searchInput ? searchInput.value : "";
+
+  if (query.trim().length > 0) {
+    renderSearchResults(query);
+  } else if (selectedCategoryRef) {
+    renderCategoryPills(selectedCategoryRef);
+  } else {
+    setPillPlaceholder("Select a category above, or search.");
+  }
+  validateForm();
+}
+
+function handlePillSearchInput() {
+  const searchInput = document.getElementById("pill-search");
+  const clearBtn = document.getElementById("pill-search-clear");
+  const hasText = !!(searchInput && searchInput.value.trim().length > 0);
+
+  if (clearBtn) clearBtn.classList.toggle("hidden", !hasText);
+
+  // Anything currently picked is no longer on screen once the list changes
+  // underneath it, so drop it rather than leaving Add enabled for something
+  // invisible.
+  selectedSubItemObj = null;
+  refreshPillBox();
+}
+
+function clearPillSearch() {
+  const searchInput = document.getElementById("pill-search");
+  if (searchInput) searchInput.value = "";
+  const clearBtn = document.getElementById("pill-search-clear");
+  if (clearBtn) clearBtn.classList.add("hidden");
+  selectedSubItemObj = null;
+  refreshPillBox();
 }
 
 function selectCategory(categoryKey, element) {
@@ -575,31 +796,16 @@ function selectCategory(categoryKey, element) {
   selectedCategoryRef = categoryKey;
   selectedSubItemObj = null;
 
-  const pillBox = document.getElementById("pill-box");
-  pillBox.innerHTML = "";
-
-  const relevantItems = globalDictionary.filter(item => item.Category === categoryKey);
-  relevantItems.sort((a, b) => a.Suggested_Name.localeCompare(b.Suggested_Name));
-
-  if (relevantItems.length === 0) {
-    pillBox.innerHTML = '<div class="pill-placeholder">No items in this category yet.</div>';
-    validateForm();
-    return;
+  // Tapping a tile is a browsing action, so any live search is stood down —
+  // otherwise the tile would light up while search results stayed on screen.
+  const searchInput = document.getElementById("pill-search");
+  if (searchInput && searchInput.value) {
+    searchInput.value = "";
+    const clearBtn = document.getElementById("pill-search-clear");
+    if (clearBtn) clearBtn.classList.add("hidden");
   }
 
-  relevantItems.forEach(item => {
-    const pill = document.createElement("button");
-    pill.className = "item-pill";
-    pill.innerText = item.Suggested_Name;
-    pill.onclick = () => {
-      document.querySelectorAll(".item-pill").forEach(p => p.classList.remove("selected"));
-      pill.classList.add("selected");
-      selectedSubItemObj = item;
-      validateForm();
-    };
-    pillBox.appendChild(pill);
-  });
-
+  renderCategoryPills(categoryKey);
   validateForm();
 }
 
@@ -626,9 +832,10 @@ async function handleAddAsset() {
     if (error) throw error;
 
     document.getElementById("custom-name").value = "";
-    document.querySelectorAll(".item-pill").forEach(p => p.classList.remove("selected"));
     selectedSubItemObj = null;
-    validateForm();
+    // Stand the search down and return to browsing the tile the item came from,
+    // so adding several things from one category doesn't mean retyping.
+    clearPillSearch();
 
     btn.textContent = "Added! 🎉";
     setTimeout(() => { btn.textContent = "Add to My Garden"; }, 2000);
@@ -1063,6 +1270,14 @@ document.addEventListener("DOMContentLoaded", () => {
   if (inventoryList) inventoryList.addEventListener("click", handleRemoveAsset);
   const addAssetBtn = document.getElementById("add-asset-btn");
   if (addAssetBtn) addAssetBtn.addEventListener("click", handleAddAsset);
+  const pillSearch = document.getElementById("pill-search");
+  if (pillSearch) {
+    pillSearch.addEventListener("input", handlePillSearchInput);
+    // Enter on a phone keyboard should dismiss the keyboard, not submit anything.
+    pillSearch.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); pillSearch.blur(); } });
+  }
+  const pillSearchClear = document.getElementById("pill-search-clear");
+  if (pillSearchClear) pillSearchClear.addEventListener("click", clearPillSearch);
 
   // --- Undo toast ---
   const undoBtn = document.getElementById("undo-toast-btn");

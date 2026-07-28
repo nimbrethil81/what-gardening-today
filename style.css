@@ -216,20 +216,89 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
 .tile-icon { font-size: 26px; }
 .tile-label { font-size: 13px; font-weight: 600; color: var(--text-main); }
 
+/* --- MY GARDEN: CATALOGUE SEARCH --- */
+/* Searches every category, not just the selected tile — so you can find
+   something without knowing which tile it lives under. */
+.pill-search-wrapper {
+  position: relative;
+  margin-bottom: 10px;
+}
+
+.pill-search-input {
+  width: 100%;
+  padding: 10px 36px;
+  border: 2px solid var(--border-color);
+  border-radius: 12px;
+  font-size: 14px;
+  outline: none;
+  background: var(--bg-card);
+  color: var(--text-main);
+  box-sizing: border-box;
+  -webkit-appearance: none;
+  transition: border-color 0.2s ease;
+}
+
+.pill-search-input:focus { border-color: var(--brand-green); }
+
+.pill-search-icon {
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 13px;
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.pill-search-clear {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  font-size: 14px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 8px 10px;
+  line-height: 1;
+}
+
 /* --- MY GARDEN: SUB ITEM PILLS --- */
+/* A block container, not a flex row: it now holds heading groups, each of which
+   wraps its own pills. */
 .pill-cloud {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
   min-height: 40px;
   background: #F2F2F7;
-  padding: 10px;
+  padding: 12px 10px;
   border-radius: 12px;
   border: 1px solid var(--border-color);
   box-sizing: border-box;
 }
 
-.pill-placeholder { font-size: 13px; color: var(--text-muted); margin: auto; }
+.pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pill-group + .pill-group { margin-top: 16px; }
+
+.pill-group-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin: 0 0 8px 2px;
+}
+
+.pill-placeholder {
+  font-size: 13px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 6px 0;
+}
 
 .item-pill {
   background: var(--bg-card);
@@ -241,6 +310,7 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
   color: #3A3A3C;
   cursor: pointer;
   transition: all 0.15s ease;
+  text-align: left;
 }
 
 .item-pill.selected {
@@ -248,6 +318,37 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
   color: #FFFFFF;
   border-color: var(--brand-green);
 }
+
+/* The Latin name sits inline, in brackets, and only appears on the handful of
+   blueprints where the common name is genuinely ambiguous. */
+.item-pill-latin {
+  font-style: italic;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.item-pill.selected .item-pill-latin { color: rgba(255, 255, 255, 0.8); }
+
+/* Search results carry the tile they belong to on a second line, because a
+   match can come from a category other than the one currently selected. */
+.item-pill--result {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  border-radius: 14px;
+  padding: 6px 12px;
+}
+
+.item-pill-source {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+
+.item-pill--result.selected .item-pill-source { color: rgba(255, 255, 255, 0.85); }
 
 /* --- FORM CONTROLS --- */
 .modern-input-wrapper input {
