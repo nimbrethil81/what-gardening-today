@@ -16,9 +16,10 @@ _Current as of v2.1 (2026-07-25). This revision rewrote the task-generation prom
 
 The authoring tabs in the Google Sheet:
 
-- **`Item_Dictionary`** — the catalogue of item *blueprints* shown in the "Add to My Garden" picker. Four columns: `Category`, `Suggested_Name`, `Default_Asset_ID_Prefix`, `Groups`.
+- **`Item_Dictionary`** — the catalogue of item *blueprints* shown in the "Add to My Garden" picker. Six columns: `Category`, `Suggested_Name`, `Default_Asset_ID_Prefix`, `Groups`, `Browse_Group` (column E; see §2) and `Botanical_Name` (column F; see §2). Columns A–D are authored by prompt and pasted; E and F are display-only and may be filled by hand or by prompt.
 - **`Master_Task_Matrix`** — the care tasks matched to those items. Thirteen columns: `Task_ID`, `Target_Asset_ID`, `Task_Name`, `Category`, `Instruction`, `Valid_Months`, `Frequency_Days`, `Suppress_If_Raining`, `Suppress_If_Temp_Below`, `Requires_Wind_Above`, `Estimated_Minutes`, `Retired` (column L; see §2) and `Reviewed` (column M; see §2). Columns A–K are authored by prompt and pasted; L and M are filled by hand only.
 - **`Collections`** — added in v2.0. Two columns, `Code` and `Name`, declaring every `GROUP_*` collection that exists and giving it a human display name. Membership still lives in the `Groups` column of `Item_Dictionary`; this tab declares the collections that column may reference. See §2.
+- **`Browse_Groups`** — added in v2.4. Two columns, `Name` and `Sort_Order`, declaring every heading the picker may cluster items under and the order those headings appear in. Referenced by the `Browse_Group` column of `Item_Dictionary`. **Purely a display concern — a browse group is not a collection and can never be a task target.** See §2.
 - **`Reference_Lists`** — maps the seven display categories to their top-level prefixes; the audit's source of truth for valid categories and prefixes.
 
 **Written by the audit, never edited by hand:**
@@ -27,7 +28,9 @@ The authoring tabs in the Google Sheet:
 - **`Coverage_Grid`** — a blueprint-by-month table of how many live tasks reach each item in each month. Rebuilt on every audit run. It is a *reference artefact for the editorial review* (§7b), not a list of faults. See §7d.
 - **`Publish_Report`** — written by the publish step (§10).
 
-**No longer live:** the `User_Profile` and `Task_Log` tabs. A user's garden items and their completion history now live in Postgres (`garden_item` and `task_completion`) and are written by the app, not the workbook. Any such tabs still present in the workbook are frozen historical copies — do not edit them expecting an effect, and treat audit findings about them as archaeology rather than live faults.
+**Archived, and read by nothing:** the `User_Profile`, `Task_Log` and `Hidden_Tasks` tabs. A user's garden items, completion history and hidden tasks live in Postgres (`garden_item`, `task_completion`, `hidden_task`) and are written by the app, not the workbook. The tabs that remain are frozen snapshots from before the v2.0 cutover, kept only as a record of the pre-migration state; they are prefixed `ARCHIVE_` and no code looks them up. Do not edit them expecting an effect.
+
+The two questions those tabs used to answer — is a retired blueprint still sitting in somebody's garden, and is an item somebody owns receiving nothing — are now asked of the live database and reported after a publish (§10).
 
 **Order of operations:** always add the item to `Item_Dictionary` first, then add its tasks. A task's `Target_Asset_ID` must reference an item prefix or a group tag that already exists — and, for a group tag, one that is declared on the `Collections` tab.
 
@@ -153,6 +156,28 @@ A collection is a named set of blueprints that a task can target. The `Groups` c
 - A collection may be declared before any blueprint carries it (the audit flags this as REVIEW, not an error) — useful when setting up a group ahead of the tasks that will target it.
 - Collections are never deleted by publishing. Removing a code from this tab does not remove the collection from the database; it simply stops being maintained. Empty it by clearing its members if you want it to reach nothing.
 
+### The `Browse_Groups` tab declares every picker heading
+
+A browse group is a heading the "Add to My Garden" picker clusters pills under — Perennials, Bulbs & tubers, Roses, Hedging. The `Browse_Group` column of `Item_Dictionary` records *which heading a blueprint sits under*; the `Browse_Groups` tab records *that the heading exists* and where it appears on screen.
+
+- Two columns: `Name` (e.g. `Bulbs & tubers`) and `Sort_Order` (a whole number).
+- **A browse group is not a collection, and the difference is load-bearing.** A collection decides what a blueprint *receives*; a browse group decides only where it *appears in a list*. They are separate tables in the database for exactly this reason: reorganising the picker can never change anyone's tasks. A task targeting a browse group is caught by the audit as "Target matches nothing" — headings are not valid targets and never will be.
+- **Every heading named in a `Browse_Group` cell must be declared here.** An undeclared heading is a publish-blocking error, in the same way an undeclared collection is. The usual cause is a near-miss — `Bulbs and tubers` against a declared `Bulbs & tubers`.
+- **`Sort_Order` must be a whole number.** It is a NOT NULL column in the database, so a blank blocks the publish rather than failing part-way through it. Author them in gaps of ten, so a new heading can be slotted between two existing ones without renumbering everything below.
+- A heading may be declared before any blueprint uses it (the audit flags this as REVIEW, not an error), and headings are never deleted by publishing — the same upsert-only treatment collections get. Stop using a heading by clearing it from the blueprints that carry it.
+- **A blank `Browse_Group` is legitimate.** Blueprints with no heading appear under an "Other" heading at the bottom of the picker — visible, not lost — and the audit warns about them only where *other* items in the same category have been grouped. A category nobody has grouped at all (Tools, Lawn) renders as one plain list, exactly as the picker looked before headings existed.
+- The heading list is global rather than per-category. A heading is just a label; the picker shows whichever headings the blueprints under the tapped tile actually use.
+
+### The `Botanical_Name` column disambiguates, and usually stays blank
+
+Column **F** of `Item_Dictionary`. Where it is filled in, the picker shows it inline beside the common name, in smaller italics and brackets — "Geranium *(Pelargonium)*".
+
+- **Fill it in only where the common name is genuinely ambiguous** — where the everyday word covers more than one plant, or where a beginner might not be sure the catalogue entry matches what is in their garden. Geranium, Bluebell, Laurel, Jasmine and Cedar qualify. Sunflower, Tomato and Foxglove do not. **Most rows should be blank.**
+- The database enforces name uniqueness on blueprints, so this is never resolving a clash between two rows. It is resolving a doubt in the user's head.
+- **Prefer the genus alone** (`Pelargonium`) over the full species (`Hyacinthoides non-scripta`). The name is displayed inside a small pill on a phone, and a long one can take up an entire row. Use the full species only where the genus by itself does not settle the ambiguity. The audit flags anything over thirty characters for a second look.
+- Leave it **blank**, not empty-looking. A cell containing only spaces is rejected by the database, because it would render as a pair of empty brackets.
+- The search box matches botanical names as well as common ones, so a filled-in cell makes that plant findable by its Latin name. This is a side benefit, not a reason to fill them all in — the picker showing a Latin name next to every plant would be noise.
+
 ### The `Retired` column tombstones a task
 
 Column **L** of `Master_Task_Matrix`, headed `Retired`. Any non-blank value marks the task as retired: put a short reason in the cell (it stays as editorial context). This replaces the old procedure of *deleting* a task's row and listing its ID in an `Audit.gs` constant.
@@ -216,6 +241,7 @@ Known outstanding gaps are recorded in `SPEC.md` §5E rather than here, so that 
 7. Check: prefixes are uppercase, no spaces, first segment is one of the nine valid category prefixes. Optional duplicate guard — put `=IF(COUNTIF(C:C,C2)>1,"DUP","")` in a spare column and look for any `DUP` flags, then delete the helper column.
 8. Check for duplicate *items* as well as duplicate prefixes: does this plant already exist in the sheet under a different prefix?
 9. **Decide coverage now** (§2a). For each new item, either add it to the appropriate collections in the `Groups` cell, or queue it for task authoring. An item with neither will receive nothing.
+10. **Set `Browse_Group`** (column E) for anything landing in a category whose other items are grouped — in practice Plants & flowers, Trees & shrubs and Veg & herbs. Use a heading exactly as spelled on the `Browse_Groups` tab. Left blank, the item still works but drops to the bottom of the picker under "Other". Fill `Botanical_Name` (column F) only if the common name is ambiguous; leave it blank otherwise.
 
 ---
 
@@ -271,6 +297,8 @@ ALREADY EXISTS (do not repeat these items or prefixes, and do not create a prefi
 [Paste existing Suggested_Name / prefix pairs, or leave blank]
 EXISTING GROUP TAGS (reuse these where they apply; only invent a new one if genuinely needed):
 [Paste existing GROUP_* tags, or leave blank]
+VALID BROWSE GROUPS (use these exact strings and no others):
+[Paste the Name column from the Browse_Groups tab, or leave blank]
 
 THE 7 STRICT CATEGORIES (exact casing and ampersands):
 Lawn
@@ -283,8 +311,8 @@ Tools
 
 OUTPUT RULES:
 1. Output ONLY raw CSV text inside a single code block. No text before or after.
-2. Exactly four columns, exact headers:
-Category;Suggested_Name;Default_Asset_ID_Prefix;Groups
+2. Exactly six columns, exact headers:
+Category;Suggested_Name;Default_Asset_ID_Prefix;Groups;Browse_Group;Botanical_Name
 3. Use a SEMICOLON (;) as the column separator.
 
 FIELD RULES:
@@ -293,8 +321,10 @@ FIELD RULES:
 - Default_Asset_ID_Prefix: UPPERCASE, no spaces, segments joined by single underscores. The FIRST segment must be one of: LAWN, BED, TREE, SHRUB, PLANT, VEG, HERB, STRUCT, TOOL. Any number of further segments is allowed (e.g. PLANT_ROSE, LAWN_MIXED_UTILITY, VEG_FRUIT_RASPBERRY). Never invent a new top-level prefix. Every prefix must be unique. Never begin a prefix with GROUP_ — that is reserved.
 - Choose the prefix by what care the item actually needs, not by which tile it displays under. Woody plants (roses, lavender, hydrangea) take SHRUB_*; herbaceous plants take PLANT_*.
 - Groups: assign the item to every EXISTING group tag I listed above that genuinely applies. This matters: an item in no group, with no tasks written specifically for it, will receive NO care tasks at all — there is no category-level fallback. Comma-separate multiple tags inside the one field. Do not invent speculative new groups; if an item fits none of my existing tags, leave it blank and say so in a note AFTER the code block so I can write specific tasks for it.
+- Browse_Group: exactly one heading from the VALID BROWSE GROUPS list above, or blank. This controls only where the item appears in the picker — it has NO effect on which tasks the item receives, so never use it as a substitute for a group tag. Judge it by how a UK beginner would look for the item, not by strict botany: Lavender is botanically a shrub and belongs under Shrubs; a climbing rose belongs under Roses, not Climbers. If no heading fits — tools, sheds, patios, lawns, beds — leave it blank rather than forcing one.
+- Botanical_Name: fill this in ONLY where the common name is genuinely ambiguous, meaning it could refer to more than one plant, or a beginner might not be sure the entry matches what is in their garden. Geranium, Bluebell, Laurel, Jasmine and Cedar qualify; Sunflower, Tomato and Foxglove do not. Expect the large majority of rows to be blank. Prefer the genus alone (Pelargonium) over the full species (Hyacinthoides non-scripta), because it is displayed inline in a small pill on a phone; use the full species only where the genus alone does not resolve the ambiguity. Never include a semicolon.
 
-Generate the CSV now.
+Generate the CSV now. After the code block, list separately any rows where you were unsure of the browse group or the botanical name, and why.
 ```
 
 ### Task prompt (`Master_Task_Matrix`)
@@ -433,7 +463,9 @@ Begin with the year plan.
 - `Category` cells contain only the seven allowed values (one or more, comma-separated).
 - No plant appears twice under different prefixes.
 - Any `GROUP_*` tag used is one you intended, spelled exactly as it appears elsewhere in the column, and declared on the `Collections` tab.
-- Every new item either belongs to a collection or has tasks queued for it (§2a).
+- Any `Browse_Group` used is spelled exactly as it appears on the `Browse_Groups` tab — watch for `and` where the tab says `&`.
+- `Botanical_Name` is blank on the large majority of rows, and where present is a genus rather than a long full species.
+- Every new item either belongs to a collection or has tasks queued for it (§2a). A browse group is **not** coverage — it changes only where the item appears in the picker.
 
 ---
 
@@ -453,7 +485,7 @@ Since v2.0 some of this is caught earlier and harder: the database rejects malfo
 
 ### 7a. The mechanical audit — automated, run often
 
-`Audit.gs` in the Apps Script project adds a **Garden Data → Run Audit** menu to the spreadsheet. It reads every tab, checks them against the rules in this document, and writes its findings to an `Audit_Report` tab. It never modifies data.
+`Audit.gs` in the Apps Script project adds a **Garden Data → Run Audit** menu to the spreadsheet. It reads the authoring tabs, checks them against the rules in this document, and writes its findings to an `Audit_Report` tab. It never modifies data, and since v2.5 it never reads the live database either — everything it reports is judged from the workbook alone.
 
 **Run it after every content import and after every schema change.** It takes seconds.
 
@@ -476,7 +508,9 @@ The `Reference_Lists` tab is the audit's source of truth for the seven categorie
 
 **None of the checks added in this revision can block a publish.** They are all WARNING or REVIEW severity. The publish gate blocks on ERROR only, so tightening the audit never risks stranding content that was publishable yesterday.
 
-**Checks that have become historical.** The audit's "garden items with no blueprint" and "orphaned log entries" checks read the frozen `User_Profile` and `Task_Log` tabs. Live garden items and completions now live in Postgres, where foreign keys make both conditions impossible. Findings there describe the old workbook, not the running app — read them as archaeology.
+**Where the garden checks went.** The audit used to include "garden items with no blueprint" and "orphaned log entries", read from the frozen `User_Profile` and `Task_Log` tabs. Both were removed in v2.5. The states they looked for are impossible in Postgres — `garden_item.blueprint_id` and `task_completion.task_id` are real foreign keys, and tasks are tombstoned rather than deleted — so the checks could only ever have reported on a stale snapshot. The questions still worth asking are asked of the live database after a publish instead (§10).
+
+**A missing tab is now a finding, not a crash.** `Item_Dictionary` and `Master_Task_Matrix` carry the same guard `Reference_Lists` always had: rename one and the audit reports which tab it could not find, rather than stopping with a JavaScript error that names neither the tab nor the cause. The lookup is exact and case-sensitive, so a trailing space or a changed capital counts as missing.
 
 Findings come in three severities: **ERROR** (silently broken now), **WARNING** (probably not intended), and **REVIEW** (the script cannot judge; a human should look).
 
@@ -826,6 +860,14 @@ A task targeting a collection tag that no blueprint carries will match nothing, 
 
 Column M is read by nothing except the audit's review-state summary. `Publish.gs` reads columns 0–11 by fixed index and never looks further, so whatever is in column M cannot reach the database or affect a user. That is deliberate: the review programme needed a bookmark, and the safest bookmark is one the pipeline cannot see.
 
+### `Browse_Group` and `Botanical_Name` — display, never behaviour
+
+Columns **E** and **F** of `Item_Dictionary`. Both are published to the database and both are read by the app, so unlike `Reviewed` they are not inert — but neither touches `select_tasks`.
+
+The distinction worth holding on to: **`Groups` decides what an item receives; `Browse_Group` decides only where it appears in a list.** They sit in different tables for that reason. If you find yourself reaching for a browse group to give an item some care, you want the `Groups` column instead. Full authoring rules are in §2.
+
+The failure mode to watch is quiet: a heading spelled slightly wrong blocks the publish, which is loud and fine; but a heading left blank does not, and the item simply drifts to the bottom of the picker under "Other" where it is harder to find. The dry run lists those, in the same spirit as the coverage report — a warning that only helps if you read it.
+
 ---
 
 ## 10. Publishing to the app
@@ -847,9 +889,20 @@ There is nothing to set up in the sheet; the `Publish_Report` tab is created on 
 
 Choosing **Garden Data → Publish to app** runs, in order:
 
-1. **The gate.** It runs the full audit and **refuses to publish on any ERROR.** It then adds three publish-specific blocks: every live (non-retired) task must resolve to a real blueprint or a *declared* collection — a bare category prefix is not a valid target and will block; every `GROUP_*` tag carried by a blueprint must be declared on the `Collections` tab; and every task's category must be one of the seven. Finally it computes a **coverage report** — blueprints that no live task reaches — which is a **warning only** and never blocks (some items may legitimately await content).
-2. **The push.** It reads the live catalogue first (to preserve tombstone dates and detect rows you have removed), then upserts categories, blueprints, collections and tasks by their natural key (`legacy_code` / `code` / `name`), and reconciles the three membership tables (`blueprint_category`, `collection_member`, `task_target`) to mirror the workbook exactly. **Nothing curated is deleted.** A blueprint or task removed from the workbook is *retired* (a tombstone), not erased.
-3. **The report.** A `Publish_Report` tab records what was pushed, the live row counts read back, the coverage report, and the retirement roll-call.
+1. **The gate.** It runs the full audit and **refuses to publish on any ERROR.** It then adds its own publish-specific blocks: every live (non-retired) task must resolve to a real blueprint or a *declared* collection — a bare category prefix is not a valid target and will block; every `GROUP_*` tag carried by a blueprint must be declared on the `Collections` tab; every task's category must be one of the seven; every heading named in a `Browse_Group` cell must be declared on the `Browse_Groups` tab; and every declared heading must carry a whole-number `Sort_Order`. Finally it computes two **warning-only** reports that never block: the **coverage report** — blueprints that no live task reaches (some items may legitimately await content) — and the list of blueprints with **no browse group**, which will appear under "Other" in the picker.
+2. **The push.** It reads the live catalogue first (to preserve tombstone dates and detect rows you have removed), then upserts categories, browse groups, blueprints, collections and tasks by their natural key (`legacy_code` / `code` / `name`), and reconciles the three membership tables (`blueprint_category`, `collection_member`, `task_target`) to mirror the workbook exactly. **Nothing curated is deleted.** A blueprint or task removed from the workbook is *retired* (a tombstone), not erased; collections and browse groups are upsert-only and are never removed at all.
+3. **The report.** A `Publish_Report` tab records what was pushed, the live row counts read back, the coverage report, the blueprints with no browse group, the live-garden checks below, and the retirement roll-call.
+
+### What the live-garden checks tell you
+
+Added in v2.5, in the post-publish report only. They are the two questions that cannot be answered from the workbook, because they depend on what people actually have in their gardens:
+
+- **Retired but still owned.** A blueprint you have withdrawn from the catalogue that is still present in at least one garden. Removing a blueprint from `Item_Dictionary` tombstones it on publish, but anyone who already had one keeps their item. Nothing else reports that you have just done this. The fix is to restore the row and publish again, or to accept that those items are now orphaned.
+- **Owned but receives nothing.** A blueprint that somebody has in their garden and that no live task reaches, so it shows nothing to do in any month. This is the coverage report (§2a) narrowed to reality — the difference between "nobody has added this yet", which can wait, and "somebody is looking at an empty screen", which cannot. **Treat anything appearing here as more urgent than the general coverage list.**
+
+Both are **warnings and never block a publish**, and both are aggregated to blueprint level: the report gives a name, an item count and a garden count, and never a garden name, a user, or anyone's own reference for an item. That matters because the publish pipeline runs with a key that bypasses Row Level Security and can therefore see every garden — the workbook must not become a place where someone else's garden is listed.
+
+They run after the push rather than before it, so the dry run keeps its promise of touching the database not at all. The trade-off is that you learn you have orphaned an item just after publishing rather than just before.
 
 ### The dry run
 
@@ -867,6 +920,7 @@ If a failure resists a straight re-run, the shape of the outstanding rows is the
 
 - **Publish after authoring, or the app won't see your edits.** A silent gap between the workbook and the app is the one failure this workflow invites; the post-publish report and the dry run are the guard against it.
 - **Read the coverage report, don't just skim past it.** It is the only thing standing between a new blueprint and permanent silence (§2a).
+- **Read the live-garden section too, and treat it as the louder one.** A blueprint in the coverage list might simply be waiting for content. A blueprint in "Owned but receives nothing" is being seen by a real person right now.
 - **Fix ERRORs, weigh WARNINGs, judge REVIEWs — then publish.** The gate enforces the ERRORs; the rest are yours to decide.
 - **A retired task is withdrawn by filling its `Retired` cell, then publishing** — never by deleting its row.
 - **Re-running a publish is safe.** Every write is an upsert or an idempotent reconcile, so a second run with no authoring changes reports zero membership churn.

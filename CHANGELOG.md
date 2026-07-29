@@ -8,6 +8,316 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **MINOR** (e.g. 1.0 → 1.1) — user-facing features, UI changes, and bug fixes within the current phase.
 
 ---
+## [2.6] - 2026-07-29
+
+Editorial review of the tree group: 22 blueprints (`TREE_*`, all members of
+`GROUP_TREE_GENERIC`) and the 50 live tasks reaching them. Content only — no
+application, schema or `select_tasks` changes.
+
+### Removed
+
+- **Six duplicate watering tasks.** `TASK_0391` (cherry), `TASK_0402` (rowan),
+  `TASK_0419` (field maple), `TASK_0422` (oak), `TASK_0522` (willow) and `TASK_0535`
+  (ash) each declared the same months, the same 7-day cooldown and the same rain
+  suppression as `TASK_0649`, which was added on `GROUP_TREE_GENERIC` in 2.3. Six
+  species owners were being asked to water the same tree twice. `TASK_0522`'s one
+  genuine detail — willows are thirstier than most trees — was folded into `TASK_0521`
+  before retirement.
+- **`TASK_0400` "Mulch Rowan Tree"** and **`TASK_0421` "Mulch English Oak"** —
+  duplicates of `TASK_0077` on identical months. `TASK_0421` was also the more
+  dangerous of the two, specifying "a deep ring" with no depth and omitting the
+  keep-it-off-the-trunk warning that `TASK_0077` carries, so a novice following it
+  alone would bury the trunk.
+- **`TASK_0415` "Feed Yew Tree"** — duplicated `TASK_0078` on months, and contradicted
+  it on quantity ("a handful" against 70g per square metre).
+- **`TASK_0404` "Thin Crab Apples"** — not a recognised UK job. The fruit is the
+  display, branch failure under a crab apple crop is rare, and thinning defeats the
+  point of the tree. Meanwhile the species that genuinely need thinning after June
+  drop — apple and especially plum — have no thinning task at all. Re-homing that job
+  is on the outstanding list.
+- **`TASK_0392` "Net Cherry Tree"** — netting a full-size cherry is not achievable
+  from the ground, and the row said nothing about keeping the net taut or checking it
+  for trapped birds and hedgehogs. Retired rather than scoped, as the tree it would
+  remain useful for is a dwarf or trained specimen that the blueprint does not
+  distinguish.
+- **`TASK_0523` "Check for Storm Damage"** — a v1 row whose behaviour inverted at the
+  2.0 cutover and was never re-verified. Under v1, `Requires_Wind_Above 30` showed the
+  task in a gale, which is what its instruction ("After strong winds…") was written
+  for. Under v2 the field suppresses above the threshold, so the task had become a
+  plain 12-month, 3-day-cooldown row that merely went quiet in high wind — prompting a
+  willow owner to inspect for storm damage roughly 120 times a year. `DESIGN_V2.md` §6
+  listed this inversion as expected and to be verified; this appears to be the row that
+  was not. Storm damage is self-evident from a window in any case.
+
+  Tombstones, not deletions, in every case above.
+
+### Changed
+
+- **Thirty tasks rewritten** to the current instruction standard. `TASK_0093` and the
+  whole contiguous block `TASK_0390`–`TASK_0422` were single-sentence rows carrying no
+  finish condition, no common mistake and no safety note. They cleared the audit's
+  80-character stub check and failed §5 of `DATABASE_WORKFLOW.md` regardless — a
+  distinct authoring cohort rather than scattered lapses.
+- **Five task names corrected** under the §5 rule that a name must describe who the
+  task is for. `TASK_0077` "Mulch Trees and Shrubs" → "Mulch Around Trees" and
+  `TASK_0078` "Feed Trees and Shrubs" → "Feed Young and Fruiting Trees"; both targeted
+  a trees-only collection, and are the exact fault §5 uses as its worked example.
+  `TASK_0080` "Trim Conifers" → "Trim Conifer Hedge", `TASK_0406` "Plant Magnolia Feed"
+  → "Feed Magnolia" (the old name read as an instruction to plant a feed), and
+  `TASK_0521` "Pollard or Coppice" → "Pollard or Coppice Willow". `TASK_0538`
+  "Formative Prune" → "Formative Prune Sycamore".
+- **A standard working-at-height line**, in the manner of the chemical line added in
+  2.2 and the power-tool line added in 2.3: keep both feet on the ground, work within
+  comfortable reach, and leave anything above head height or thicker than your arm to a
+  tree surgeon. Applied to the nine rows involving a saw or a mature tree, with
+  `Requires_Wind_Above 15` alongside, matching `TASK_0624`. A powered variant covering
+  eye protection and RCD use goes on the three hedge-trimming rows. Formative pruning
+  of young trees is deliberately excluded, being by definition within reach.
+- **`TASK_0078` rescoped from every tree to young, fruiting and container trees.**
+  A full granular feed reaching all 22 members meant feeding mature native oak, ash,
+  birch and sycamore that neither need nor benefit from it, and applying a 70g per
+  square metre rate around the "drip line" of an olive in a pot. Yew is now named as an
+  exception the user can tick off, following the `GROUP_MAINS_POWERED` pattern of
+  handling the awkward member in the instruction rather than restructuring the
+  collection.
+- **`TASK_0411` now leads with a decision rather than an action.** An elder flowers on
+  the previous year's stems, so hard-pruning for foliage removes that year's flowers and
+  berries — putting the row in direct conflict with `TASK_0412` and `TASK_0413`, which
+  harvest them. All six directions between the three rows are now stated, per the §5
+  rule that a conflict warning is written into both. Cooldown 365 → 1095 so that
+  flowering years fall in between.
+- **`TASK_0539` reduced to a single reassurance row.** It previously fired July to
+  September but its only actionable step — raking fallen leaves — happens in October and
+  November, outside its own months. Tar spot is harmless and the spores blow in from
+  every sycamore nearby, so the raking sentence was dropped rather than promoted to its
+  own task, which would have duplicated the group-level autumn leaf clearance still to
+  be written. Cooldown 30 → 365, as a reassurance only needs to land once.
+- **`TASK_0398` and `TASK_0399` cross-referenced.** Coppicing a hazel removes the nut
+  crop for several years; both rows now say so, and `TASK_0398` offers cutting a third
+  of the stems each winter as the way to have both.
+
+### Fixed
+
+- **Superseded pruning advice on `TASK_0070`.** "Seal large cuts with pruning compound"
+  is no longer recommended — wound paints trap moisture against the wound. The
+  silver-leaf protection comes from the summer timing, which the row already had right.
+- **Two tasks that would destroy a grafted plant.** `TASK_0521` told willow owners to
+  cut "near ground level", which on a Kilmarnock willow removes the entire grafted
+  weeping head permanently and leaves a bare stick, and is wrong for a weeping willow
+  besides. `TASK_0398` did the same for contorted and purple-leaved hazels, commonly
+  grafted onto plain rootstock. Both now name the exclusion before the action.
+- **Four unstated poisoning risks.** `TASK_0414` had a novice generating a barrowload
+  of yew clippings — poisonous, and more so as they wilt — with no instruction to clear,
+  bag or keep them from children, pets and grazing animals. `TASK_0408` and `TASK_0409`
+  had bare hands on laburnum pods and sap, mentioning the toxicity only as motivation
+  and never as a precaution. `TASK_0413` sent a novice to pick elderberries without
+  saying they must be cooked. `TASK_0412` omitted stripping the green stalks.
+- **`TASK_0093` told a novice to remove caterpillars from hawthorn by hand.**
+  Brown-tail moth is a principal hawthorn pest and contact with the hairs is the injury
+  — a persistent rash, with eye and breathing irritation. Now specifies gloves, never
+  handling hairy caterpillars or webbed nests, and leaving large nests alone.
+- **`TASK_0410` had a novice reaching into a hawthorn** with no mention of gloves or eye
+  protection.
+- **Three hedge-trimming rows with no mention of the machine.** `TASK_0080`, `0414` and
+  `0416` each describe a job routinely done on a 3m hedge with a powered trimmer, and
+  none named eye protection, RCD use or the danger of working off a ladder with a
+  running blade.
+- **`TASK_0068` shortened every lateral to 3–4 buds**, which removes the crop on
+  tip-bearing apple varieties. Now advises shortening the longest new shoots by about a
+  third and explains why.
+- **`TASK_0401` gave a fire blight method that would spread it.** "Prune out affected
+  areas" omitted the 60cm margin into clean wood, disinfecting between cuts, and burning
+  or binning the prunings — leaving a task worse than no task.
+- **Cooldowns preventing a task's own window from firing**, the same class of fault
+  fixed for `TASK_0056`, `0059`, `0062` and `0067` in 2.3. `TASK_0079` declared March
+  and October against a 180-day cooldown, so an October completion blocked the following
+  March and the task settled into firing once a year; now 120. `TASK_0093`, `0399`,
+  `0401`, `0405` and `0412` each declared a multi-month window against a 365-day
+  cooldown, making every month after the first unreachable.
+- **February removed from three bleeding species.** `TASK_0418` (field maple) warned
+  against pruning when the sap is rising while including the month it starts;
+  `TASK_0538` (sycamore, also an *Acer*) and `TASK_0417` (hornbeam) omitted the warning
+  altogether. All three now 11,12,1, and all three state the reason.
+- **`TASK_0399` was a month late.** Cobnuts ripen from late August and grey squirrels
+  strip a tree within days; the old window opened in September and ran into October.
+- **`TASK_0405` said "dispose of" the leaves**, which is the exact point a novice puts
+  them on the compost heap and reintroduces apple scab the following spring.
+- **`TASK_0406` prescribed ericaceous feed to every magnolia** regardless of soil, with
+  "to support flowering in acidic soils" leaving it ambiguous whether the user should
+  apply it only on acid soil or in order to create one.
+- **`TASK_0077` and `TASK_0649` reaching a container-grown olive.** An 8–10cm bark
+  mulch and one to two watering cans weekly are both wrong for a potted Mediterranean
+  tree, where wet roots are the usual cause of death. Both now carry a container
+  exception. `TASK_0077` also replaces "collar rot" with plain wording.
+- **Rain suppression applied inconsistently to the same job.** `TASK_0406` hid a
+  granular feed in wet weather, which is when it works best, while `TASK_0078` never
+  did. Cleared on `0406`.
+- **`TASK_0093` carried `Suppress_If_Temp_Below 0`**, a value that can never fire in
+  April or May. Cleared.
+---
+## [2.5] — 2026-07-28
+
+Three audit checks removed, two rebuilt somewhere they can tell the truth.
+
+`auditProfile`, `auditLog` and `auditHiddenTasks` had been reading the `User_Profile`,
+`Task_Log` and `Hidden_Tasks` tabs since before the v2.0 cutover, at which point those
+tabs stopped being live. Gardens, completions and hidden tasks moved to Postgres and
+are written by the app; the tabs became snapshots that drift further from reality
+every time somebody uses the app. The checks were still running, still reporting
+confidently, and increasingly describing a garden that no longer existed.
+
+Removing them turned out to be less straightforward than deleting three functions,
+in two useful ways.
+
+**The fault modes are impossible now.** Each check existed because v1 encoded
+relationships as strings a rename could silently orphan — `User_Profile.Asset_ID` was
+matched to `Item_Dictionary` by string prefix, so renaming a prefix stranded every
+item using it. In v2 `garden_item.blueprint_id` and `task_completion.task_id` are
+real foreign keys, and tasks are tombstoned rather than deleted. The database will
+not permit the states these checks looked for. A literal rebuild against live data
+would have been three queries that return zero rows forever — reassuring noise rather
+than a safety net.
+
+**The audit had a hidden dependency on the file it was supposed to have outlived.**
+`auditProfile` called `getCorePrefix`, which is not defined in `Audit.gs` at all; it
+comes from `Code.gs`, the v1 runtime that was meant to be decommissioned at cutover.
+The audit only worked because that file was still sitting in the project. Deleting
+the check removed the dependency.
+
+### Added
+- **Two live-database checks** in `Publish.gs` (`readGardenUsage_`), reported after a
+  publish under "Affecting real gardens". Both are warnings and neither blocks:
+  - **Retired but still owned** — a blueprint withdrawn from the catalogue that is
+    still present in at least one garden. Removing a blueprint from the workbook
+    tombstones it on publish while anyone who already had one keeps their item, and
+    nothing else reported that.
+  - **Owned but receives nothing** — a blueprint somebody has in their garden that no
+    live task reaches. This is the coverage report narrowed to reality: the general
+    list mixes "nobody has added this yet", which can wait, with "somebody is looking
+    at an empty screen", which cannot. Only the second appears here.
+- **A missing-tab guard on `readDictionary` and `readTasks`** (`getSheetOrFlag`),
+  matching the one `readReferenceLists` always had. Prompted by renaming
+  `User_Profile` mid-release, which stopped the audit dead with `TypeError: Cannot
+  read properties of null (reading 'getDataRange')` — a message naming neither the
+  tab nor the cause. A missing tab is now an ordinary ERROR finding that says which
+  one, and lists the usual causes (a rename, a trailing space, a changed capital).
+
+### Changed
+- **The publish completion alert** gains an "Affecting real gardens" count, and the
+  report a matching section.
+- **Coverage is passed from the gate into the read-back** rather than re-derived from
+  the database, so there remains exactly one implementation of what reaches what.
+- **`Audit.gs` no longer reads the live database or `Code.gs`.** It is now purely a
+  check over authored content, judged from the workbook alone.
+- **The three v1 tabs are archived** under an `ARCHIVE_` prefix. They are kept as the
+  only record of the pre-migration state; nothing looks them up.
+
+### Notes
+- **The live checks are aggregated to blueprint level on purpose.** The publish
+  pipeline authenticates with the service-role key and therefore bypasses Row Level
+  Security, so it can read every garden. The report gives a blueprint name, an item
+  count and a garden count — never a garden name, a user, or anyone's own reference
+  for an item. Today that distinction is theoretical because there is one garden; it
+  stops being theoretical the moment friends are invited, and it is much easier to
+  build in now than to retrofit after the workbook has quietly become a place where
+  other people's gardens are listed.
+- **They run after the push, not in the gate.** The dry run's promise is that it
+  touches the database not at all and works with Supabase unconfigured, and that was
+  worth more than warning slightly earlier. The trade-off is that you learn you have
+  orphaned an item just after publishing rather than just before; the fix is to
+  restore the row and publish again.
+
+---
+---
+## [2.4] — 2026-07-28
+
+The "Add to My Garden" picker had become a victim of the catalogue's growth. Tapping
+Plants & Flowers produced an undifferentiated wall of pills that was fine at thirty
+items and unusable approaching a hundred, with no way to find anything except reading
+the whole list — and no way at all to find something if you guessed the wrong tile.
+
+Three changes address it: pills now cluster under headings, a search box spans the
+entire catalogue rather than the selected tile, and the handful of blueprints whose
+common name is genuinely ambiguous carry a botanical name beside it.
+
+The architectural point is what the headings are *not*. A browse group could have
+been implemented by reusing collections, which already group blueprints and were
+right there. It was not, because collections decide what an item **receives** and
+headings decide only where it **appears**, and fusing the two would have meant that
+reorganising a screen could silently change somebody's tasks. That is the exact class
+of failure §2a exists to prevent. `browse_group` is therefore its own table, absent
+from `select_tasks`, and rejected by the audit as a task target.
+
+### Added
+- **`browse_group` table** (`db/09_browse_groups.sql`) — the picker's headings, with
+  a `sort_order` authored in gaps of ten so a new heading can be slotted between two
+  existing ones without renumbering. Upsert-only, following the `collection`
+  precedent: publishing never deletes one, because a blueprint may still point at it.
+- **`blueprint.browse_group_id`** (nullable) — which heading a blueprint appears
+  under. Null is normal and safe: those blueprints collect under an "Other" heading
+  at the bottom of the picker rather than being hidden, and a category where nothing
+  has been grouped renders as one plain list exactly as before.
+- **`blueprint.botanical_name`** (nullable) — shown inline in small italic brackets,
+  "Geranium *(Pelargonium)*". Authored only where the common name could mean more
+  than one plant; blank on the large majority of rows. A check constraint rejects a
+  blank-but-present value, which would render as empty brackets.
+- **`Browse_Groups` workbook tab** (`Name`, `Sort_Order`) declaring every valid
+  heading, and two new `Item_Dictionary` columns — `Browse_Group` (E) and
+  `Botanical_Name` (F).
+- **Catalogue-wide search in the picker.** Typing switches the list to a flat set of
+  matches drawn from *every* category, each labelled with the tile it belongs to;
+  clearing the box returns to the grouped view. Deliberately not scoped to the
+  selected tile: a beginner does not necessarily know whether Lavender lives under
+  Trees & shrubs or Plants & flowers, and a search that finds nothing because they
+  guessed wrong reads as "the app doesn't have it". Selecting a result follows its
+  category, so the item is filed where it was chosen from rather than under whichever
+  tile happened to be lit. Botanical names are matched too, so "Pelargonium" finds
+  Geranium.
+- **Six new audit checks** covering the new columns: undeclared heading and missing
+  `Sort_Order` (both ERROR, both hard faults that would otherwise fail the publish
+  part-way through), plus duplicate sort orders, unused headings, blueprints with no
+  heading in an otherwise-grouped category, and botanical names that are redundant,
+  over-long, or carry a semicolon (all WARNING or REVIEW).
+
+### Changed
+- **The publish gate blocks on two new conditions** — a `Browse_Group` value not
+  declared on the `Browse_Groups` tab, and a declared heading with no whole-number
+  `Sort_Order` — and reports a second warning-only list beside the coverage report:
+  blueprints with no heading assigned.
+- **`Publish.gs` pushes browse groups** as a new step between categories and
+  blueprints, and `Audit.gs` reads and validates the two new columns. Both files also
+  gained named constants for the `Item_Dictionary` column indexes, which were
+  previously bare numbers.
+- **Service worker** `CACHE_NAME` bumped `gardening-v7` → `gardening-v8`.
+- **The pill container is now a block element** rather than a flex row, so it can
+  hold heading groups; each group wraps its own pills.
+
+### Fixed
+- **Table privileges on a newly created table.** The first publish attempt failed
+  with `42501 permission denied for table browse_group`. Enabling Row Level Security
+  and writing a read policy is not sufficient on its own — RLS is a filter applied on
+  top of ordinary SQL privileges, so without a `GRANT` the request is refused before
+  any policy is consulted. The pre-existing tables carry their grants from
+  `01_schema.sql`; a new one inherits nothing. `09_browse_groups.sql` now grants
+  `SELECT` to `authenticated` and `SELECT, INSERT, UPDATE` to `service_role`,
+  withholding `DELETE` deliberately. Left unfound, this would have surfaced again at
+  the frontend as a picker that silently showed everything under "Other".
+- **The heading seed no longer overwrites authored sort orders.** It was written as
+  `on conflict do update`, which was correct while the migration was the only thing
+  that had ever populated the table and wrong the moment the workbook took ownership.
+  Now `on conflict do nothing`: bootstrap on first run, no-op thereafter.
+
+### Notes
+- Nothing in this release touches matching. `select_tasks` is unchanged, and the
+  tasks a garden receives are identical before and after.
+- The three frozen v1 authoring tabs (`User_Profile`, `Task_Log`, `Hidden_Tasks`)
+  remain in the workbook, still read by three audit checks that now report on a
+  snapshot rather than live data. Renaming `User_Profile` during this release
+  crashed the audit outright, because that reader — unlike `Reference_Lists` — has no
+  missing-tab guard. Both the guards and the wider question of retiring those checks
+  are carried to a later release.
+
+---
 ---
 ## [2.3] — 2026-07-27
 

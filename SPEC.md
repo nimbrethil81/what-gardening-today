@@ -29,8 +29,8 @@ The system is a Progressive Web App (PWA) backed by a hosted PostgreSQL database
 
 The curated horticultural content is still authored in a **Google Sheet**, which remains the editing surface because it is a comfortable place to write and review hundreds of blueprints and tasks. The Sheet is no longer the runtime database; it is the source from which the runtime is published.
 
-* **Data Audit (Apps Script, `Audit.gs`):** A read-only integrity check over the authored content, exposed as a **Garden Data → Run Audit** menu. It exists because this data fails silently — a task targeting something that does not exist raises no error, it simply never appears — and the audit turns that class of silent failure into a visible list. It never modifies data.
-* **Publish (Apps Script, `Publish.gs`):** Pushes the audited Sheet content into the Postgres catalogue and task tables (categories, blueprints, collections and their memberships, tasks and their targets), reconciling the live database to match the Sheet. Retirement is handled by stamping `retired_at`, never by deleting rows a completion might reference.
+* **Data Audit (Apps Script, `Audit.gs`):** A read-only integrity check over the authored content, exposed as a **Garden Data → Run Audit** menu. It exists because this data fails silently — a task targeting something that does not exist raises no error, it simply never appears — and the audit turns that class of silent failure into a visible list. It never modifies data, and judges everything from the workbook alone.
+* **Publish (Apps Script, `Publish.gs`):** Pushes the audited Sheet content into the Postgres catalogue and task tables (categories, browse groups, blueprints, collections and their memberships, tasks and their targets), reconciling the live database to match the Sheet. Retirement is handled by stamping `retired_at`, never by deleting rows a completion might reference. Its post-publish report also carries the two integrity questions that can only be answered against live data — whether a retired blueprint is still in somebody's garden, and whether an item somebody owns receives no tasks — aggregated to blueprint level so no garden, user or personal reference is ever named.
 
 The frontend never touches the Sheet, and users never touch the pipeline. Authoring and verification steps are documented in `docs/DATABASE_WORKFLOW.md`.
 
@@ -69,9 +69,17 @@ A `task_target` row is constrained to reference exactly one of `blueprint_id` or
 * `id` (smallint, PK), `name` (unique), `sort_order`.
 * The seven values: Lawn, Beds, Trees & shrubs, Plants & flowers, Veg & herbs, Garden structures, Tools.
 
+**`browse_group`** — the headings the picker clusters blueprints under.
+* `id` (smallint, PK), `name` (unique), `sort_order`.
+* **Display-only, and deliberately not a collection.** A browse group decides where a blueprint appears on the "Add to My Garden" screen and nothing else. It is unreachable from `select_tasks` and can never be a task target — the two concepts live in separate tables precisely so that reorganising how the catalogue is *browsed* can never alter what a garden item *receives* (§2a of `docs/DATABASE_WORKFLOW.md`).
+* `sort_order` is authored in gaps of ten, so a new heading can be slotted between two existing ones without renumbering.
+* Upsert-only, following the `collection` precedent: publishing never deletes one, because a blueprint may still reference it.
+
 **`blueprint`** — the global catalogue of item types, one row per real-world item.
-* `id` (integer, PK), `name` (unique), `legacy_code` (parity), `retired_at`.
+* `id` (integer, PK), `name` (unique), `legacy_code` (parity), `browse_group_id` (nullable → `browse_group`), `botanical_name` (nullable), `retired_at`.
 * **One blueprint per real-world item** — the same plant never appears twice. Where an item legitimately belongs under more than one tile, that is expressed by multiple `blueprint_category` rows, not a duplicate blueprint.
+* `browse_group_id` null is normal and safe: the picker shows those blueprints under an "Other" heading rather than hiding them, and a category where nothing has been assigned renders as a plain unheaded list.
+* `botanical_name` is authored only where the common name is genuinely ambiguous — Geranium, Bluebell, Laurel — and is null for most rows. A blank-but-present value is rejected by a check constraint, since it would render as empty brackets.
 
 **`blueprint_category`** — which tiles a blueprint appears under (many-to-many).
 * `blueprint_id`, `category_id`. PK (both). Rose appearing under both "Plants & flowers" and "Trees & shrubs" is two rows here.
@@ -123,7 +131,7 @@ There is no bespoke REST API. The client reaches the backend three ways: the `to
 * **Degrades gracefully:** any weather failure yields `weather.available = false` and an unfiltered task list, never an error screen.
 
 ### Direct table operations (via `supabase-js`, under RLS)
-* **Read the catalogue** — `category`, `blueprint`, `blueprint_category` — to populate the "Add to My Garden" picker. Readable by any signed-in user.
+* **Read the catalogue** — `category`, `blueprint`, `blueprint_category`, `browse_group` — to populate the "Add to My Garden" picker. Readable by any signed-in user. The picker clusters pills under their browse-group headings in `sort_order`, and shows a blueprint's `botanical_name` inline where one is set.
 * **Read inventory** — active `garden_item` rows (those with no `removed_at`) for the current garden, joined to `blueprint` for the display name.
 * **Add an item** — insert a `garden_item` row (garden, blueprint, optional friendly name, and the chosen tile recorded in `legacy_category`).
 * **Remove an item** — set `removed_at` (soft delete).
@@ -208,4 +216,6 @@ Documented so they aren't lost between sessions.
 * **Phase 3 (COMPLETE):** Environmental integration — weather-filtered tasks via a secure weather proxy.
 * **Phase 3.1 (COMPLETE):** Task dismissal — swipe-to-hide with undo, and a settings screen to restore hidden tasks.
 * **Phase 4 (COMPLETE):** Cross-platform scale. The database has been migrated from Google Sheets to Supabase PostgreSQL; the matching engine is now the `select_tasks` database function; email authentication and per-garden Row-Level Security are in place; the frontend has sign-in and first-run garden setup; and the production app went live on the new stack on 2026-07-17, with a scheduled keep-alive keeping the free-tier database warm. Two small operational tidies trail behind it: confirming the old weather key was never committed publicly (rotating only if it was), and retiring the now-unused Apps Script *runtime* deployment (the content-publish pipeline stays). A native rewrite (Flutter / SwiftUI) was considered and is **not** being pursued — the PWA remains the delivery vehicle.
+* **Phase 4.1 (COMPLETE):** Catalogue browsing. The "Add to My Garden" picker groups its pills under headings authored in the workbook, carries a catalogue-wide search that spans every category, and shows a botanical name inline for the handful of blueprints whose common name is ambiguous. Backed by a new `browse_group` table and two nullable `blueprint` columns, all display-only and unreachable from the matching engine.
+* **Phase 4.2 (COMPLETE):** Retiring the v1 user-data checks. The `User_Profile`, `Task_Log` and `Hidden_Tasks` tabs are archived and read by nothing; the three audit checks over them are gone, which also removed the audit's last dependency on the v1 `Code.gs` runtime file. The two questions worth keeping are now asked of the live database in the post-publish report.
 * **On the horizon (post-cutover):** custom email so friends can be invited; an invite flow and a garden switcher to make multi-user real; surfacing `estimated_minutes` in the UI; and the pre-existing hide-swipe placement/direction improvement (tracked separately from the v2.0 work).
