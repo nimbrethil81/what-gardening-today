@@ -8,6 +8,63 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **MINOR** (e.g. 1.0 → 1.1) — user-facing features, UI changes, and bug fixes within the current phase.
 
 ---
+## [2.7] — 2026-07-29
+
+Editorial review of the lawn group: 8 blueprints (`LAWN_*`) and the 33 live tasks
+reaching them, including everything arriving via `GROUP_GRASS_LAWN`,
+`GROUP_LAWN_RENOVATION` and `GROUP_LAWN_STANDARD_FEED`. Content only — no
+application, schema or `select_tasks` changes. It closes a question left open in
+2.2 rather than raising a new one.
+
+### Removed
+- **Buffalo Grass Lawn (`LAWN_BUFFALO`) withdrawn from the catalogue.** 2.2 recorded
+  that it was "worth questioning as a blueprint" after its presence forced exclusions
+  on five separate lawn tasks and shaped both new lawn collections. Reading the group
+  end to end settles it. It is a warm-season grass sitting in a collection of
+  cool-season ones, and roughly half the eighteen tasks reaching it were calendared
+  for a growth cycle it does not have: the spring programme landing while it is
+  dormant, the autumn feed as it returns to dormancy, and `TASK_0635` diagnosing red
+  thread, which is a disease of cool-season turf. It is also not a viable lawn in a UK
+  climate. Excluding it from `GROUP_LAWN_RENOVATION` in 2.2 was the right reasoning
+  applied to one collection; this is that reasoning followed to its conclusion. The row
+  is deleted from `Item_Dictionary`, so the publish tombstones the blueprint rather
+  than erasing it, and it can be restored whole if the app is ever taken to a warmer
+  climate.
+
+### Changed
+- **`TASK_0009` "Summer Feeding" rewritten.** It was the only task in the lawn block
+  still carrying its pre-2.2 text — four short clauses with no rate, no finish
+  condition and no common mistake — and it told every grass lawn to apply a full-rate
+  feed while `TASK_0635` told the same user to use a half rate on fine fescue and
+  bentgrass. It now carries the rate qualifier, so the advice is correct for every
+  member of `GROUP_GRASS_LAWN` rather than merely tolerable for some, and the task
+  stays where it is instead of being narrowed. This also part-closes the 2.2 note that
+  fine turf had no feed of its own: Fescue and Bentgrass now receive a growing-season
+  feed at a rate that suits them. `TASK_0008` stays narrowed to
+  `GROUP_LAWN_STANDARD_FEED`, because a 12-4-8 growth feed has no safe fine-turf
+  version at any rate — which is the distinction that made a collection the right
+  answer there and a sentence the right answer here.
+
+### Notes
+- **`TASK_0005`, `TASK_0007` and `TASK_0013` were reviewed for retargeting and
+  deliberately left alone.** Withdrawing Buffalo removed the objection to all three.
+  Moving them would have carried 2.2's stoloniferous-surface reasoning past the point
+  where it holds: solid-tine aeration does not damage a bent sward, and light spring
+  scarification is the only thatch management Bentgrass receives at all, since it sits
+  outside the autumn programme entirely.
+- **Bentgrass has no autumn renovation and no feed above half rate.** Not introduced
+  here, but visible for the first time now the group has been read end to end. It is
+  the most thatch-prone of the four remaining grasses, which makes its exclusion from
+  every scarification but the lightest worth its own decision rather than an inherited
+  one.
+- **The rest of the lawn review is not in this release.** The pass also found a named
+  active ingredient in `TASK_0015`, an NPK ratio in `TASK_0010` that contradicts its
+  own description and matches no product on sale, rake advice in `TASK_0583` that
+  would strip a moss lawn, three tasks involving blades or power tools with no safety
+  wording, and missing seasonal jobs for the clover, moss and wildflower lawns. Held
+  back deliberately so this publish could be read against a clean report.
+- No frontend file changed, so `CACHE_NAME` is not bumped.
+---
 ## [2.6] - 2026-07-29
 
 Editorial review of the tree group: 22 blueprints (`TREE_*`, all members of

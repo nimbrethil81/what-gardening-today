@@ -6,7 +6,7 @@ This covers the manual authoring process only — generating content with an LLM
 
 **As of v2.0, the workbook is an authoring workbench, not a live database.** Content is written here exactly as before, but it reaches the app only when it is *published* to the hosted database (Supabase) via an explicit **Garden Data → Publish to app** step. Authoring is unchanged; publishing is new. See §10.
 
-_Current as of v2.1 (2026-07-25). This revision rewrote the task-generation prompt (§5), restructured QA from two passes into three (§7, §8), and added the `Reviewed` column (§2)._
+_Current as of v2.6 (2026-07-30). This revision added four authoring rules earned from the tree editorial review — irreversible cuts and grafted plants (§5), the bleeding species (§5), cooldowns that strand a task's own months (§5, §6, §9), and scoping a task on something observable rather than on region (§2, §5, §6, §8a) — recorded the standard safety lines (§5), and added notes on growing form (§2), conditional coverage (§7d) and surviving v1 wind rows (§9)._
 
 > **If you read only one thing, read this.** The v2.0 migration **abolished bare-category targeting.** A task may no longer target `LAWN` or `PLANT` and sweep up everything beneath it — such a target now *blocks publishing*. Every task must target either one specific blueprint or a **declared collection**. The consequence for authoring is that **a new blueprint inherits nothing.** Add a plant and write no tasks for it, and it will silently receive zero tasks forever — there is no fallback tier to catch it. See §2 and §2a.
 
@@ -60,6 +60,26 @@ Note that a task's `Category` is now **display metadata only** — it labels the
 
 Never enter the same plant twice under two different prefixes. This has caused real bugs: Rose, Lavender, Hydrangea, Raspberry and Strawberry all previously existed twice, producing two identical-looking pills in the picker with entirely different task behaviour depending on which the user happened to tap. If an item belongs in two categories, use a multi-valued `Category` cell.
 
+### One blueprint, one growing form
+
+The inverse of the rule above, and the harder one to spot. Cataloguing the same plant twice is an obvious fault. Cataloguing two plants that need opposite treatment *once* is not, and it produces the same class of bug from the other direction.
+
+A single blueprint is safe only where every plant a user would file under that name wants the same care. Several currently do not:
+
+- **Hedge or specimen.** Yew, Hornbeam, Hawthorn and Conifer are each grown both as clipped hedging and as a free-standing tree. A late-summer hedge trim and a winter formative prune to a clear trunk are both correct, and each is wrong for the other form.
+- **Ornamental or productive.** Cherry covers both a flowering cherry and a fruiting one. A netting or harvest task is meaningless on the former.
+- **Grafted or on its own roots.** Willow covers coloured-stem willows that want hard annual cutting, weeping willows that do not, and Kilmarnock willow, a grafted standard that is destroyed by it. Hazel has the same split between plain green stock and contorted or purple forms.
+
+There is no mechanism that resolves this — `select_tasks` matches a blueprint, not a form of it. So there are only three honest options, and choosing none of them is what causes the bug:
+
+1. **Split the blueprint** where the two forms are genuinely different purchases (`TREE_YEW_HEDGE` against `TREE_YEW`). Cleanest, but it doubles the catalogue entry and the user has to know which they have.
+2. **Scope inside the instruction**, opening with who the task is for and telling everyone else to tick it off — the pattern `GROUP_MAINS_POWERED` uses for cordless machines. Cheapest, and adequate where the wrong action is merely wasted effort.
+3. **Do not write the task at all** where the wrong action is irreversible. This is the right answer whenever getting it wrong kills the plant, and it is why `TASK_0392` was retired rather than scoped.
+
+Option 2 is the usual choice, but it is only safe when a user who ignores the opening sentence loses nothing they cannot get back. Where the wrong action is irreversible, use option 1 or option 3 — see the irreversible-advice rule in §5.
+
+**Whichever you choose, scope on something the user can check by looking.** "If yours is grown as a hedge", "if there is fruit on it", "if the pot is standing in water" are all answerable in seconds. A condition the user cannot self-assess — where they live, what their soil is, which cultivar they bought — is either ignored or wrongly assumed not to apply, and the second of those is how a scoped task ends up doing harm. The rule and its worked cases are in §5 under SCOPE.
+
 ### Asset ID prefixes
 
 Since v2.0 these are **labels and publish-pipeline matching keys**, not logic. The app never parses a prefix to work out what an item is; it follows real foreign keys. The prefix survives as the blueprint's `legacy_code`, which is how the publish step recognises "this workbook row is that database row". So the rules below still matter — a changed or duplicated prefix breaks the *publish* match — but they no longer drive any runtime behaviour.
@@ -90,9 +110,9 @@ Collections currently in use:
 | `GROUP_SOFT_FRUIT` | Raspberry, Strawberry, Blackberry, Goji |
 | `GROUP_BRASSICA` | Broccoli, Kale |
 | `GROUP_TENDER_BULB` | Dahlia (the other tender bulbs each have their own lift-and-store task) |
-| `GROUP_GRASS_LAWN` | Ryegrass, Fine Fescue, Bentgrass, Mixed Utility, Buffalo — conventional mown turf |
+| `GROUP_GRASS_LAWN` | Ryegrass, Fine Fescue, Bentgrass, Mixed Utility — conventional mown turf |
 | `GROUP_LAWN_RENOVATION` | Ryegrass, Fine Fescue, Mixed Utility — lawns that take autumn scarify / aerate / overseed / top dress |
-| `GROUP_LAWN_STANDARD_FEED` | Ryegrass, Mixed Utility — lawns that take a full-rate high-nitrogen feed. Deliberately excludes fescue, bentgrass and buffalo |
+| `GROUP_LAWN_STANDARD_FEED` | Ryegrass, Mixed Utility — lawns that take a full-rate high-nitrogen feed. Deliberately excludes fescue and bentgrass, which take the same feed at half rate via `TASK_0009` |
 | `GROUP_CULTIVATED_BED` | Herbaceous Border, Raised Bed, Annual Bedding, Mixed Shrub Border, Cutting Garden — beds of rich, worked garden soil |
 | `GROUP_ALL_BEDS` | Herbaceous Border, Mixed Shrub Border, Woodland Shade, Gravel, Bog Garden, Rock Garden |
 | `GROUP_BED_CLEARED` | Raised Bed, Annual Bedding, Cutting Garden — beds that stand empty between plantings |
@@ -395,7 +415,13 @@ FIELD RULES
     (a) THE ACTION — what to physically do, in plain words a beginner can act on without looking anything up. No jargon. If a technical term is unavoidable, define it in the same sentence.
     (b) THE FINISH CONDITION — how the user knows they have finished. "Until water runs from the bottom of the pot." "Until you can see bare soil between the crowns." Not "water well" or "tidy up".
     (c) THE COMMON MISTAKE — the specific thing beginners get wrong here, and what it causes. This is what separates a useful row from a stub, and it is the element most often missing.
-    (d) A SAFETY NOTE, where one genuinely applies — blades, ladders and working at height, power tools, anything in a confined or unventilated space, anything involving a chemical product. Omit it where nothing is at stake. Do not pad.
+    (d) A SAFETY NOTE, where one genuinely applies — blades, ladders and working at height, power tools, anything in a confined or unventilated space, anything involving a chemical product, and any plant whose sap, clippings or berries are poisonous. Omit it where nothing is at stake. Do not pad.
+        Where one of these fits, use it VERBATIM as the last sentence rather than writing your own, so the wording stays identical across the matrix:
+        - Hand tools on a mature tree: "Keep both feet on the ground and work only within comfortable reach, and leave anything above head height or thicker than your arm to a professional tree surgeon."
+        - Powered hedge trimmer: "Wear eye protection, plug a mains trimmer into a socket protected by an RCD, and keep both feet on the ground rather than working off a ladder with a running blade."
+        - Any chemical product: "Read and follow the product label - it is the legal instruction."
+        Formative pruning of a young tree does NOT take the at-height line, being by definition within reach. Adding it there is padding.
+        For a poisonous plant there is no standard line, because the risk differs — clippings reaching animals for yew, seed pods reaching children for laburnum, raw fruit for elder. Name the specific hazard and what to do about it, and set a wind threshold of 15 where the job is done at height.
   Commas and full stops only. NO SEMICOLONS.
 
 - CHEMICALS — a hard rule, no exceptions. NEVER name a chemical active ingredient or brand: not glyphosate, not ferrous sulphate, not ferric phosphate, not metaldehyde, not copper sulphate, and not any other. This applies even inside a warning and even when the substance is banned. Product approvals change, and a row naming an active dates into being wrong or illegal without anyone noticing.
@@ -405,6 +431,10 @@ FIELD RULES
 - Valid_Months: comma-separated integers 1–12, ascending, no spaces (e.g. 3,4,5). This comma list sits inside ONE semicolon field.
 
 - Frequency_Days: a positive whole number — the cooldown before the task may reappear. Before you choose the number, state the real cadence in words in your NOTES ("in practice this is done once, in early spring"; "every week or so while the plants are cropping") and check that the number matches the words. A once-a-year job is 365. A weekly job through its season is 7. Never blank, never zero. Do NOT go below 3 unless the job genuinely needs doing every day — a value of 1 means the app may offer this task every single day of its season, which is how a useful job becomes something the user learns to dismiss.
+  THEN CHECK THE COOLDOWN AGAINST YOUR OWN VALID_MONTHS. A cooldown longer than the gap between the months you declared makes those later months unreachable — the task fires in the first month and is still on cooldown when the others arrive, so they are decorative. Two rules follow:
+    (i) If Valid_Months spans several consecutive months and the job recurs within that span — inspecting, picking, raking, checking — the cooldown must be short enough to fire more than once inside it. Do NOT write 365 on a job your own instruction describes as repeated.
+    (ii) If Valid_Months declares two separate windows in a year, the cooldown must be shorter than the SMALLER gap between them, measured in both directions. Months 3 and 10 are seven months apart one way and five the other, so a 180-day cooldown blocks the March window every time and the task quietly becomes annual. Use 120.
+  State this check in your NOTES for any row with more than one valid month.
 
 - Estimated_Minutes: whole minutes a novice would realistically spend on ONE occurrence, including fetching the tools and putting them away. Calibrate against this scale:
       5        a look — checking, inspecting, opening a vent
@@ -426,9 +456,59 @@ SEQUENCING AND CROSS-REFERENCES
 - The app does not order tasks. If a job must happen before or after another job on the same item, the ONLY place that ordering can live is the instruction text the user reads. Say it in the first sentence: "Autumn lawn programme - do this after aeration and before top dressing."
 - If a new task conflicts with an existing one — a treatment that must not follow a sowing, a feed that must not follow another feed — write the warning into BOTH directions, and tell me in the NOTES which existing row needs the matching sentence adding. A one-sided warning is how the two rows drift apart later.
 
+CRITICAL — IRREVERSIBLE ADVICE
+------------------------------
+Before writing any row that removes wood, ask what happens if the user has a slightly
+different plant from the one you are picturing. Wasted effort is recoverable. A cut is
+not. These three traps have all reached live data:
+
+- GRAFTED PLANTS. Never write "cut to ground level", "cut down to a stump" or any
+  equivalent without first naming who must NOT do it. Many ornamental forms are grafted
+  onto a plain rootstock — contorted and purple hazel, Kilmarnock willow, weeping and
+  standard forms generally, and every fruit tree — and cutting below the graft removes
+  the variety permanently, leaving the rootstock. The user cannot undo this and will
+  not know it has happened until the wrong plant grows back. Coppicing, pollarding and
+  hard renovation pruning all need this exclusion stated BEFORE the action.
+
+- THE BLEEDING SPECIES. Maple (including sycamore and field maple), birch, hornbeam,
+  walnut and grapevine bleed sap heavily once it starts rising in late winter. Prune
+  them in EARLY winter — 11,12,1 — and never declare February. Say why in the
+  instruction, so the user does not tidy the tree up in March.
+
+- CUTTING OFF NEXT YEAR'S CROP. Where a plant flowers or fruits on the previous
+  season's wood, pruning for shape and pruning for a crop are different jobs with
+  different answers. Elder and apple are worked examples. If one cut serves one goal
+  and destroys the other, say so in the FIRST sentence and let the user choose — do not
+  bury it, and do not pick for them.
+
 CRITICAL — COLLECTION-LEVEL TASKS
 ---------------------------------
 If a Target_Asset_ID is a GROUP_ tag, the advice must be safe for EVERY member listed above, without exception. Judge it against the most awkward member of the collection, not the typical one. If the advice is right for most members and wrong for one, do NOT write it — tell me which member breaks it, so I can narrow the collection or write a specific task instead.
+
+SCOPE — WHO THE TASK IS FOR
+---------------------------
+Where a task applies to only some of the people who will receive it, say so in the
+FIRST sentence and give everyone else permission to tick it off. A user who reads one
+line and moves on has lost nothing. A user who works out three sentences in that it was
+never meant for them has learned to skim, and will skim the row that did matter.
+
+Filter on SOMETHING THE USER CAN OBSERVE, never on where they live. A geographic
+condition — "if you are in the South East", "in milder parts of the country" — fails
+three ways. The user cannot assess it. The boundary moves without anyone editing the
+row. And when it goes out of date it fails UNSAFE, telling somebody the task is not for
+them when it is. Pest ranges spread and frost dates shift, and nothing in the audit or
+the publish gate can see an instruction that has quietly become geographically untrue.
+
+There is almost always an observable stand-in for a region, and it is more accurate than
+the region anyway:
+  - not "if you are in the South East" but "if there is a white silken nest on the trunk"
+  - not "where pear rust occurs" but "if there is a juniper in your garden or next door"
+  - not "in colder parts of the country" but "if frost is forecast this week"
+  - not "in high rainfall areas" but "if the pot is standing in water"
+
+This holds for any condition the user cannot settle by looking — soil type, aspect,
+hardiness, how long they have gardened. Find the thing they can see. An observable
+filter also needs no maintenance, because the world updates it rather than you.
 
 NOTES (after the code block)
 ----------------------------
@@ -439,6 +519,23 @@ NOTES (after the code block)
 
 Begin with the year plan.
 ```
+
+### The standard safety lines
+
+Three warnings recur often enough that they are now fixed wording rather than something each row invents. Each was introduced because an audit found the same hazard unmentioned across a dozen rows and present on one.
+
+| Line | Introduced | Applies to |
+|---|---|---|
+| Read and follow the product label | v2.2 | any task naming a product category — weedkiller, moss treatment, slug pellets, wood treatment |
+| Isolate the machine, eye protection, RCD outdoors | v2.3 | powered tool maintenance, where hands go near a blade |
+| Keep both feet on the ground, tree surgeon above head height | v2.6 | pruning a mature tree with a saw or secateurs |
+| Eye protection, RCD, no ladder with a running blade | v2.6 | powered hedge trimming |
+
+Reuse the wording exactly. The point of a standard line is that it reads identically everywhere, so a user learns it once and a reviewer can grep for its absence. A paraphrase is worse than nothing, because it looks like the check has been done.
+
+**Where a standard line does not fit, do not stretch one.** Poisonous plants are the case in point: yew, laburnum and elder each need a different warning about a different route to harm, and a generic "this plant is poisonous" would tell the user nothing they can act on. Write the specific hazard.
+
+**Do not apply a safety line where nothing is at stake.** §5 says "do not pad" for a reason — a warning on every row is a warning on none.
 
 ---
 
@@ -456,6 +553,11 @@ Begin with the year plan.
 - `Requires_Wind_Above`, where used, is on a task that should be **hidden** in wind — not one that should appear because of it.
 - `Suppress_If_Temp_Below` is not set on a task whose months are all in the November-to-March window.
 - `Frequency_Days` and `Estimated_Minutes` are whole numbers of 1 or more, never blank and never zero — and `Frequency_Days` is 3 or more unless the job is genuinely daily.
+- **`Frequency_Days` is short enough to reach every month the task declares.** For a run of consecutive months, can it fire more than once inside the run? For two separate windows, is it shorter than the *smaller* gap between them, measured both ways? A 365 against a three-month window, or a 180 against months 3 and 10, means every month after the first never fires.
+- **No task removing wood tells the user to cut low without naming who must not** — grafted, weeping and standard forms, and anything on a rootstock.
+- **No maple, birch, hornbeam, walnut or vine task declares February**, and each says why it is pruned in early winter.
+- **Any standard safety line is quoted exactly**, not paraphrased — and is absent from formative pruning of young trees, where it would be padding.
+- **Any task applying to only some owners says so in its first sentence, and filters on something observable** — a nest on the trunk, a plant in the next garden, water standing under a pot. Never on region, soil, aspect or hardiness, which the user cannot assess and which date silently.
 - No stray semicolons inside `Task_Name` or `Instruction`.
 
 ### After importing items
@@ -578,6 +680,12 @@ Every audit run rebuilds a `Coverage_Grid` tab: one row per blueprint, twelve co
 
 Use it as an input to the editorial review instead: paste the rows for the item group you are reviewing, and let the reviewer judge which blanks are deliberate and which are gaps. That is a horticultural judgement, which is exactly what that pass is for.
 
+**The grid counts targeting, not applicability, and therefore overstates coverage.** A task counts for an item in a month if it targets that item and declares that month — the grid cannot read the instruction, so it cannot tell that the task only applies to some owners. Several do: watering a newly planted tree, checking stakes and ties, feeding a young or fruiting tree. Each shows as coverage for every member of `GROUP_TREE_GENERIC`, and none of them applies to a mature tree in open ground.
+
+The tree pass is the worked example. On paper every tree had four to five tasks in March and one or two through the summer. In practice an established tree of any species received two jobs a year, both in spring, because everything else was scoped to young trees inside its own text. A grid row can look adequately covered and still describe an item the app has nothing to say about.
+
+So when reading the grid in a review, ask not only whether the month is empty but **who the tasks in a non-empty month actually apply to.** A count of one, from a task whose first sentence excuses most owners, is a blank wearing a disguise.
+
 ---
 
 ## 8. The review prompts
@@ -653,6 +761,14 @@ CHECK EACH TASK FOR:
    real cadence of the job — and does it agree with what the instruction says? (A
    real bug: an instruction saying "mow more frequently in peak season" on a task
    whose cooldown was twice the spring value.)
+   Then check the cooldown against the task's OWN months, which is a separate fault
+   and a common one. If the cooldown is longer than the gap between the declared
+   months, every month after the first can never fire. A 365 on a three-month
+   inspection window means the task runs once and the other two months are
+   decorative. Two windows in a year — say months 3 and 10 — must be measured in
+   BOTH directions, because the shorter gap is the one that blocks. Also flag the
+   reverse: February on a maple, birch, hornbeam, walnut or vine, all of which
+   bleed once the sap rises and want early winter instead.
 
 3. COLLECTION SAFETY. If a task targets a GROUP_ collection, is the advice safe for
    EVERY member listed above? (Real bugs: "cut back to within 10cm of the ground"
@@ -671,6 +787,19 @@ CHECK EACH TASK FOR:
    winter rather than cut back (penstemon, gaura, eryngium, rudbeckia, echinacea,
    sedum, verbena bonariensis), and trees that must not be pruned in winter because
    of silver leaf (plum, cherry and the other stone fruits).
+   Two further traps, both found in live data:
+   - GRAFTED PLANTS. Any instruction to cut low — coppice, pollard, cut to a stump,
+     hard renovation — is destructive on a plant grafted onto a rootstock, because
+     it removes the variety and leaves the stock. Contorted and purple hazel,
+     Kilmarnock willow, weeping and standard forms, and every fruit tree. Flag any
+     such row that does not name the exclusion BEFORE the action.
+   - CUTTING OFF THE CROP. Where a plant flowers or fruits on the previous season's
+     wood, a prune for shape and a prune for a crop are different jobs. Flag any row
+     that silently chooses one when a harvest task elsewhere in this batch assumes
+     the other.
+   Also check whether one blueprint is covering two growing forms that want opposite
+   treatment — hedge against specimen, ornamental against fruiting, grafted against
+   own-root. Where it is, say which tasks become wrong for which owners.
 
 6. SAFETY OMISSIONS. Does any task involve a blade, a ladder, work at height, a
    power tool, a confined or unventilated space, or a chemical product — without
@@ -686,11 +815,22 @@ CHECK EACH TASK FOR:
    Every instruction should carry the action, a finish condition, and the common
    mistake. Flag jargon ("lute", "drip zone", "fine tilth", "postcrete"), vagueness,
    and any step assuming knowledge the user will not have.
+   Then ask whether a beginner would know whether the task applies to THEM at all.
+   Flag any row scoped on something the reader cannot settle by looking — a region,
+   a soil type, an aspect, a cultivar name — because a condition that cannot be
+   self-assessed is either ignored or wrongly assumed not to apply. Say what
+   observable thing could be filtered on instead.
 
 9. OMISSIONS. Given the complete picture above, is there an important, well-known
    seasonal job MISSING for any item in this group? Use the month coverage table:
    for each empty month, say whether the blank is CORRECT (nothing sensible to do
    then) or a GAP (a real job is missing). Do not treat every blank as a gap.
+   The coverage table counts targeting, not applicability. A task counts for an item
+   in a month even if its own instruction excuses most owners — watering a newly
+   planted tree, checking stakes on a young one. So also ask WHO the tasks in a
+   non-empty month actually apply to, and say where a count of one or two describes
+   an item that in practice receives nothing. A month can be covered on paper and
+   empty in reality.
 
 OUTPUT FORMAT:
 
@@ -833,6 +973,15 @@ The trap is that it can silently disagree with the instruction. A task whose tex
 
 Values below 3 mean the task can return almost every day of its season. That is right for a handful of jobs — watering a container in a heatwave, picking peas — and wrong for most. The audit flags them for review rather than as faults, because the script cannot tell which is which.
 
+**The other trap is a cooldown longer than the task's own window.** A task declaring several months with a cooldown that outlasts them fires once and then sits out the rest, so every month after the first is decorative — visible in the data, never seen by a user. It has now been found twice: `TASK_0056`, `0059`, `0062` and `0067` in the tools pass, and `TASK_0079`, `0093`, `0399`, `0401`, `0405` and `0412` in the trees pass.
+
+Two shapes to watch:
+
+- **A run of consecutive months** — 6,7,8 with a cooldown of 365. Correct only if the job genuinely happens once and the months exist to widen the opportunity. Wrong wherever the instruction describes something repeated: inspecting, picking, raking, checking.
+- **Two separate windows** — 3 and 10 with a cooldown of 180. Measure the gap in both directions and use the smaller. March to October is seven months; October to March is five. The 180-day cooldown clears in late March, so the March window is blocked every year and the task silently becomes annual. 120 works.
+
+**This is mechanically detectable** — the largest gap between declared months against `Frequency_Days` is arithmetic, needing no horticultural judgement — and would make a good addition to `Audit.gs` at WARNING severity. It is a human checklist item (§6) until then.
+
 ### `Suppress_If_Temp_Below` — a quiet way to delete a task
 
 It **hides** the task when the temperature is below the value. That is useful for jobs that need warmth to work, such as a spring feed.
@@ -851,6 +1000,12 @@ The workbook header still reads `Requires_Wind_Above` — a legacy label kept so
 **How to use it now:** put a threshold on tasks that are unsafe or ineffective in wind — spraying, liquid feeding, spreading granular fertiliser, anything at height. Something in the region of 15–25 mph is a sensible starting point. Leave it blank when wind is irrelevant, which is most tasks. A value below 10 would hide the task almost permanently, and the audit flags it.
 
 The mapping to `suppress_if_wind_above` is confirmed in `Publish.gs` §4 of the push.
+
+**Rows written under v1 semantics may still be in the matrix, and they will not look broken.** `DESIGN_V2.md` §6 listed this inversion as an expected behaviour change to be verified rather than fixed; the tree pass found one row where that verification never happened. `TASK_0523` "Check for Storm Damage" carried `Requires_Wind_Above 30` with an instruction beginning "After strong winds…", which under v1 meant *show this in a gale* and under v2 meant *hide it in one* — leaving a twelve-month task on a three-day cooldown that merely went quiet when it was most relevant. It was retired rather than repaired.
+
+The signature to look for is an instruction whose text implies the wind is the *reason* for the task rather than an obstacle to it. Any surviving row of that shape is inverted. It is worth grepping the whole matrix for a non-blank value in this column and reading each instruction against it, because nothing in the audit or the publish gate can tell the difference — both see a valid integer.
+
+**There is no way to make a task appear because of the weather**, and the two v1 rows that tried are the evidence for why one might be wanted. A `Reveal_If_Wind_Above` column alongside the existing suppression — deliberately restoring the v1 behaviour rather than inheriting it by accident — would make storm checks, wind-rock checks and "bring the pots in" viable. It is a schema change plus a `select_tasks` change, and is recorded on the roadmap in `SPEC.md` §6 rather than here.
 
 ### `Groups` — a warning about silent failure
 
