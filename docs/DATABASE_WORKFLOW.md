@@ -6,9 +6,25 @@ This covers the manual authoring process only — generating content with an LLM
 
 **As of v2.0, the workbook is an authoring workbench, not a live database.** Content is written here exactly as before, but it reaches the app only when it is *published* to the hosted database (Supabase) via an explicit **Garden Data → Publish to app** step. Authoring is unchanged; publishing is new. See §10.
 
-_Current as of v2.6 (2026-07-30). This revision added four authoring rules earned from the tree editorial review — irreversible cuts and grafted plants (§5), the bleeding species (§5), cooldowns that strand a task's own months (§5, §6, §9), and scoping a task on something observable rather than on region (§2, §5, §6, §8a) — recorded the standard safety lines (§5), and added notes on growing form (§2), conditional coverage (§7d) and surviving v1 wind rows (§9)._
+_Current as of v2.7 (2026-08-03). This revision documents the review programme automation added in `Review.gs`: the `Review_Pass` column and the `Review_Passes` tab (§1, §2, §3, §6, §9), the packet builder that assembles a complete editorial review pass and offers it wrapped in either the review prompt or the authoring prompt (§7b), the decisions tab and applier that transcribe accepted findings back into the matrix (§7e), and the process for filling a gap the review found (§7f). The editorial review prompt has moved out of this document and into `Review.gs`, so that there is exactly one copy of it (§8a)._
 
 > **If you read only one thing, read this.** The v2.0 migration **abolished bare-category targeting.** A task may no longer target `LAWN` or `PLANT` and sweep up everything beneath it — such a target now *blocks publishing*. Every task must target either one specific blueprint or a **declared collection**. The consequence for authoring is that **a new blueprint inherits nothing.** Add a plant and write no tasks for it, and it will silently receive zero tasks forever — there is no fallback tier to catch it. See §2 and §2a.
+
+---
+
+## Contents
+
+- [1. Where the data lives](#1-where-the-data-lives)
+- [2. Conventions that must not be broken](#2-conventions-that-must-not-be-broken)
+- [2a. Nothing until deliberately included](#2a-nothing-until-deliberately-included)
+- [3. Workflow A — adding items to Item_Dictionary](#3-workflow-a--adding-items-to-item_dictionary)
+- [4. Workflow B — adding tasks to Master_Task_Matrix](#4-workflow-b--adding-tasks-to-master_task_matrix)
+- [5. The prompts](#5-the-prompts)
+- [6. Verification checklist (after importing tasks)](#6-verification-checklist-after-importing-tasks)
+- [7. Quality assurance](#7-quality-assurance)
+- [8. The review prompts](#8-the-review-prompts)
+- [9. Notes on specific columns](#9-notes-on-specific-columns)
+- [10. Publishing to the app](#10-publishing-to-the-app)
 
 ---
 
@@ -16,17 +32,24 @@ _Current as of v2.6 (2026-07-30). This revision added four authoring rules earne
 
 The authoring tabs in the Google Sheet:
 
-- **`Item_Dictionary`** — the catalogue of item *blueprints* shown in the "Add to My Garden" picker. Six columns: `Category`, `Suggested_Name`, `Default_Asset_ID_Prefix`, `Groups`, `Browse_Group` (column E; see §2) and `Botanical_Name` (column F; see §2). Columns A–D are authored by prompt and pasted; E and F are display-only and may be filled by hand or by prompt.
-- **`Master_Task_Matrix`** — the care tasks matched to those items. Thirteen columns: `Task_ID`, `Target_Asset_ID`, `Task_Name`, `Category`, `Instruction`, `Valid_Months`, `Frequency_Days`, `Suppress_If_Raining`, `Suppress_If_Temp_Below`, `Requires_Wind_Above`, `Estimated_Minutes`, `Retired` (column L; see §2) and `Reviewed` (column M; see §2). Columns A–K are authored by prompt and pasted; L and M are filled by hand only.
+- **`Item_Dictionary`** — the catalogue of item *blueprints* shown in the "Add to My Garden" picker. Seven columns: `Category`, `Suggested_Name`, `Default_Asset_ID_Prefix`, `Groups`, `Browse_Group` (column E; see §2), `Botanical_Name` (column F; see §2) and `Review_Pass` (column G; see §2). Columns A–D are authored by prompt and pasted; E, F and G are filled by hand, by prompt, or (for G) by a menu item.
+- **`Master_Task_Matrix`** — the care tasks matched to those items. Thirteen columns: `Task_ID`, `Target_Asset_ID`, `Task_Name`, `Category`, `Instruction`, `Valid_Months`, `Frequency_Days`, `Suppress_If_Raining`, `Suppress_If_Temp_Below`, `Requires_Wind_Above`, `Estimated_Minutes`, `Retired` (column L; see §2) and `Reviewed` (column M; see §2). Columns A–K are authored by prompt and pasted; L and M are filled by hand or by the review applier (§7e).
 - **`Collections`** — added in v2.0. Two columns, `Code` and `Name`, declaring every `GROUP_*` collection that exists and giving it a human display name. Membership still lives in the `Groups` column of `Item_Dictionary`; this tab declares the collections that column may reference. See §2.
 - **`Browse_Groups`** — added in v2.4. Two columns, `Name` and `Sort_Order`, declaring every heading the picker may cluster items under and the order those headings appear in. Referenced by the `Browse_Group` column of `Item_Dictionary`. **Purely a display concern — a browse group is not a collection and can never be a task target.** See §2.
+- **`Review_Passes`** — added in v2.7. Columns A and B, `Pass_Name` and `Notes`, declare every editorial review pass that exists. Columns C to G are written by the script and show the state of each pass; see §2. Membership lives in the `Review_Pass` column of `Item_Dictionary`; this tab declares the passes that column may reference. **Bookkeeping only — a review pass affects neither what an item receives nor where it appears.** See §2 and §7b.
 - **`Reference_Lists`** — maps the seven display categories to their top-level prefixes; the audit's source of truth for valid categories and prefixes.
 
-**Written by the audit, never edited by hand:**
+**Written by a script, never edited by hand:**
 
 - **`Audit_Report`** — the findings from **Garden Data → Run Audit**.
 - **`Coverage_Grid`** — a blueprint-by-month table of how many live tasks reach each item in each month. Rebuilt on every audit run. It is a *reference artefact for the editorial review* (§7b), not a list of faults. See §7d.
 - **`Publish_Report`** — written by the publish step (§10).
+- **`Review_Packet`** — the assembled packet for one pass, one line per row: the review prompt, then a divider, then the authoring prompt. Rebuilt each time you build a packet, and the caption names the row range of each. See §7b.
+- **`Review_Log`** — appended to by the review applier and never cleared. The permanent record of every change the review programme has made to the task matrix, and the only place a *before* value survives. See §7e.
+
+**Written by a script, then filled in by hand:**
+
+- **`Review_Decisions`** — laid out by the packet builder, pasted into and ticked by you, then read by the applier. See §7e.
 
 **Archived, and read by nothing:** the `User_Profile`, `Task_Log` and `Hidden_Tasks` tabs. A user's garden items, completion history and hidden tasks live in Postgres (`garden_item`, `task_completion`, `hidden_task`) and are written by the app, not the workbook. The tabs that remain are frozen snapshots from before the v2.0 cutover, kept only as a record of the pre-migration state; they are prefixed `ARCHIVE_` and no code looks them up. Do not edit them expecting an effect.
 
@@ -120,8 +143,11 @@ Collections currently in use:
 | `GROUP_TREE_GENERIC` | Trees for which generic tree care is safe |
 | `GROUP_HERBS` | Culinary and ornamental herbs |
 | `GROUP_HAND_TOOLS` | Hand tools only — deliberately excludes powered tools, so tool-cleaning advice never reaches a chainsaw |
+| `GROUP_WOODY_HERBS` | Rosemary, Sage, Thyme, Oregano — the evergreen Mediterranean sub-shrubs among the herbs. A deliberate subset of GROUP_HERBS, which also holds the leafy annuals and herbaceous perennials |
 
 > **`GROUP_ALL_BEDS` does not mean every bed.** Despite the name it currently omits Raised Bed, Annual Bedding and Cutting Garden. A weeding task targeting it therefore does *not* reach three of the nine bed types. Treat the member list above as authoritative and the name as historical.
+
+> **`GROUP_WOODY_HERBS` is a subset of GROUP_HERBS, not a replacement for it.** Its four members are evergreen Mediterranean sub-shrubs, and three things follow from that which are false for basil, mint, chives, parsley, coriander, dill, chervil and tarragon: they will not reshoot from bare brown wood, so any advice that removes growth has to stop at this year's green; they are the host plants for rosemary beetle, which is active from late summer through to spring; and in pots they are lost far more often to waterlogged winter compost than to cold. The collection describes what these plants are, not what content they happen to be missing, which is what makes it a legitimate collection rather than a holding pen — compare the GROUP_HERBACEOUS_PERENNIAL rejection in CHANGELOG 1.3. Watering and feeding stay on GROUP_HERBS, because those jobs are universal to anything in a pot and the difference in feed strength is handled inside the instruction text rather than by splitting the audience..
 
 The whole-category collections were created during the v2.0 category-tier review, to re-home tasks that previously targeted a bare category. They are the sanctioned replacement for "applies to the whole category" — the difference being that their membership is an explicit, inspectable list rather than a spelling coincidence.
 
@@ -138,6 +164,7 @@ There is no third option. In particular:
 
 - A **bare category prefix** (`LAWN`, `PLANT`, `SHRUB`, …) is **no longer a valid target** and will block the publish. This tier was abolished in v2.0; its safe tasks were re-homed to the whole-category collections listed above, and its unsafe ones retired.
 - A **partial prefix** such as `VEG_FRUIT` or `VEG_BRASSICA` has never been valid — it looks plausible and matches nothing. Use a collection.
+- A **browse group** or a **review pass** is never a valid target. Both are labels for humans; neither has ever reached the matching engine.
 
 ### The collection safety rule
 
@@ -159,13 +186,13 @@ The reason: `Valid_Months` legitimately contains commas (e.g. `3,4,5`), and `Cat
 
 Consequence: **no free-text field may contain a semicolon.** `Task_Name` and `Instruction` must use only commas and full stops.
 
-A semicolon that reaches the sheet does no harm where it sits — the damage happens if that row is ever exported and re-imported, when it splits the row across columns. The audit flags every occurrence as a WARNING; treat those as a real cleanup job rather than cosmetic noise.
+A semicolon that reaches the sheet does no harm where it sits — the damage happens if that row is ever exported and re-imported, when it splits the row across columns. The audit flags every occurrence as a WARNING; treat those as a real cleanup job rather than cosmetic noise. The review applier (§7e) refuses outright to write a value containing one.
 
 ### The rain column is a true/false value, not text
 
 `Suppress_If_Raining` is published to a real boolean column. After import, a `TRUE` in that cell should sit **right-aligned** (Sheets treats it as a logical value). If it lands **left-aligned** as the text "TRUE", it is not a boolean. Leave the cell **blank** when the task is unaffected by rain — don't type `FALSE`.
 
-In v1 a text "TRUE" silently did nothing. In v2 the database column is genuinely typed, so the failure surfaces at publish rather than lurking — but the audit still checks it at authoring time, which is the cheaper place to catch it.
+In v1 a text "TRUE" silently did nothing. In v2 the database column is genuinely typed, so the failure surfaces at publish rather than lurking — but the audit still checks it at authoring time, which is the cheaper place to catch it. A row changed through the review applier (§7e) cannot fall into this trap at all: the applier writes a real logical value or clears the cell.
 
 ### The `Collections` tab declares every collection
 
@@ -198,6 +225,50 @@ Column **F** of `Item_Dictionary`. Where it is filled in, the picker shows it in
 - Leave it **blank**, not empty-looking. A cell containing only spaces is rejected by the database, because it would render as a pair of empty brackets.
 - The search box matches botanical names as well as common ones, so a filled-in cell makes that plant findable by its Latin name. This is a side benefit, not a reason to fill them all in — the picker showing a Latin name next to every plant would be noise.
 
+### The `Review_Pass` column groups blueprints for review
+
+Column **G** of `Item_Dictionary`, added in v2.7. It names which editorial review pass (§7b) a blueprint belongs to, so that a packet can be assembled by script rather than by filtering the sheet by hand.
+
+- **One pass name per blueprint**, spelled exactly as it appears on the `Review_Passes` tab. Not a list, unlike `Groups`: the point of the programme is to cover the catalogue once, and a blueprint in two passes gets reviewed twice and finished never.
+- **Inert for publishing, in the same way the `Reviewed` column is.** `Publish.gs` reads `Item_Dictionary` by fixed column index 0–5 and never looks at index 6, so nothing in this column can reach the database or affect a user. That is deliberate: the safest bookkeeping is bookkeeping the pipeline cannot see.
+- **It is neither a collection nor a browse group.** It changes neither what an item receives nor where it appears. A task targeting a pass name is caught by the audit as "Target matches nothing".
+- **Blank is legitimate but has a cost.** A blueprint with no pass appears in no packet and will never be reviewed. The audit reports the total as a single REVIEW finding rather than one per row, so that adding the column to a 250-row catalogue does not produce 250 findings.
+- Fill it in the same sitting as the blueprint (§3 step 11). To fill a backlog, run **Garden Data → Editorial review → Suggest passes for unassigned items**, which fills blank cells only and never overwrites anything you have already set. It reads each item's `Browse_Group` — already a judgement about how a gardener groups these plants, and a far better answer than the prefix, which lumps every herbaceous plant together under `PLANT` — and puts the item in the **highest-numbered** matching pass that still has room. Newest-first rather than evenest: dropping a new plant into a pass already marked complete quietly makes it incomplete again. When every matching pass is full the item is left blank and reported, because opening a `Perennials_06` is a decision about the shape of the programme.
+
+### The `Review_Passes` tab declares every pass
+
+The same relationship as everywhere else in this workbook: the tab records *that the pass exists*, and the column in `Item_Dictionary` records *which blueprints are in it*.
+
+- Two columns: `Pass_Name` (e.g. `Perennials_03`) and `Notes` (anything you want to remember about it — which collections it involves, why you split it the way you did).
+- **Declaring a pass is optional.** The picker lists every name it finds in column G whether or not it is declared, shown in a separate group underneath with its item count, and one button declares them all. Everywhere else in this workbook a declaration tab is load-bearing, because an undeclared collection or browse group has nowhere to publish to. A review pass publishes nowhere, so refusing to build a packet over a missing declaration would be a heavy price for a warning — particularly when the pass list grows every time a category outgrows its split.
+- **What declaring buys you** is the order the passes appear in, somewhere to keep notes, and a cleaner audit report. What the separation in the picker buys you is the typo check: a stray `Perennial_03` carrying one item is obvious sitting next to `Perennials_03` carrying fifteen. The audit reports undeclared names as a WARNING for the same reason.
+- **Numbered families are the normal shape.** `Perennials_01` … `Perennials_05`, `Bulbs & tubers_01`, `Shrubs_02`. The base name is what the suggester matches on, and the number is how a category grows past what one sitting can review.
+
+**Columns C to G track the state of each pass, and are written by the script.** They are rebuilt on every audit run, every apply and every mark, so do not type in them — anything you enter is overwritten. Columns A and B are yours.
+
+| Column | Holds |
+|---|---|
+| C `Items` | blueprints carrying this pass name in column G |
+| D `Live tasks` | live tasks reaching those blueprints, directly or through a collection |
+| E `Reviewed` | how many of those carry an `E` marker in column M |
+| F `Status` | in plain English, below |
+| G `Last run` | the date the pass was last actually applied or marked |
+
+**All of it is derived, and none of it is stored.** There is no box to tick, deliberately: a stored flag is a second source of truth that drifts the moment you author a task and forget to clear it, and this workbook already has enough ways to fail quietly. Everything is recomputed from `Master_Task_Matrix` and `Review_Log`, so it cannot disagree with them.
+
+**Two sources, because neither answers the question alone.** Column M records whether a *task* has been looked at. `Review_Log` records whether a *pass* has been run. The difference matters: a task targeting `GROUP_SHRUB_GENERIC` is stamped the moment `Shrubs_01` is applied, so `Shrubs_02` — which shares those collection tasks — would read as partly or even wholly reviewed on column M alone, without anyone having opened it. A dry run does not count as running a pass.
+
+The statuses:
+
+- **Not started** — never run, and none of its tasks reviewed. This is where to pick the programme up.
+- **Not run — N of its tasks were reviewed in another pass** — those are collection tasks a neighbouring pass has already stamped. The tasks have been judged; these items have not.
+- **Complete** — run, and every live task reaching it carries an `E`.
+- **N task(s) unreviewed since — run it again** — it was signed off and has since had tasks added, which is the normal state after filling a gap the review found (§7f). Not a fault; a queue.
+- **No items** / **No tasks reach these items** — usually a leftover pass name, or a typo in column G that has stranded a single item.
+- **A pass of more than about sixteen blueprints is too big.** The audit flags it. A packet a reviewer will not read to the end is worse than two packets they will, and the completeness that makes "what is missing?" answerable is a property of the *pass*, not of the packet size — so split the pass, never its tasks.
+- The tab is created for you, seeded with ten suggested passes, the first time you build a packet.
+- Nothing is ever deleted by publishing, because nothing here is ever published.
+
 ### The `Retired` column tombstones a task
 
 Column **L** of `Master_Task_Matrix`, headed `Retired`. Any non-blank value marks the task as retired: put a short reason in the cell (it stays as editorial context). This replaces the old procedure of *deleting* a task's row and listing its ID in an `Audit.gs` constant.
@@ -205,6 +276,7 @@ Column **L** of `Master_Task_Matrix`, headed `Retired`. Any non-blank value mark
 - A retired task **keeps its row** — name, instruction and all — but is published as a tombstone: `retired_at` is set in the database and it is given **no targets**, so it never appears in the app.
 - Retirement preserves history. Completions recorded against the task (now in `task_completion` in Postgres) keep a valid reference, and the retired ID can never be reissued.
 - A retired row still needs a valid `Task_ID`, `Valid_Months`, `Frequency_Days` and `Category`, because the database stores the tombstone. A pure tombstone for a task that never had a real row (recovered from an orphaned log entry) can use nominal values: `Valid_Months` `1`, `Frequency_Days` `365`. Its target may be left blank.
+- **The reason text is read by the review packet builder** (§7b) and shown to the reviewer, so a job you withdrew on purpose is not reported back to you as a gap. Write the cell as a sentence someone else could act on — "Destroys grafted forms, see TASK_0401" rather than "no".
 - The old `RETIRED_TASK_IDS` constant in `Audit.gs` is **gone.** Retirement is now a property of the data, exactly here. To withdraw a task, fill its `Retired` cell and publish — do not delete the row.
 
 ### The `Reviewed` column records review state
@@ -223,9 +295,11 @@ E 2026-07-25, I 2026-08-14      also covered by an interaction review
 
 Leave it **blank** for a row that has not been reviewed. Anything else in the cell is flagged by the audit as a malformed value, so the count stays trustworthy.
 
-**This column is inert for publishing.** `Publish.gs` reads `Master_Task_Matrix` by fixed column index 0–11 and never looks at index 12, so nothing in column M reaches the database. It exists purely for the authoring programme. The audit reports how many live tasks are reviewed and how many are not, which is how you find where you stopped.
+**Since v2.7 it is normally written by script, not by hand.** Applying a pass's decisions (§7e) stamps `E` and today's date across every live task reaching that pass, and **Mark a pass as reviewed** does the same without applying anything. Both replace an existing entry of the same letter rather than adding to it, so a collection task that comes up in five shrub passes ends with one `E` entry carrying the most recent date, not five. Entries of the other letter are preserved. You can still type it by hand; the format is the same.
 
-**A collection task is legitimately reviewed more than once.** A task targeting `GROUP_SHRUB_GENERIC` comes up in every shrub group pass, judged against a different awkward member each time. Update the date when it does; the column records the most recent look, not a one-time tick.
+**This column is inert for publishing.** `Publish.gs` reads `Master_Task_Matrix` by fixed column index 0–11 and never looks at index 12, so nothing in column M reaches the database. It exists purely for the authoring programme. The audit reports how many live tasks are reviewed and how many are not, and breaks that down by pass, which is how you find where you stopped.
+
+**A collection task is legitimately reviewed more than once.** A task targeting `GROUP_SHRUB_GENERIC` comes up in every shrub group pass, judged against a different awkward member each time. The column records the most recent look, not a one-time tick.
 
 ---
 
@@ -246,6 +320,8 @@ This is the intended design — it trades a class of harmful-advice bugs for a c
 
 **The coverage report is the safety net.** The dry run (§10) lists every blueprint that no live task reaches. It is a *warning*, never a blocker — some items legitimately await content — so it only helps if you actually read it. Run the dry run after any authoring session that adds blueprints, and treat a new name appearing in the coverage list as a to-do, not as noise.
 
+**The review programme is the second safety net, and it fails the same way.** A blueprint with no `Review_Pass` is in no packet, so no editorial review will ever ask what it is missing. Setting column G is part of adding an item, not an afterthought.
+
 Known outstanding gaps are recorded in `SPEC.md` §5E rather than here, so that this document does not carry a list that silently goes stale. The dry run is always the live authority.
 
 ---
@@ -262,6 +338,7 @@ Known outstanding gaps are recorded in `SPEC.md` §5E rather than here, so that 
 8. Check for duplicate *items* as well as duplicate prefixes: does this plant already exist in the sheet under a different prefix?
 9. **Decide coverage now** (§2a). For each new item, either add it to the appropriate collections in the `Groups` cell, or queue it for task authoring. An item with neither will receive nothing.
 10. **Set `Browse_Group`** (column E) for anything landing in a category whose other items are grouped — in practice Plants & flowers, Trees & shrubs and Veg & herbs. Use a heading exactly as spelled on the `Browse_Groups` tab. Left blank, the item still works but drops to the bottom of the picker under "Other". Fill `Botanical_Name` (column F) only if the common name is ambiguous; leave it blank otherwise.
+11. **Set `Review_Pass`** (column G), so the item will actually be reviewed. The prompt output is six columns wide and the semicolon split never touches column G, so it is always yours to fill. A name that is not yet on the `Review_Passes` tab still works — the picker offers it and can declare it for you — but declaring it is what gives you control over the order and somewhere to keep notes. If you are adding a batch, **Garden Data → Editorial review → Suggest passes for unassigned items** will fill the blanks from each item's browse group, packing into the newest pass that has room.
 
 ---
 
@@ -273,12 +350,14 @@ Known outstanding gaps are recorded in `SPEC.md` §5E rather than here, so that 
    =IFERROR("TASK_"&TEXT(MAX(ARRAYFORMULA(IFERROR(VALUE(REGEXEXTRACT(Master_Task_Matrix!A2:A,"\d+")),0)))+1,"0000"),"TASK_0001")
    ```
 
-   Always read this from the workbook rather than trusting a remembered number.
+   Always read this from the workbook rather than trusting a remembered number. The review packet builder (§7b) also prints it in its header, computed the same way, so if you are filling gaps found by a review you already have it.
 
 2. **Gather the prompt's three required inputs.** The task prompt (§5) will not work properly without them:
    - the item names and exact prefixes, or the collection tag;
    - for a collection target, the **full member list** of that collection;
    - **every live task that already reaches those items** — including tasks that target a collection they belong to, which are easy to forget. Filter `Master_Task_Matrix` by target, and check the `Groups` cell of each item for collections to filter by as well.
+
+   **If you are filling gaps found by an editorial review, do not assemble this by hand.** The review packet already contains all three, correctly resolved, plus the retired list. See §7f.
 3. Run the **Task prompt** (§5). Read its year plan and diff before you look at the CSV.
 4. Copy **only the code block**. The year plan, the diff and the notes are for you to read, not to paste.
 5. On the `Master_Task_Matrix` tab, click the first empty cell in **column A** below your last row, and paste.
@@ -302,6 +381,8 @@ Each prompt below carries a recommended model and thinking effort. They differ m
 > This is bounded generation against a strict format. The likely failures — a stray semicolon, a mis-spelled category, an invented top-level prefix — are mechanical, and the audit catches all of them before they can do harm. Sonnet is quick and entirely sufficient.
 >
 > Step up to **Opus 5 at medium** if you're seeding an unfamiliar category from scratch, or if you're leaning on it to assign collections. Deciding whether generic shrub care is genuinely safe for a particular shrub is a horticultural judgement, not a formatting one, and it's the part of this prompt that can quietly cause harm downstream.
+>
+> The prompt deliberately does **not** output `Review_Pass`. That column is yours (§3 step 11), and keeping the output six columns wide is what guarantees the semicolon split can never overwrite it.
 
 ```
 Act as an expert UK horticulturist and database engineer. I maintain a lookup table called `Item_Dictionary` for a mobile gardening app — a master catalogue of blueprint items a user might have in their garden.
@@ -356,6 +437,8 @@ Generate the CSV now. After the code block, list separately any rows where you w
 > The failure that matters isn't a malformed row; the audit and the publish gate catch those. It's fluent, plausible-sounding advice that happens to be wrong for one awkward member of a collection, or right for the plant but wrong for the month. Nothing mechanical will ever catch that, so it's worth the deeper reasoning at the point of authoring rather than hoping the review picks it up later.
 >
 > **This prompt no longer asks for a fixed number of tasks.** It asks what the item's year looks like, compares that against what already exists, and writes only the difference. That means the "EXISTING TASKS" input is not optional garnish — leave it out and you will get duplicates of content you already have.
+>
+> **If you are filling gaps an editorial review found, do not fill these slots by hand.** The packet builder emits this prompt with all five inputs already in place — see §7b and §7f. Use the version below when you are authoring for something outside the review programme: a brand-new blueprint, or a gap you spotted yourself.
 
 ```
 Act as an expert UK horticulturist and database engineer. I maintain `Master_Task_Matrix`, the care-task table for a UK gardening app. Its readers are NOVICE gardeners who follow instructions literally and have no knowledge to catch a mistake.
@@ -374,6 +457,9 @@ COLLECTION MEMBERSHIP (required if any target above is a GROUP_ tag — the FULL
 
 EXISTING TASKS FOR THESE ITEMS (required — every live task that already reaches these items, INCLUDING tasks that target a collection they belong to. If there are genuinely none, write NONE):
 [Task_ID | Target_Asset_ID | Task_Name | Valid_Months | Frequency_Days]
+
+ALREADY RETIRED FOR THESE ITEMS (jobs deliberately withdrawn — do NOT propose them again unless the reason no longer holds, and say so explicitly if you do):
+[Task_ID | Task_Name | Retirement reason, or NONE]
 
 STARTING TASK ID: [e.g. TASK_0651]
 TARGET CATEGORY (exact casing): [e.g. Trees & shrubs]
@@ -541,7 +627,7 @@ Reuse the wording exactly. The point of a standard line is that it reads identic
 
 ## 6. Verification checklist (after importing tasks)
 
-- Columns line up: the eleven authored columns, headers in the right order, nothing shifted. (Columns L `Retired` and M `Reviewed` are filled by hand only, and the semicolon import never touches them.)
+- Columns line up: the eleven authored columns, headers in the right order, nothing shifted. (Columns L `Retired` and M `Reviewed` are filled by hand or by the review applier, and the semicolon import never touches them.)
 - `Retired` and `Reviewed` are both blank for every ordinary new task.
 - `Valid_Months` sits as a single cell like `3,4,5` — **not** spread across several columns.
 - `Task_ID` values continue the sequence with no gaps or duplicates.
@@ -567,7 +653,8 @@ Reuse the wording exactly. The point of a standard line is that it reads identic
 - Any `GROUP_*` tag used is one you intended, spelled exactly as it appears elsewhere in the column, and declared on the `Collections` tab.
 - Any `Browse_Group` used is spelled exactly as it appears on the `Browse_Groups` tab — watch for `and` where the tab says `&`.
 - `Botanical_Name` is blank on the large majority of rows, and where present is a genus rather than a long full species.
-- Every new item either belongs to a collection or has tasks queued for it (§2a). A browse group is **not** coverage — it changes only where the item appears in the picker.
+- **Every new item has a `Review_Pass` (column G)** — or you have consciously accepted that it will never be reviewed. Check the spelling against the passes that already exist: a near-miss is not blocked, it just quietly becomes a second pass with one item in it. A blank here is the same class of quiet gap as a blank `Groups` cell, one step further down the line.
+- Every new item either belongs to a collection or has tasks queued for it (§2a). Neither a browse group nor a review pass is coverage — one changes where the item appears, the other only whether you get asked what it is missing.
 
 ---
 
@@ -577,13 +664,15 @@ This data fails **silently**. A task pointing at a target that doesn't exist doe
 
 Since v2.0 some of this is caught earlier and harder: the database rejects malformed rows at write time, and the publish gate refuses to run on any ERROR. But the gate cannot tell you that a task is *missing*, or that advice is *wrong*, or that two tasks issued in the same week contradict each other — so the human passes below still matter.
 
-**There are three passes, and they catch entirely different things.** The third is new; the second was rescoped after the previous row-batch version produced false findings.
+**There are three passes, and they catch entirely different things.**
 
 | Pass | Unit of work | Catches | Run |
 |---|---|---|---|
 | **7a. Mechanical audit** | the whole workbook | broken references, malformed values, stubs, regressions | after every import; takes seconds |
-| **7b. Editorial review** | one item group (10–15 related blueprints) | wrong advice, wrong month, unsafe collection tasks, genuinely missing jobs | one group per session |
+| **7b. Editorial review** | one declared pass (10–16 related blueprints) | wrong advice, wrong month, unsafe collection tasks, genuinely missing jobs | one pass per session |
 | **7c. Interaction review** | one garden, one month | contradictions, duplicates, ordering, cumulative load | after each category is editorially complete |
+
+The editorial review has two follow-on steps that are not themselves passes: **§7e**, transcribing the findings you accept back into the matrix, and **§7f**, filling the gaps it found. Both were done by hand until v2.7 and are now partly automated.
 
 ### 7a. The mechanical audit — automated, run often
 
@@ -604,52 +693,68 @@ It checks for:
 - **Implausible cadences** — a `Frequency_Days` below 3, meaning the task can reappear almost daily throughout its season.
 - **Named chemicals** — any active ingredient or brand in a task name or instruction, flagged for review against the naming rule in §5. Withdrawn substances are called out separately and more loudly.
 - **Schema hygiene** — invalid categories, unknown top-level prefixes, `GROUP_` misused as an asset prefix, `_NNNN` suffixes in a task target, malformed `Valid_Months`, missing `Frequency_Days` or `Estimated_Minutes`, semicolons in free text, malformed `Reviewed` values, and `Suppress_If_Raining` sitting as the *text* "TRUE" rather than a real boolean.
-- **Review programme state** — how many live tasks carry a `Reviewed` value and how many do not, so a multi-session programme can find where it stopped.
+- **Review passes that do not exist** — a name in the `Review_Pass` column that is not declared on `Review_Passes`. This no longer stops the pass being reviewed, since the picker offers undeclared names too; it is a typo check, and a name carrying one or two items next to a near-identical one carrying fifteen is what it is looking for.
+- **Blueprints in no review pass** — aggregated to a single finding with a count and the first dozen names, rather than one per row.
+- **Review programme state** — how many live tasks carry a `Reviewed` value and how many do not.
+- **Review pass status** — the audit rebuilds columns C to G of the `Review_Passes` tab (§2) on every run, and reports a one-line tally. That tab is the programme's bookmark: the global count tells you how much is left, the tab tells you *where* to pick it up.
+- **Review pass too large** — a pass holding more than 16 blueprints, which is more than one sitting can review properly.
 
 The `Reference_Lists` tab is the audit's source of truth for the seven categories and nine prefixes. Add a prefix there and the audit accepts it immediately — which is that tab's real job, and the reason to keep it.
 
-**None of the checks added in this revision can block a publish.** They are all WARNING or REVIEW severity. The publish gate blocks on ERROR only, so tightening the audit never risks stranding content that was publishable yesterday.
+**None of the review-programme checks can block a publish.** They are all WARNING or REVIEW severity. The publish gate blocks on ERROR only, so tightening the audit never risks stranding content that was publishable yesterday — and an unassigned blueprint is a gap in the *review* programme, not a fault in the content.
 
-**Where the garden checks went.** The audit used to include "garden items with no blueprint" and "orphaned log entries", read from the frozen `User_Profile` and `Task_Log` tabs. Both were removed in v2.5. The states they looked for are impossible in Postgres — `garden_item.blueprint_id` and `task_completion.task_id` are real foreign keys, and tasks are tombstoned rather than deleted — so the checks could only ever have reported on a stale snapshot. The questions still worth asking are asked of the live database after a publish instead (§10).
-
-**A missing tab is now a finding, not a crash.** `Item_Dictionary` and `Master_Task_Matrix` carry the same guard `Reference_Lists` always had: rename one and the audit reports which tab it could not find, rather than stopping with a JavaScript error that names neither the tab nor the cause. The lookup is exact and case-sensitive, so a trailing space or a changed capital counts as missing.
+**A missing tab is now a finding, not a crash.** `Item_Dictionary` and `Master_Task_Matrix` carry the same guard `Reference_Lists` always had: rename one and the audit reports which tab it could not find, rather than stopping with a JavaScript error that names neither the tab nor the cause. The lookup is exact and case-sensitive, so a trailing space or a changed capital counts as missing. An absent `Review_Passes` tab is not a fault at all — the whole review-programme check simply stays quiet.
 
 Findings come in three severities: **ERROR** (silently broken now), **WARNING** (probably not intended), and **REVIEW** (the script cannot judge; a human should look).
 
-### 7b. The editorial review — human-judged, one item group at a time
+### 7b. The editorial review — human-judged, one pass at a time
 
 The audit cannot tell you that scarlet lily beetle does not affect lily of the valley. No script can. Horticultural correctness needs a subject-matter pass.
 
-**Why this is no longer done in batches of 50 rows.** The previous version pasted a slice of the file by row number and asked three questions that a slice cannot answer:
+**Why this is not done in batches of 50 rows.** An earlier version pasted a slice of the file by row number and asked three questions that a slice cannot answer:
 
 - It asked what was **missing** for the items in the batch. You cannot know what is missing for roses while looking at two of their six tasks. The review duly reported rose pruning as absent when two correct pruning tasks existed further down the file.
 - It asked for **contradictions** within the batch, when the real contradictions sit hundreds of rows apart.
 - Task IDs run in rough authoring order, so 50 consecutive rows gave partial coverage of many items and complete coverage of almost none.
 
-**The unit is now an item group: 10 to 15 related blueprints, with every live task that reaches any of them.** That includes tasks targeting any collection those blueprints belong to — which is the part most easily forgotten, and the part where collection-safety bugs live. Group by shared collections and shared care pattern, so the awkward members sit in the same pass as the typical ones.
+**The unit is a declared review pass: 10 to 16 related blueprints, with every live task that reaches any of them.** That includes tasks targeting any collection those blueprints belong to — which is the part most easily forgotten by hand, and the part where collection-safety bugs live. Group by shared collections and shared care pattern, so the awkward members sit in the same pass as the typical ones.
 
-That makes the batch complete for the items in it, which in turn makes "what is missing?" and "do any of these contradict?" answerable questions rather than guesses.
+That makes the material complete for the items in it, which in turn makes "what is missing?" and "do any of these contradict?" answerable questions rather than guesses.
 
-**The programme.** The catalogue is around 250 blueprints, so complete coverage is roughly two dozen passes — Plants & flowers alone needs eight to ten. At one group per session that is a months-long programme, which is exactly why the `Reviewed` column exists (§2). Suggested grouping:
+#### Building the packet
 
-| Pass | Group | Collections to include |
-|---|---|---|
-| 1 | Lawns (8) | `GROUP_GRASS_LAWN`, `GROUP_LAWN_RENOVATION`, `GROUP_LAWN_STANDARD_FEED` |
-| 2 | Beds (9) | `GROUP_CULTIVATED_BED`, `GROUP_ALL_BEDS`, `GROUP_BED_CLEARED` |
-| 3–4 | Garden structures (14) | — |
-| 5–6 | Tools (17) | `GROUP_HAND_TOOLS` |
-| 7–8 | Trees (25) | `GROUP_TREE_GENERIC` |
-| 9–11 | Shrubs and climbers (35) | `GROUP_SHRUB_GENERIC` |
-| 12 | Herbs (12) | `GROUP_HERBS` |
-| 13 | Soft fruit and brassicas (7) | `GROUP_SOFT_FRUIT`, `GROUP_BRASSICA` |
-| 14–16 | Vegetables (25) | — |
-| 17–25 | Plants and flowers (110) | `GROUP_TENDER_BULB` |
+**Garden Data → Editorial review → Build review packet.** Pick a pass and the script assembles everything and shows it in a window with a copy button. It also writes a durable copy to the `Review_Packet` tab, one line per row, and lays out the `Review_Decisions` tab ready for the findings.
 
-**When to run it:** work through the programme steadily; additionally, run the relevant group immediately after any large content injection, and whenever a new collection-level task is added, since those are the highest-risk kind.
+**The same material is offered wrapped in either of two prompts,** chosen with the toggle above the text:
 
-**How:** use the editorial prompt in §8a. It returns a findings table, not corrected data. **Apply nothing automatically.** The whole point of the review is that a human decides; an LLM confidently "correcting" curated horticultural data is precisely the risk being managed here.
+- **Review prompt** — asks a reviewer what is wrong with these tasks. This is the pass itself.
+- **Authoring prompt** — the task prompt from §5 with its five input slots already filled, for writing the tasks a review said were missing. See §7f.
 
-When a pass is complete, put `E` and today's date in the `Reviewed` cell of every row it covered.
+One gather, two outputs, so the two can never disagree about what reaches these items. Whichever is showing is what the copy button copies.
+
+What the packet contains, in order:
+
+1. **The prompt** — the review instructions, so there is nothing to assemble around the data.
+2. **The item group** — name, prefix and collection membership for every blueprint in the pass.
+3. **Every live task reaching those items** — direct targets and collection targets both, with the full instruction text.
+4. **Full collection membership** for every collection appearing as a target above. **Members outside the pass are marked with an asterisk.** They still receive the task, and they are usually where a collection-level fault hides, so the reviewer is told to judge the advice against them too. This is the check the manual process most often lost.
+5. **Month coverage** for the pass's blueprints, sliced from the same computation that builds the `Coverage_Grid` tab (§7d), plus a line naming any item receiving nothing at all in any month.
+6. **Previously retired tasks for these items**, with their retirement reasons. Without this a review reports a job you withdrew on purpose as a gap — which is exactly what happened before the section existed.
+7. **The decision block specification** (§7e).
+
+What it deliberately leaves out is the `Reviewed` column. Telling a reviewer that a row has been looked at before primes it toward approval, which is the failure mode the whole pass exists to resist.
+
+The window header also shows the counts and the next free Task ID, which you will need if the review turns up gaps (§7f).
+
+#### The programme
+
+The catalogue is around 250 blueprints, so complete coverage is roughly two dozen passes — Plants & flowers alone needs eight to ten. At one pass per session that is a months-long programme, which is why the `Reviewed` column exists (§2) and why the audit reports progress per pass.
+
+The passes themselves live on the `Review_Passes` tab, not in this document, so that the list cannot go stale here. **Start each session by running the audit and reading that tab**, which will tell you which passes have never been run and which have had tasks added since they were signed off. The tab is seeded with ten starting points the first time you build a packet; splitting the big ones is the first real job. The `Browse_Group` column is a good basis for splitting Plants & flowers, since Perennials, Bulbs & tubers and Roses are already sensible review groups.
+
+**When to run it:** work through the programme steadily; additionally, run the relevant pass immediately after any large content injection, and whenever a new collection-level task is added, since those are the highest-risk kind.
+
+**How:** paste the packet into a **fresh conversation**, with a model that has not seen this content before. Read the findings table, decide, then go to §7e. **Apply nothing automatically** — the whole point of the review is that a human decides, and an LLM confidently "correcting" curated horticultural data is precisely the risk being managed here. The applier in §7e does not weaken that rule; it automates transcription, never judgement.
 
 ### 7c. The interaction review — what fires together
 
@@ -670,7 +775,7 @@ Neither of the other passes can catch this. The audit sees rows, not gardens. Th
 
 That is twenty runs for full coverage, but the awkward garden in April and October is where the value is concentrated — start there.
 
-Use the interaction prompt in §8b. When a pass is complete, add `I` and today's date to the `Reviewed` cell of the rows it covered.
+Use the interaction prompt in §8b. This pass is still assembled by hand: its unit is a garden rather than a pass, so the packet builder does not help. When a pass is complete, record it with **Garden Data → Editorial review → Mark a pass as reviewed**, choosing `I`, or type the entry into column M yourself.
 
 ### 7d. The `Coverage_Grid` tab
 
@@ -678,13 +783,116 @@ Every audit run rebuilds a `Coverage_Grid` tab: one row per blueprint, twelve co
 
 **This is a reference artefact, not a fault list.** Most empty months are correct — a courgette has nothing to do in February, a wildflower meadow is deliberately left alone from April to July, a plum must not be touched in winter. Turning it into audit findings would produce well over a hundred warnings that are almost all correct behaviour, and the only lasting effect would be teaching you to skim past the warnings section.
 
-Use it as an input to the editorial review instead: paste the rows for the item group you are reviewing, and let the reviewer judge which blanks are deliberate and which are gaps. That is a horticultural judgement, which is exactly what that pass is for.
+It feeds the editorial review instead. Since v2.7 you do not slice it by hand: the packet builder and the grid share one computation (`computeCoverageCounts_`), so the two can never disagree about what reaches what.
 
 **The grid counts targeting, not applicability, and therefore overstates coverage.** A task counts for an item in a month if it targets that item and declares that month — the grid cannot read the instruction, so it cannot tell that the task only applies to some owners. Several do: watering a newly planted tree, checking stakes and ties, feeding a young or fruiting tree. Each shows as coverage for every member of `GROUP_TREE_GENERIC`, and none of them applies to a mature tree in open ground.
 
 The tree pass is the worked example. On paper every tree had four to five tasks in March and one or two through the summer. In practice an established tree of any species received two jobs a year, both in spring, because everything else was scoped to young trees inside its own text. A grid row can look adequately covered and still describe an item the app has nothing to say about.
 
 So when reading the grid in a review, ask not only whether the month is empty but **who the tasks in a non-empty month actually apply to.** A count of one, from a task whose first sentence excuses most owners, is a blank wearing a disguise.
+
+### 7e. Applying what the review found
+
+The review returns prose findings plus a **decision block** — a semicolon-separated transcription of the changes it would make, one row per cell. The prose is what you read and judge; the block exists only so that accepting a finding does not mean retyping an instruction by hand into a 700-row sheet.
+
+**This does not weaken the "apply nothing automatically" rule.** Nothing reaches `Master_Task_Matrix` that you have not ticked, one row at a time. A dry run shows every before-and-after first. And the applier is stricter than a human transcriber, because it enforces the authoring rules in §5 at the moment of writing — which nothing else in this workflow does, since the audit can only inspect what is already in the sheet.
+
+#### The decision block
+
+Six columns: `Task_ID`, `Finding`, `Verdict`, `Field`, `New_Value`, `Reason`.
+
+`Field` is the single column to change — one of `Task_Name`, `Target_Asset_ID`, `Instruction`, `Valid_Months`, `Frequency_Days`, `Suppress_If_Raining`, `Suppress_If_Temp_Below`, `Requires_Wind_Above`, `Estimated_Minutes`, `Retired` — or `NONE` where the finding needs a decision from you rather than a cell change. `Task_ID` is `NEW` for a job that does not exist yet.
+
+`New_Value` is the complete new value: for `Instruction`, the whole rewritten instruction; for `Retired`, the withdrawal reason; for a weather column, a number or the word `BLANK` to clear it.
+
+#### The workflow
+
+1. Paste the block into cell **A4** of `Review_Decisions`, then **Data → Split text to columns → Separator: Semicolon**. The tab is already laid out, with tick-boxes waiting in column G, so the paste cannot disturb them.
+2. Read down the `Reason` column and **tick column G** against each finding you accept. Leave the rest unticked. If you accept the finding but want different wording, put yours in the **Override** column — it wins over the reviewer's value.
+
+   **Tick the `MISSING` rows too.** A row whose `Field` is `NONE` — a missing job, a collection that should be split — has no cell to change, so ticking it writes nothing to the task matrix. What it does is record the finding in `Review_Log`, and that is the *only* way the gap reaches the authoring step (§7f). Left unticked it is discarded when you next build a packet. Read the tick as "yes, that is a real gap", not "apply this change". The applier tells you at the end if you left any unticked.
+3. **Apply decisions (dry run — no changes).** Read `Review_Log`. Nothing has been written.
+4. **Apply decisions.** You get a confirmation naming how many cells will change and warning you if any blueprint would be left with nothing.
+
+#### What it refuses
+
+A staged change that breaks an authoring rule is refused with the reason, and nothing is written until every row has been staged — so a refusal on row forty cannot leave rows one to thirty-nine half-applied. It refuses:
+
+- an instruction under 80 characters, or naming a chemical active or brand (§5);
+- a semicolon in any free-text value;
+- malformed `Valid_Months`, or a non-positive `Frequency_Days` or `Estimated_Minutes`;
+- a `Target_Asset_ID` that is not a blueprint prefix or a declared collection — including a bare category prefix, which the publish gate would reject anyway;
+- two ticked rows changing the same cell;
+- any change to a row that is already retired, other than un-retiring it (`Field` `Retired`, `New_Value` `BLANK`).
+
+It also warns without refusing: a cooldown that outlasts the gap between the task's own declared months (§9), a wind ceiling below 10 mph, a temperature floor on winter-only content, a cadence under three days, and a retarget to a collection with no members.
+
+`Suppress_If_Raining` is written as a real logical value or the cell is cleared, so a row that goes through here cannot land in the left-aligned-text trap described in §2.
+
+#### The loud changes
+
+Two kinds of change alter *who* receives a task rather than what it says, and both are reported in full in `Review_Log` rather than as a one-line diff:
+
+- **Retargeting.** Changing `Target_Asset_ID` silently changes the audience. The log names every blueprint that gains the task and every one that loses it.
+- **Retiring.** The log names every blueprint that loses the task, and — after simulating the whole run together — every blueprint that would be left with **no live task at all**. This is the check no single row can make: twelve retirements can each look reasonable and between them leave an item showing a user an empty screen in every month of the year.
+
+#### Afterwards
+
+Applying stamps `E` and today's date into column M for every live task reaching the pass (§2). A task retired by the same run is not stamped, since there is nothing to review about a tombstone.
+
+`Review_Log` is appended to and never cleared. It is the permanent record of every change the review programme has made, and the only place a *before* value survives. `Review_Decisions`, by contrast, is cleared each time a new packet is built — so anything you want to keep must be either applied, or written down somewhere else (§7f).
+
+Building a new packet is blocked while `Review_Decisions` holds ticked rows that have not been through an apply run, so a pass cannot be abandoned half-decided by accident.
+
+### 7f. Filling a gap the review found
+
+#### Two prompts, two different CSVs
+
+This is the thing to get straight before anything else, because both prompts end in a code block and they go to completely different places.
+
+| | Review prompt | Authoring prompt |
+|---|---|---|
+| Asks | what is wrong with the tasks that exist | write the tasks that do not exist yet |
+| Returns | a **decision block** — six columns, one row per finding | a **task block** — the standard eleven columns |
+| Goes to | cell A4 of `Review_Decisions` | the first empty row of `Master_Task_Matrix` |
+
+**Never paste a decision block into `Master_Task_Matrix`.** It is six columns of findings about existing rows, not task rows, and it would land as nonsense. The review prompt is told this explicitly, so it should not produce eleven-column rows at all — if it ever does, that is a bug in the prompt and worth telling me about.
+
+#### Why both prompts ask about missing jobs
+
+They are not doing the same work, and the overlap is smaller than it looks.
+
+The **review** prompt *diagnoses*. It has the complete picture for the pass and an adversarial brief, so it is the right thing to answer "is anything obviously absent here?" — in one line of reasoning, cross-referenced to the empty months. Most passes turn up nothing, and knowing that is the point: without it you would run the authoring prompt speculatively on all 25 passes.
+
+The **authoring** prompt *treats*. Writing a task means walking the year for the items concerned, diffing against what already exists and what was deliberately retired, choosing months and a cooldown that agree with each other, and writing an instruction carrying the action, the finish condition, the common mistake and a safety line. None of that fits in a review finding, and a reviewer asked to produce it would produce a stub.
+
+So the reviewer writes one sentence and the author writes the row. The author does redo the year plan — deliberately. A review finding is a hypothesis, and inheriting it uncritically is how a review that was wrong about one row becomes a task that is wrong in the live data. The prompt is scoped to the items the gaps concern rather than the whole pass, so it is not walking sixteen years to write two tasks.
+
+#### The walkthrough
+
+1. **Build the packet**, choose **Review prompt**, copy, paste into a fresh conversation.
+2. Read the findings. Paste the decision block into **cell A4 of `Review_Decisions`**, split by semicolon.
+3. **Tick the changes you accept — and tick the `MISSING` rows too** (§7e). This is the step that decides whether the gaps survive.
+4. **Apply decisions (dry run)**, read `Review_Log`, then **Apply decisions**. The alert will tell you if you left any findings unticked.
+5. **Run the audit**, to confirm the changes landed.
+6. **Build the packet again for the same pass**, and choose **Authoring prompt**. It now reflects the corrections, and carries the ticked gaps into its brief. The window tells you how many it found — if it says none, go back to step 3.
+7. Paste into a **fresh** conversation. Read the year plan and the diff before the CSV.
+8. Paste the eleven-column CSV into **`Master_Task_Matrix`**, per §4 steps 5–8. Leave columns L and M blank.
+9. Run the audit, then publish the whole pass — corrections and new tasks — in one cycle.
+
+The pass will now read **N task(s) unreviewed since** on the `Review_Passes` tab rather than **Complete**, because the new rows have not been reviewed by anyone. That is correct, and it is the reminder to give them an independent look in a later session.
+
+#### What the authoring prompt brings with it
+
+Worth knowing, because it is what makes step 6 worth doing rather than filling the slots by hand: the prompt arrives with the items, the collection membership with outside members asterisked, every live task *including its full instruction*, what has been retired and why, the starting Task ID and the target category. The gaps are lifted out of `Review_Log` with the applier's own "author it separately" note stripped off, so what reaches the brief is the reviewer's words.
+
+**One trap.** The starting Task ID is computed from the highest number currently in the workbook. Generate for two passes in two conversations without importing the first batch in between and they will both start from the same number and collide. Import one batch before generating the next.
+
+#### If you would rather defer it
+
+The applier changes cells and never writes new tasks. A `MISSING` finding — or any finding whose `Field` is `NONE` — is recorded in `Review_Log` as **NOTED** and handed back to you, and that is where it stays.
+
+**A NOTED finding that is neither filled nor written down disappears the next time you build a packet**, because `Review_Decisions` is cleared. The log keeps it, but a log is a record, not a to-do list. So if you are not filling it now, record it in `CHANGELOG.md` under known gaps and deferred work, where the earlier deferred lists already live. A gap that is written down is a decision; a gap that only exists in a log is an accident waiting to be repeated by the next review, which will find it again and report it again.
 
 ---
 
@@ -699,177 +907,23 @@ So when reading the grid in a review, ask not only whether the month is empty bu
 > - **Run it in a fresh conversation**, so nothing in the context primes it toward approval.
 > - **Don't review content in the same conversation that generated it.** A model asked to critique its own output tends to defend it. If the task prompt wrote these rows, start somewhere clean — a different conversation at minimum, and ideally a different model.
 >
-> **Completeness matters more than size.** The old advice was to keep batches to about 50 rows. The new constraint is different: give the reviewer *everything* that reaches the item group, however many rows that is, because an incomplete batch is what produced false findings before. If a group is genuinely too large, split the group — never split its tasks.
+> **Completeness matters more than size.** The old advice was to keep batches to about 50 rows. The real constraint is different: the reviewer needs *everything* that reaches the item group, however many rows that is, because an incomplete batch is what produced false findings before. If a pass is too large, split the pass — never its tasks.
 
 ### 8a. Editorial review prompt
 
-```
-Act as an expert UK horticulturist performing a quality review of an existing
-gardening app's task database. You are REVIEWING, not authoring. Do not rewrite
-the data — report what you find and let me decide.
+**The prompt is no longer reproduced here. It lives in `reviewComposePacket_` in `Review.gs`,** and is emitted with the pass's data already slotted into it by **Garden Data → Editorial review → Build review packet** (§7b).
 
-Each row below is a piece of gardening advice shown to a NOVICE UK gardener, who
-will follow it literally and has no knowledge to catch a mistake.
+That move is deliberate. A prompt printed in a document and a prompt used by a script are two copies of the same thing, and the copy you paste around fresh data is the one that quietly goes stale. There is now one copy, and it cannot be used with mismatched data because it is assembled together with it.
 
-WHAT YOU HAVE BEEN GIVEN
-------------------------
-This is a COMPLETE view of one group of related items. Every live task that can
-reach any item in this group is included, including tasks that target a collection
-those items belong to. Nothing relevant to these items has been withheld.
+To read it, either build a packet and look at the top of the `Review_Packet` tab, or open `reviewComposePacket_` in the Apps Script editor. To change it, change the function — and note that a change affects every future pass, so treat it with the care you would give a live prompt rather than a document.
 
-That completeness is deliberate, and it means you CAN answer "what is missing?"
-for these items. In an earlier version of this review the batch was a slice of the
-file by row number, and the reviewer reported jobs as absent when they existed
-elsewhere in the file. That cannot happen here — but if you believe you are
-missing something you need, say so rather than guessing.
+For the record, what it asks the reviewer to check: horticultural accuracy (with pest and disease pairings called out); timing, including the cooldown-versus-own-months fault and February on the bleeding species; collection safety judged against the most awkward member, including members outside the pass; contradictions and duplicates; dangerous or irreversible advice, with grafted plants and cutting off next year's crop named explicitly; unmentioned hazards; chemical naming; novice clarity, including whether a beginner can tell if the task applies to them at all; and omissions, cross-referenced to the month coverage table and checked against the retired list. It requires every task to be listed including the passes, and ends with a `COULD NOT VERIFY` section.
 
-ITEM GROUP UNDER REVIEW:
-[paste: Suggested_Name | Default_Asset_ID_Prefix | Groups]
-
-ALL LIVE TASKS REACHING THESE ITEMS:
-[paste rows: Task_ID | Target_Asset_ID | Task_Name | Instruction | Valid_Months |
- Frequency_Days | Estimated_Minutes]
-
-COLLECTION MEMBERSHIP:
-[For every GROUP_ tag appearing as a target above, paste the tag and the FULL LIST
- OF BLUEPRINTS IN IT — that is, the members of the collection.
- NOT a list of the tasks that target the collection. Getting this backwards
- silently disables the most valuable check in this review.]
-
-MONTH COVERAGE (from the Coverage_Grid tab, for these items):
-[paste the rows for these blueprints: Blueprint | Jan..Dec task counts]
-
-CONTEXT — how targeting works:
-- A GROUP_ tag means the task is shown for EVERY item declared a member of that
-  collection, without exception.
-- Anything else targets one specific item type.
-- There is NO category-level targeting in this system. If you see a bare category
-  prefix (LAWN, PLANT, SHRUB, VEG, TREE, BED, HERB, STRUCT, TOOL) as a target,
-  flag it — it is invalid data and will be rejected.
-- The app does not order tasks. If two jobs must be done in sequence, the only
-  place that can be expressed is the instruction text itself.
-
-CHECK EACH TASK FOR:
-
-1. HORTICULTURAL ACCURACY. Is the advice correct for UK conditions? Pay particular
-   attention to pest and disease pairings — is this pest actually a problem for this
-   plant? (A real bug we found: a scarlet lily beetle task applied to lily of the
-   valley, which the pest does not affect.)
-
-2. TIMING. Are Valid_Months right for the UK? Would following this in the stated
-   month damage the plant or waste the effort? Is Frequency_Days plausible for the
-   real cadence of the job — and does it agree with what the instruction says? (A
-   real bug: an instruction saying "mow more frequently in peak season" on a task
-   whose cooldown was twice the spring value.)
-   Then check the cooldown against the task's OWN months, which is a separate fault
-   and a common one. If the cooldown is longer than the gap between the declared
-   months, every month after the first can never fire. A 365 on a three-month
-   inspection window means the task runs once and the other two months are
-   decorative. Two windows in a year — say months 3 and 10 — must be measured in
-   BOTH directions, because the shorter gap is the one that blocks. Also flag the
-   reverse: February on a maple, birch, hornbeam, walnut or vine, all of which
-   bleed once the sap rises and want early winter instead.
-
-3. COLLECTION SAFETY. If a task targets a GROUP_ collection, is the advice safe for
-   EVERY member listed above? (Real bugs: "cut back to within 10cm of the ground"
-   reaching roses, clematis, bamboo and ivy — all woody; rust-and-linseed tool care
-   reaching a chainsaw; a full-rate nitrogen feed reaching fine fescue.) Judge
-   against the most awkward member, not the typical one. Flag any collection-level
-   task that is right for most members but harmful to some.
-
-4. CONTRADICTIONS AND DUPLICATES. Do any two tasks here give conflicting advice, or
-   tell the user to do substantially the same job twice? Because this batch is
-   complete for these items, a contradiction you find here is real.
-
-5. DANGEROUS OR IRREVERSIBLE ADVICE. Anything that could kill the plant, injure the
-   person, or cannot be undone. Note especially plants that must NOT be cut into old
-   wood (lavender, heather, most conifers), plants that must be LEFT standing over
-   winter rather than cut back (penstemon, gaura, eryngium, rudbeckia, echinacea,
-   sedum, verbena bonariensis), and trees that must not be pruned in winter because
-   of silver leaf (plum, cherry and the other stone fruits).
-   Two further traps, both found in live data:
-   - GRAFTED PLANTS. Any instruction to cut low — coppice, pollard, cut to a stump,
-     hard renovation — is destructive on a plant grafted onto a rootstock, because
-     it removes the variety and leaves the stock. Contorted and purple hazel,
-     Kilmarnock willow, weeping and standard forms, and every fruit tree. Flag any
-     such row that does not name the exclusion BEFORE the action.
-   - CUTTING OFF THE CROP. Where a plant flowers or fruits on the previous season's
-     wood, a prune for shape and a prune for a crop are different jobs. Flag any row
-     that silently chooses one when a harvest task elsewhere in this batch assumes
-     the other.
-   Also check whether one blueprint is covering two growing forms that want opposite
-   treatment — hedge against specimen, ornamental against fruiting, grafted against
-   own-root. Where it is, say which tasks become wrong for which owners.
-
-6. SAFETY OMISSIONS. Does any task involve a blade, a ladder, work at height, a
-   power tool, a confined or unventilated space, or a chemical product — without
-   saying so? (A real bug: a greenhouse heater task that did not mention carbon
-   monoxide or ventilation.)
-
-7. CHEMICAL NAMING. Our rule is that no instruction may name a chemical active
-   ingredient or brand — only the product category a user would recognise in a shop,
-   plus an instruction to follow the label. Flag any row naming an active, whether or
-   not the substance is currently approved.
-
-8. NOVICE CLARITY. Would a beginner know what to do, and know when they had done it?
-   Every instruction should carry the action, a finish condition, and the common
-   mistake. Flag jargon ("lute", "drip zone", "fine tilth", "postcrete"), vagueness,
-   and any step assuming knowledge the user will not have.
-   Then ask whether a beginner would know whether the task applies to THEM at all.
-   Flag any row scoped on something the reader cannot settle by looking — a region,
-   a soil type, an aspect, a cultivar name — because a condition that cannot be
-   self-assessed is either ignored or wrongly assumed not to apply. Say what
-   observable thing could be filtered on instead.
-
-9. OMISSIONS. Given the complete picture above, is there an important, well-known
-   seasonal job MISSING for any item in this group? Use the month coverage table:
-   for each empty month, say whether the blank is CORRECT (nothing sensible to do
-   then) or a GAP (a real job is missing). Do not treat every blank as a gap.
-   The coverage table counts targeting, not applicability. A task counts for an item
-   in a month even if its own instruction excuses most owners — watering a newly
-   planted tree, checking stakes on a young one. So also ask WHO the tasks in a
-   non-empty month actually apply to, and say where a count of one or two describes
-   an item that in practice receives nothing. A month can be covered on paper and
-   empty in reality.
-
-OUTPUT FORMAT:
-
-First, a table, most serious first:
-
-Task_ID | Verdict | Issue | Suggested fix
-
-Verdict is one of:
-  WRONG     — factually incorrect, or harmful if followed
-  RISKY     — correct for some cases but harmful in others (usually collection-tier)
-  TIMING    — the months or frequency are off
-  UNSAFE    — a real hazard is unmentioned
-  CHEMICAL  — names an active ingredient or brand
-  UNCLEAR   — a novice would not know what to do, or when they had finished
-  DUPLICATE — overlaps or conflicts with another task here
-  OK        — no issues
-
-List every task, including the OK ones, so I can see the whole group was reviewed.
-
-Then:
-
-MISSING TASKS — important jobs not covered for these items, one line of reasoning
-each, cross-referenced to the empty months in the coverage table.
-
-Then, and do not skip this:
-
-COULD NOT VERIFY — everything you were unable to judge from the material given.
-A collection whose membership I did not paste. An instruction you could only see
-truncated. A question about my region, soil or aspect that changes the answer. Any
-row where you are guessing. This section existing and being honest is worth more to
-me than a confident verdict on a row you could not actually see.
-
-Be specific and be willing to disagree with the existing data. Cautious approval of
-a task that is wrong is worse than a false alarm I dismiss in ten seconds.
-```
-
-**Why that last line is there.** The default failure of a review prompt is sycophantic approval — hand a model rows of plausible-looking advice and it will tend to nod along. Requiring every row to be listed, including the passes, and explicitly licensing disagreement is what turns it from a rubber stamp into a genuine check. The `COULD NOT VERIFY` section serves the same purpose from the other direction: it gives the reviewer somewhere to put uncertainty other than a confident guess.
+**Why the last line of the prompt is there.** The default failure of a review prompt is sycophantic approval — hand a model rows of plausible-looking advice and it will tend to nod along. Requiring every row to be listed, including the passes, and explicitly licensing disagreement is what turns it from a rubber stamp into a genuine check. The `COULD NOT VERIFY` section serves the same purpose from the other direction: it gives the reviewer somewhere to put uncertainty other than a confident guess. If you ever edit the function, keep both.
 
 ### 8b. Interaction review prompt
+
+Still assembled and pasted by hand — the unit of this pass is a garden rather than a declared review pass, so the packet builder does not apply.
 
 ```
 Act as an expert UK horticulturist. You are reviewing how a set of individually
@@ -951,6 +1005,8 @@ any task whose interaction with something OUTSIDE this garden you suspect but
 cannot check.
 ```
 
+Findings from this pass are applied by hand. The decision block and the applier (§7e) are built around the editorial review's shape and the `Review_Decisions` tab is cleared when an editorial packet is built, so do not route interaction findings through it.
+
 ---
 
 ## 9. Notes on specific columns
@@ -980,13 +1036,13 @@ Two shapes to watch:
 - **A run of consecutive months** — 6,7,8 with a cooldown of 365. Correct only if the job genuinely happens once and the months exist to widen the opportunity. Wrong wherever the instruction describes something repeated: inspecting, picking, raking, checking.
 - **Two separate windows** — 3 and 10 with a cooldown of 180. Measure the gap in both directions and use the smaller. March to October is seven months; October to March is five. The 180-day cooldown clears in late March, so the March window is blocked every year and the task silently becomes annual. 120 works.
 
-**This is mechanically detectable** — the largest gap between declared months against `Frequency_Days` is arithmetic, needing no horticultural judgement — and would make a good addition to `Audit.gs` at WARNING severity. It is a human checklist item (§6) until then.
+**This is mechanically detectable**, and since v2.7 the review applier (§7e) checks it: change either the months or the cooldown through a decision row and the log tells you if the cooldown now outlasts the smallest gap between the declared months, measured round the year. It is a warning rather than a refusal, because a genuinely once-a-year job with a wide window trips it legitimately. The whole-matrix version — sweeping every existing row — remains a human checklist item (§6) and would still make a good addition to `Audit.gs` at WARNING severity.
 
 ### `Suppress_If_Temp_Below` — a quiet way to delete a task
 
 It **hides** the task when the temperature is below the value. That is useful for jobs that need warmth to work, such as a spring feed.
 
-It is dangerous on winter content. A task valid in December, January and February that carries a temperature floor of 5°C will be hidden through most of the period it was written for, and nothing anywhere reports that it never appeared. Before setting it, ask whether being hidden in the cold is genuinely the behaviour you want. The audit now flags any task whose months all fall between November and March and which carries a value here.
+It is dangerous on winter content. A task valid in December, January and February that carries a temperature floor of 5°C will be hidden through most of the period it was written for, and nothing anywhere reports that it never appeared. Before setting it, ask whether being hidden in the cold is genuinely the behaviour you want. The audit now flags any task whose months all fall between November and March and which carries a value here, and the review applier warns before writing one.
 
 ### `Requires_Wind_Above` — **the name is now misleading**
 
@@ -1013,13 +1069,17 @@ A task targeting a collection tag that no blueprint carries will match nothing, 
 
 ### `Reviewed` — inert by design
 
-Column M is read by nothing except the audit's review-state summary. `Publish.gs` reads columns 0–11 by fixed index and never looks further, so whatever is in column M cannot reach the database or affect a user. That is deliberate: the review programme needed a bookmark, and the safest bookmark is one the pipeline cannot see.
+Column M is read by nothing except the audit's review-state summary and the review applier, which writes it. `Publish.gs` reads columns 0–11 by fixed index and never looks further, so whatever is in column M cannot reach the database or affect a user. That is deliberate: the review programme needed a bookmark, and the safest bookmark is one the pipeline cannot see.
+
+### `Review_Pass` — bookkeeping, never behaviour
+
+Column **G** of `Item_Dictionary`, and inert for exactly the same reason as `Reviewed`: `Publish.gs` reads that tab by fixed index 0–5 and stops. Nothing here reaches the database.
+
+The distinction worth holding on to is the same one that separates `Groups` from `Browse_Group`, one step further out. `Groups` decides what an item **receives**. `Browse_Group` decides where it **appears**. `Review_Pass` decides only whether anyone ever **asks what it is missing**. All three fail quietly when left blank, and each failure is one degree further from the user: no group means an empty screen, no browse group means a harder-to-find pill, no review pass means a plant nobody has ever checked the advice for.
 
 ### `Browse_Group` and `Botanical_Name` — display, never behaviour
 
 Columns **E** and **F** of `Item_Dictionary`. Both are published to the database and both are read by the app, so unlike `Reviewed` they are not inert — but neither touches `select_tasks`.
-
-The distinction worth holding on to: **`Groups` decides what an item receives; `Browse_Group` decides only where it appears in a list.** They sit in different tables for that reason. If you find yourself reaching for a browse group to give an item some care, you want the `Groups` column instead. Full authoring rules are in §2.
 
 The failure mode to watch is quiet: a heading spelled slightly wrong blocks the publish, which is loud and fine; but a heading left blank does not, and the item simply drifts to the bottom of the picker under "Other" where it is harder to find. The dry run lists those, in the same spirit as the coverage report — a warning that only helps if you read it.
 
@@ -1047,6 +1107,8 @@ Choosing **Garden Data → Publish to app** runs, in order:
 1. **The gate.** It runs the full audit and **refuses to publish on any ERROR.** It then adds its own publish-specific blocks: every live (non-retired) task must resolve to a real blueprint or a *declared* collection — a bare category prefix is not a valid target and will block; every `GROUP_*` tag carried by a blueprint must be declared on the `Collections` tab; every task's category must be one of the seven; every heading named in a `Browse_Group` cell must be declared on the `Browse_Groups` tab; and every declared heading must carry a whole-number `Sort_Order`. Finally it computes two **warning-only** reports that never block: the **coverage report** — blueprints that no live task reaches (some items may legitimately await content) — and the list of blueprints with **no browse group**, which will appear under "Other" in the picker.
 2. **The push.** It reads the live catalogue first (to preserve tombstone dates and detect rows you have removed), then upserts categories, browse groups, blueprints, collections and tasks by their natural key (`legacy_code` / `code` / `name`), and reconciles the three membership tables (`blueprint_category`, `collection_member`, `task_target`) to mirror the workbook exactly. **Nothing curated is deleted.** A blueprint or task removed from the workbook is *retired* (a tombstone), not erased; collections and browse groups are upsert-only and are never removed at all.
 3. **The report.** A `Publish_Report` tab records what was pushed, the live row counts read back, the coverage report, the blueprints with no browse group, the live-garden checks below, and the retirement roll-call.
+
+Nothing on the `Review_Passes`, `Review_Packet`, `Review_Decisions` or `Review_Log` tabs takes any part in this, and nothing in `Item_Dictionary` column G or `Master_Task_Matrix` column M does either.
 
 ### What the live-garden checks tell you
 
@@ -1078,5 +1140,6 @@ If a failure resists a straight re-run, the shape of the outstanding rows is the
 - **Read the live-garden section too, and treat it as the louder one.** A blueprint in the coverage list might simply be waiting for content. A blueprint in "Owned but receives nothing" is being seen by a real person right now.
 - **Fix ERRORs, weigh WARNINGs, judge REVIEWs — then publish.** The gate enforces the ERRORs; the rest are yours to decide.
 - **A retired task is withdrawn by filling its `Retired` cell, then publishing** — never by deleting its row.
+- **Publish a review pass once, not twice.** Apply the corrections, author the new tasks the review asked for (§7f), then publish the lot in one cycle with one audit run and one changelog entry.
 - **Re-running a publish is safe.** Every write is an upsert or an idempotent reconcile, so a second run with no authoring changes reports zero membership churn.
-- **Nothing in column M affects a publish.** Marking rows reviewed is free and can be done at any time, including mid-session.
+- **Nothing in column M, or in `Item_Dictionary` column G, affects a publish.** Marking rows reviewed is free and can be done at any time, including mid-session.

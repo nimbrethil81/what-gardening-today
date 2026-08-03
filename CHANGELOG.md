@@ -8,6 +8,87 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **MINOR** (e.g. 1.0 → 1.1) — user-facing features, UI changes, and bug fixes within the current phase.
 
 ---
+## [2.8] — 2026-08-03
+
+### The editorial review programme is now assembled and applied by script
+
+The horticultural review of `Master_Task_Matrix` (DATABASE_WORKFLOW §7b) had two mechanical halves either side of the judgement: assembling a complete packet for a group of items, and transcribing the accepted findings back into a 700-row sheet. Both were done by hand, both were slow, and the first was where the review's worst failure came from — an incomplete packet makes "what is missing?" unanswerable, which is how the old row-batched version reported jobs as absent when they existed elsewhere in the file.
+
+A new `Review.gs` automates both. It automates **transcription, never judgement**: nothing reaches the task matrix that has not been ticked by hand, one row at a time, and a dry run shows every before-and-after first. The "apply nothing automatically" rule in §7b is intact.
+
+**Added — `Review.gs`**
+
+- **Build review packet.** Assembles one pass and shows it in a window with a copy button, and writes a durable copy to a new `Review_Packet` tab. The packet carries the item group, every live task reaching those items — direct and collection targets both — the full membership of every collection involved, the month coverage rows, and the tasks previously retired for those items.
+- **Two prompts from one gather.** The same material is offered wrapped in either the review prompt or the authoring prompt — the task prompt from DATABASE_WORKFLOW §5 with all five input slots pre-filled, for writing the tasks a review said were missing (§7f). They cannot disagree about what reaches these items, and the authoring one cannot be run against a stale copy of the review one's data. It carries the gaps forward too: the NOTED findings from the pass's most recent apply run are lifted out of `Review_Log`, with the applier's own standing note stripped back off, and handed over as a starting point with explicit permission to disagree that one of them is a gap at all. Its EXISTING TASKS block carries the full instruction, which the printed version does not ask for — without it the diff step is guessing whether a job is covered from a task's name alone.
+- **Apply decisions (dry run).** Reads the ticked rows on a new `Review_Decisions` tab and reports exactly which cell would change from what to what, touching no data.
+- **Apply decisions.** The same for real, followed by stamping column M across the pass. Nothing is written until every row has been staged, so a refusal on row forty cannot leave rows one to thirty-nine half-applied.
+- **Mark a pass as reviewed.** Stamps `E` or `I` without applying anything, for a pass that produced no changes.
+- **Suggest passes for unassigned items.** Fills blank `Review_Pass` cells from each item's top-level prefix. Never overwrites.
+- New tabs: `Review_Passes` (authored), `Review_Packet`, `Review_Log` (written by script), `Review_Decisions` (written by script, then filled in by hand). `Review_Log` is appended to and never cleared — it is the permanent record of every change the programme has made, and the only place a *before* value survives.
+
+**Added — pass status on the `Review_Passes` tab, derived rather than stored**
+
+Columns C to G of `Review_Passes` are rebuilt on every audit run, every apply and every mark: how many blueprints a pass holds, how many live tasks reach them, how many of those carry an editorial marker, a plain-English status, and the date it was last actually run. With 25 passes there was no way to see at a glance which had been done.
+
+Nothing is stored and there is no box to tick — a stored flag is a second source of truth that drifts the moment a task is authored and the flag not cleared.
+
+It reads two sources because neither answers the question alone. Column M says whether a *task* has been looked at; `Review_Log` says whether a *pass* has been run. A task targeting `GROUP_SHRUB_GENERIC` is stamped when `Shrubs_01` is applied, so `Shrubs_02` would read as partly or wholly reviewed on column M alone without anyone having opened it. Dry runs do not count as running a pass.
+
+The per-pass wall of text in `Audit_Report` is replaced by a one-line tally and a pointer to the tab, which sits next to the pass it describes and is far easier to scan.
+
+**Added — `Item_Dictionary` column G, `Review_Pass`**
+
+Names which review pass a blueprint belongs to, declared on the `Review_Passes` tab. Membership on the blueprint, declaration on a tab — the same shape as collections and browse groups.
+
+**Inert for publishing.** `Publish.gs` reads that tab by fixed column index 0–5 and never looks at index 6, exactly as it stops at index 11 on the task matrix and never sees `Reviewed`. `Publish.gs` is unchanged by this release.
+
+**Added — authoring rules enforced at the point of writing**
+
+Nothing in this project previously checked an authoring rule *before* a value entered the sheet; the audit can only inspect what is already there. The applier refuses a staged change that breaks one, and says why:
+
+- an instruction under 80 characters, or naming a chemical active or brand;
+- a semicolon in any free-text value;
+- malformed `Valid_Months`, or a non-positive `Frequency_Days` or `Estimated_Minutes`;
+- a `Target_Asset_ID` that is not a blueprint prefix or a declared collection, including a bare category prefix;
+- two ticked rows changing the same cell;
+- any change to an already-retired row other than un-retiring it.
+
+`Suppress_If_Raining` is written as a real logical value or the cell is cleared, so a row changed through the applier cannot land in the left-aligned-text trap.
+
+It warns without refusing on: a cooldown that outlasts the smallest gap between the task's own declared months (the fault found twice, in the tools and trees passes), a wind ceiling below 10 mph, a temperature floor on winter-only content, a cadence under three days, and a retarget to a collection with no members.
+
+**Added — loud reporting on the two changes that alter the audience**
+
+Retargeting and retiring change *who* receives a task rather than what it says, so `Review_Log` reports them in full rather than as a one-line diff. A retarget names every blueprint that gains the task and every one that loses it. A retirement names every blueprint that loses it, and — after simulating the whole run together — every blueprint left with **no live task at all**. That last check is the one no single row can make: twelve retirements can each look reasonable and between them leave an item showing a user an empty screen in every month of the year.
+
+**Changed — `Audit.gs`**
+
+- The menu gains an "Editorial review" submenu. `onOpen` remains the single menu builder for the project.
+- `readDictionary` reads column G; `readTasks` now also returns the retirement *reason*, which the packet shows the reviewer so that a job withdrawn on purpose is not reported back as a gap.
+- New `auditReviewPasses`: undeclared pass names, blueprints in no pass (aggregated to one finding, not 250), and a per-pass breakdown of size, live task count and how many of those are editorially reviewed. That breakdown replaces the global count as the programme's bookmark — the count says how much is left, the breakdown says where. All findings are WARNING or REVIEW and can never block a publish.
+- `computeCollectionMembers_` and `computeCoverageCounts_` extracted out of `writeCoverageGrid`, so the coverage grid and the review packet answer "which blueprints does this task reach, in which months" from one implementation. Two copies of that logic drifting apart is precisely the fault that made the old review report gaps that did not exist.
+- Every new behaviour is tolerant of an absent `Review.gs` and an absent `Review_Passes` tab: a workbook that has not adopted the programme audits exactly as it did before.
+
+**Changed — the editorial review prompt has moved**
+
+Out of `DATABASE_WORKFLOW.md` §8a and into `reviewComposePacket_` in `Review.gs`, where it is emitted with the pass's data already slotted into it. A prompt printed in a document and a prompt used by a script are two copies of the same thing, and the copy you paste around fresh data is the one that quietly goes stale. §8a now describes what it checks and points at the function.
+
+Two sections are new relative to hand assembly, and both close known failure modes: collection members **outside** the pass are listed and asterisked, because that is where a collection-level fault hides; and previously **retired** tasks are listed with their reasons. The `Reviewed` column is deliberately excluded from the packet — telling a reviewer a row has been looked at before primes it toward approval.
+
+**Not changed**
+
+- `Publish.gs` — no edit was needed.
+- `SPEC.md` — nothing here reaches the app, the database schema or `select_tasks`.
+- The task prompt still authors new tasks, and still runs in its own conversation. The applier changes cells and does not write new rows: a missing job needs the year plan, the diff, the cadence reconciliation and a four-part instruction, none of which fits in a decision row. A `MISSING` finding is recorded as NOTED and handed back. What the authoring packet removes is the assembly, not the judgement — DATABASE_WORKFLOW §7f is the process.
+
+### Documentation
+
+`DATABASE_WORKFLOW.md` to v2.7: the `Review_Pass` column and `Review_Passes` tab (§1, §2, §3, §6, §9), the packet builder (§7b), the decisions tab and applier (§7e), the process for filling a gap the review found (§7f), the prompt's move (§8a), and the applier's cooldown check (§9).
+
+### Known gaps and deferred work
+
+Unchanged from [2.8], with one addition: the whole-matrix version of the cooldown-versus-own-months check — sweeping every existing row rather than only rows being changed — remains a human checklist item (DATABASE_WORKFLOW §6) and would make a good addition to `Audit.gs` at WARNING severity.
+---
 ## [2.7] — 2026-07-29
 
 Editorial review of the lawn group: 8 blueprints (`LAWN_*`) and the 33 live tasks

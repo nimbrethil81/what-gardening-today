@@ -457,13 +457,62 @@ function renderTaskCards(tasks) {
       <div class="task-card">
         <div class="task-info">
           <h3>${task.name}</h3>
-          <p>${task.category} • ${task.instruction}</p>
+          <p class="task-instruction">${task.category} • ${task.instruction}</p>
+          <button class="task-expand-toggle" type="button" aria-expanded="false">More ▾</button>
         </div>
         <button class="task-action-btn task-check" data-task-id="${task.task_id}">✓</button>
       </div>
     `;
     taskContainer.appendChild(wrapper);
   });
+
+  // Every card is rendered at the same collapsed (3-line-clamped) height, but
+  // the "More" hint should only appear on the ones actually cut off. That can't
+  // be known until the text is laid out in the DOM, so this runs one frame
+  // after the cards are inserted and compares each description's full height
+  // (scrollHeight) against its clamped height (clientHeight).
+  requestAnimationFrame(() => {
+    taskContainer.querySelectorAll(".task-card").forEach(card => {
+      const description = card.querySelector(".task-instruction");
+      const toggle = card.querySelector(".task-expand-toggle");
+      if (description && toggle && description.scrollHeight > description.clientHeight + 1) {
+        toggle.classList.add("has-more");
+      }
+    });
+  });
+}
+
+/* --- Tap-to-expand a task card's description ------------------------------
+ * Tapping the card body (but not the tick or the Hide button) toggles between
+ * the clamped 3-line preview and the full description, growing the card in
+ * place. Only cards whose text is actually cut off respond — there's nothing
+ * to expand on a short one.
+ *
+ * This shares the task-container with the swipe-to-hide gesture below, so a
+ * swipe that ends up back where it started (a mid-drag pointerup) must not
+ * also be read as a tap. onCardPointerUp sets suppressClick on the wrapper
+ * whenever a horizontal drag actually moved the card; this handler reads and
+ * clears that flag before deciding whether to toggle.
+ */
+function handleTaskCardExpand(event) {
+  const wrapper = event.target.closest(".task-card-wrapper");
+  if (!wrapper) return;
+
+  if (wrapper.dataset.suppressClick === "true") {
+    wrapper.dataset.suppressClick = "false";
+    return;
+  }
+
+  if (event.target.closest(".task-action-btn")) return; // the tick — handled elsewhere
+  if (event.target.closest(".hide-task-btn")) return;    // the Hide button behind the card
+
+  const card = wrapper.querySelector(".task-card");
+  const toggle = card.querySelector(".task-expand-toggle");
+  if (!toggle || !toggle.classList.contains("has-more")) return; // nothing to expand
+
+  const expanded = card.classList.toggle("expanded");
+  toggle.textContent = expanded ? "Less ▴" : "More ▾";
+  toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
 }
 
 
@@ -930,6 +979,7 @@ function onCardPointerDown(e) {
     startTransform: wasRevealed ? -HIDE_REVEAL_WIDTH : 0,
     locked: false,
     isHorizontal: false,
+    moved: false,
     lastX: undefined
   };
   card.style.transition = "none";
@@ -954,6 +1004,8 @@ function onCardPointerMove(e) {
 
   if (!dragState.isHorizontal) return;
 
+  dragState.moved = true;
+
   let newX = dragState.startTransform + deltaX;
   newX = Math.max(-HIDE_REVEAL_WIDTH, Math.min(0, newX));
   dragState.card.style.transform = `translateX(${newX}px)`;
@@ -966,6 +1018,10 @@ function onCardPointerUp() {
   const { wrapper, card } = dragState;
   const finalX = dragState.lastX !== undefined ? dragState.lastX : dragState.startTransform;
   card.style.transition = "";
+
+  // A drag that actually moved the card is a swipe, not a tap — the click
+  // event that follows this pointerup shouldn't also expand/collapse the card.
+  if (dragState.moved) wrapper.dataset.suppressClick = "true";
 
   if (finalX < -(HIDE_REVEAL_WIDTH / 2)) {
     if (currentlyRevealedWrapper && currentlyRevealedWrapper !== wrapper) {
@@ -1259,6 +1315,7 @@ document.addEventListener("DOMContentLoaded", () => {
   if (taskContainer) {
     taskContainer.addEventListener("click", handleTaskCompletion);
     taskContainer.addEventListener("click", handleHideTaskClick);
+    taskContainer.addEventListener("click", handleTaskCardExpand);
     taskContainer.addEventListener("pointerdown", onCardPointerDown);
     taskContainer.addEventListener("pointermove", onCardPointerMove);
     taskContainer.addEventListener("pointerup", onCardPointerUp);
