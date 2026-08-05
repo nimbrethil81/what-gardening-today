@@ -2,6 +2,17 @@
 
 _This document describes the **v2.0** architecture, in which the live database is Supabase (PostgreSQL) and access is governed by Row-Level Security. It is the single authoritative reference for the system as built. `docs/DESIGN_V2.md` is retained as the point-in-time record of the migration design and rationale; where the two differ, this document is correct._
 
+## Contents
+
+1. [VISION & STRATEGY](#1-vision--strategy)
+2. [COMPONENT ARCHITECTURE](#2-component-architecture)
+3. [DATABASE SCHEMA (PostgreSQL)](#3-database-schema-postgresql)
+4. [DATA ACCESS & FUNCTIONS](#4-data-access--functions)
+5. [ARCHITECTURAL PRINCIPLES & KNOWN LIMITATIONS](#5-architectural-principles--known-limitations)
+6. [DEVELOPMENT ROADMAP](#6-development-roadmap)
+
+---
+
 ## 1. VISION & STRATEGY
 
 The "What Gardening Today?" app eliminates cognitive overload and decision paralysis for enthusiastic novice gardeners. Instead of navigating complex canvas designers, tracking layouts, or reading encyclopedias, the entire application behaviour is driven by a single core interface interaction: tapping a button to answer, "What gardening should I do today?"

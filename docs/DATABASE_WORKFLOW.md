@@ -143,11 +143,8 @@ Collections currently in use:
 | `GROUP_TREE_GENERIC` | Trees for which generic tree care is safe |
 | `GROUP_HERBS` | Culinary and ornamental herbs |
 | `GROUP_HAND_TOOLS` | Hand tools only — deliberately excludes powered tools, so tool-cleaning advice never reaches a chainsaw |
-| `GROUP_WOODY_HERBS` | Rosemary, Sage, Thyme, Oregano — the evergreen Mediterranean sub-shrubs among the herbs. A deliberate subset of GROUP_HERBS, which also holds the leafy annuals and herbaceous perennials |
 
 > **`GROUP_ALL_BEDS` does not mean every bed.** Despite the name it currently omits Raised Bed, Annual Bedding and Cutting Garden. A weeding task targeting it therefore does *not* reach three of the nine bed types. Treat the member list above as authoritative and the name as historical.
-
-> **`GROUP_WOODY_HERBS` is a subset of GROUP_HERBS, not a replacement for it.** Its four members are evergreen Mediterranean sub-shrubs, and three things follow from that which are false for basil, mint, chives, parsley, coriander, dill, chervil and tarragon: they will not reshoot from bare brown wood, so any advice that removes growth has to stop at this year's green; they are the host plants for rosemary beetle, which is active from late summer through to spring; and in pots they are lost far more often to waterlogged winter compost than to cold. The collection describes what these plants are, not what content they happen to be missing, which is what makes it a legitimate collection rather than a holding pen — compare the GROUP_HERBACEOUS_PERENNIAL rejection in CHANGELOG 1.3. Watering and feeding stay on GROUP_HERBS, because those jobs are universal to anything in a pot and the difference in feed strength is handled inside the instruction text rather than by splitting the audience..
 
 The whole-category collections were created during the v2.0 category-tier review, to re-home tasks that previously targeted a bare category. They are the sanctioned replacement for "applies to the whole category" — the difference being that their membership is an explicit, inspectable list rather than a spelling coincidence.
 
@@ -516,8 +513,12 @@ FIELD RULES
 
 - Valid_Months: comma-separated integers 1–12, ascending, no spaces (e.g. 3,4,5). This comma list sits inside ONE semicolon field.
 
-- Frequency_Days: a positive whole number — the cooldown before the task may reappear. Before you choose the number, state the real cadence in words in your NOTES ("in practice this is done once, in early spring"; "every week or so while the plants are cropping") and check that the number matches the words. A once-a-year job is 365. A weekly job through its season is 7. Never blank, never zero. Do NOT go below 3 unless the job genuinely needs doing every day — a value of 1 means the app may offer this task every single day of its season, which is how a useful job becomes something the user learns to dismiss.
-  THEN CHECK THE COOLDOWN AGAINST YOUR OWN VALID_MONTHS. A cooldown longer than the gap between the months you declared makes those later months unreachable — the task fires in the first month and is still on cooldown when the others arrive, so they are decorative. Two rules follow:
+- Frequency_Days: a positive whole number — the cooldown before the task may reappear. HOW IT ACTUALLY BEHAVES, because it changes your answer:
+    * It counts from the moment the user MARKS THE TASK DONE. It is not a schedule and it does not make a task appear.
+    * A task that has never been completed is offered every day its month is valid and the weather allows. There is no waiting period before its first showing, and a task the user keeps ignoring simply stays on the list.
+    * So the number answers "how long after doing this is it worth doing again", not "how often should this show up". Choose it that way.
+  Before you choose the number, state the real cadence in words in your NOTES ("in practice this is done once, in early spring"; "every week or so while the plants are cropping") and check that the number matches the words. A once-a-year job is 365. A weekly job through its season is 7. Never blank, never zero. Do NOT go below 3 unless the job genuinely needs doing every day — a value of 1 means the app may offer this task every single day of its season, which is how a useful job becomes something the user learns to dismiss.
+  THEN CHECK THE COOLDOWN AGAINST YOUR OWN VALID_MONTHS. A cooldown longer than the gap between the months you declared makes those later months unreachable — the task is completed in the first month and is still on cooldown when the others arrive, so they are decorative. The fault falls on the user who actually does the job. Two rules follow:
     (i) If Valid_Months spans several consecutive months and the job recurs within that span — inspecting, picking, raking, checking — the cooldown must be short enough to fire more than once inside it. Do NOT write 365 on a job your own instruction describes as repeated.
     (ii) If Valid_Months declares two separate windows in a year, the cooldown must be shorter than the SMALLER gap between them, measured in both directions. Months 3 and 10 are seven months apart one way and five the other, so a 180-day cooldown blocks the March window every time and the task quietly becomes annual. Use 120.
   State this check in your NOTES for any row with more than one valid month.
@@ -1025,11 +1026,13 @@ It **is** returned by the matching engine (`select_tasks`, and therefore by the 
 
 The cooldown before a completed task may be offered again. It is not a schedule — it does not make a task appear, it only stops it reappearing too soon.
 
+**It counts from completion, not from first appearance**, and that distinction does real work when authoring. A task that has never been completed is offered every day its month is valid and the weather allows: there is no waiting period before its first showing, and a task the user keeps ignoring simply stays on the list rather than going quiet. So the number answers "how long after doing this is it worth doing again", not "how often should this show up" — and the two produce different values for the same job. Both review prompts and the task prompt now state this outright, because a model asked to pick a cooldown will otherwise assume it and occasionally assume wrong.
+
 The trap is that it can silently disagree with the instruction. A task whose text says "every week through the season" and whose `Frequency_Days` is 14 will offer itself half as often as its own advice says. §5 requires the cadence to be written out in words and reconciled against the number before the row is written.
 
 Values below 3 mean the task can return almost every day of its season. That is right for a handful of jobs — watering a container in a heatwave, picking peas — and wrong for most. The audit flags them for review rather than as faults, because the script cannot tell which is which.
 
-**The other trap is a cooldown longer than the task's own window.** A task declaring several months with a cooldown that outlasts them fires once and then sits out the rest, so every month after the first is decorative — visible in the data, never seen by a user. It has now been found twice: `TASK_0056`, `0059`, `0062` and `0067` in the tools pass, and `TASK_0079`, `0093`, `0399`, `0401`, `0405` and `0412` in the trees pass.
+**The other trap is a cooldown longer than the task's own window.** A task declaring several months with a cooldown that outlasts them is completed once and then sits out the rest, so every month after the first is decorative — visible in the data, never reached. Note who it falls on: the user who ignores the task keeps seeing it, and it is the one who diligently does it in March who never gets offered it again in October. It has now been found twice: `TASK_0056`, `0059`, `0062` and `0067` in the tools pass, and `TASK_0079`, `0093`, `0399`, `0401`, `0405` and `0412` in the trees pass.
 
 Two shapes to watch:
 

@@ -212,7 +212,7 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
 .task-expand-toggle {
   display: block;
   width: 100%;
-  text-align: right;
+  text-align: left;
   margin-top: 2px;
   padding: 0;
   border: none;
