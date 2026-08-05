@@ -161,6 +161,10 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
 .task-info { min-width: 0; } /* lets the description shrink/wrap instead of stretching the card wider */
 .task-info h3 { font-size: 15px; color: var(--text-main); margin-bottom: 4px; }
 
+/* Wraps the description so the fade-out overlay below can be positioned
+   against it without disturbing the -webkit-line-clamp truncation itself. */
+.task-description-wrap { position: relative; }
+
 /* Collapsed by default: clamped to 3 lines, with a reserved min-height so every
    card is the same height at rest regardless of how short its own description
    is. -webkit-line-clamp is what actually cuts the text off after 3 lines. */
@@ -176,6 +180,22 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
   min-height: calc(1.4em * 3);
 }
 
+/* A soft fade over the last line, hinting the text is cut off without saying
+   so in words. Only shown on cards that actually have more text, and only
+   while collapsed — once expanded there's nothing left to fade into. */
+.task-fade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1.4em;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0), var(--bg-card));
+  opacity: 0;
+  pointer-events: none;
+}
+
+.task-card.has-more:not(.expanded) .task-fade { opacity: 1; }
+
 /* Expanded: the clamp is lifted and the full description shows, which is what
    makes the card grow taller and push the ones below it down the page. */
 .task-card.expanded .task-instruction {
@@ -183,25 +203,30 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
   overflow: visible;
 }
 
-/* "More ▾" / "Less ▴" hint. visibility:hidden (rather than display:none) keeps
-   its line height reserved on every card, so cards whose text isn't actually
-   cut off don't end up a few pixels shorter than the ones that are. */
+/* Chevron expand hint: a single small arrow rather than a repeated word, in
+   keeping with the app's icon-led style elsewhere (✓, ⚙️, ✕). It reserves its
+   line height (visibility:hidden, not display:none) so every collapsed card
+   is the same height even when it has nothing to expand, and only becomes
+   visible on cards where the description is genuinely cut off. It flips
+   upside-down when the card is expanded. */
 .task-expand-toggle {
   display: block;
   width: 100%;
-  text-align: left;
-  margin-top: 4px;
+  text-align: right;
+  margin-top: 2px;
   padding: 0;
   border: none;
   background: none;
   font-size: 12px;
-  font-weight: 400;
+  line-height: 1.4;
   color: rgba(46, 125, 50, 0.65); /* a lighter, softer version of --brand-green */
   cursor: pointer;
   visibility: hidden;
+  transition: transform 0.2s ease;
 }
 
-.task-expand-toggle.has-more { visibility: visible; }
+.task-card.has-more .task-expand-toggle { visibility: visible; }
+.task-card.expanded .task-expand-toggle { transform: rotate(180deg); }
 
 .task-action-btn {
   width: 28px;

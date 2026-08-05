@@ -457,8 +457,11 @@ function renderTaskCards(tasks) {
       <div class="task-card">
         <div class="task-info">
           <h3>${task.name}</h3>
-          <p class="task-instruction">${task.category} • ${task.instruction}</p>
-          <button class="task-expand-toggle" type="button" aria-expanded="false">More ▾</button>
+          <div class="task-description-wrap">
+            <p class="task-instruction">${task.category} • ${task.instruction}</p>
+            <span class="task-fade" aria-hidden="true"></span>
+          </div>
+          <button class="task-expand-toggle" type="button" aria-expanded="false" aria-label="Show more">▾</button>
         </div>
         <button class="task-action-btn task-check" data-task-id="${task.task_id}">✓</button>
       </div>
@@ -467,16 +470,15 @@ function renderTaskCards(tasks) {
   });
 
   // Every card is rendered at the same collapsed (3-line-clamped) height, but
-  // the "More" hint should only appear on the ones actually cut off. That can't
-  // be known until the text is laid out in the DOM, so this runs one frame
-  // after the cards are inserted and compares each description's full height
-  // (scrollHeight) against its clamped height (clientHeight).
+  // the chevron/fade hint should only appear on the ones actually cut off.
+  // That can't be known until the text is laid out in the DOM, so this runs
+  // one frame after the cards are inserted and compares each description's
+  // full height (scrollHeight) against its clamped height (clientHeight).
   requestAnimationFrame(() => {
     taskContainer.querySelectorAll(".task-card").forEach(card => {
       const description = card.querySelector(".task-instruction");
-      const toggle = card.querySelector(".task-expand-toggle");
-      if (description && toggle && description.scrollHeight > description.clientHeight + 1) {
-        toggle.classList.add("has-more");
+      if (description && description.scrollHeight > description.clientHeight + 1) {
+        card.classList.add("has-more");
       }
     });
   });
@@ -507,12 +509,14 @@ function handleTaskCardExpand(event) {
   if (event.target.closest(".hide-task-btn")) return;    // the Hide button behind the card
 
   const card = wrapper.querySelector(".task-card");
-  const toggle = card.querySelector(".task-expand-toggle");
-  if (!toggle || !toggle.classList.contains("has-more")) return; // nothing to expand
+  if (!card.classList.contains("has-more")) return; // nothing to expand
 
   const expanded = card.classList.toggle("expanded");
-  toggle.textContent = expanded ? "Less ▴" : "More ▾";
-  toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+  const toggle = card.querySelector(".task-expand-toggle");
+  if (toggle) {
+    toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+    toggle.setAttribute("aria-label", expanded ? "Show less" : "Show more");
+  }
 }
 
 
