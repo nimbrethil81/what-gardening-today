@@ -8,6 +8,151 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **MINOR** (e.g. 1.0 → 1.1) — user-facing features, UI changes, and bug fixes within the current phase.
 
 ---
+## [2.10] — 2026-08-06
+
+### The third and last review programme, and an assumption worth testing
+
+The interaction review (DATABASE_WORKFLOW §7c) asks the one question neither of the other two passes can: not "is this task right", but "what does a real person see when several individually correct tasks arrive in the same month, in the same garden". The audit sees rows, not gardens. The editorial review sees one item group, while a real garden spans several — and the contradictions worth most sit between a bed task and a plant task, authored in different passes that never see each other.
+
+It was the last pass still assembled by hand, because both this document and the original design recorded that the packet builder could not serve it: its unit is a garden, not a declared review pass. **That turned out to be wrong, and testing the claim rather than inheriting it is where most of the value in this release came from.** Assembling "every live task that could fire for these blueprints in October" is the editorial packet's own reaching logic — match on a blueprint prefix *or* on any collection those blueprints belong to — with a month filter on top. The four gardens are fixed lists of blueprints. The only genuinely missing ingredient was a tab to declare them on, and with that the hand assembly disappears from the workflow entirely.
+
+**Added — `InteractionReview.gs`**
+
+- **Build review packet.** The picker is a grid rather than a list: one row per garden, one button per canonical month, each carrying the date that run was last done or `never run`. Choosing the next run and seeing how far the twenty-run programme has got are the same glance. The packet is shown with a copy button, written durably to a new `Interaction_Packet` tab, and `Interaction_Decisions` is laid out ready for the findings.
+- **The month's workload, computed rather than requested.** The prompt has always asked the reviewer to add up `Estimated_Minutes` "allowing for anything that recurs within the month" — arithmetic over thirty rows, which a script gets right every time and a reader gets wrong occasionally. The packet now states the once-through total, the total allowing for anything whose cooldown is shorter than a month, and names the recurring tasks; rows with no usable minutes value are counted separately so a small total is not mistaken for a light month when it is really an incomplete one. The prompt asks for a judgement of the number instead of its computation.
+- **Context rows — the same garden's tasks in the other eleven months**, with windows and cooldowns but no instructions, explicitly not under review. Some collisions cannot be seen from one month's rows at all: the six-month gap between a lawn weedkiller and an overseeding needs both windows in view. Same device as the timing packet's context section, for the same reason.
+- **Full collection membership**, asterisked outside the garden — where a `WRONG-MEMBER` fault usually hides.
+- **Its own verdict vocabulary** — `CONTRADICTION`, `ORDERING`, `EXCLUSION`, `DUPLICATION`, `LOAD`, `WRONG-MEMBER` — the `Type` column of the pass's own output table, used unchanged. There is no `OK`: the output is a list of conflicts, not a per-task verdict table.
+- **Apply decisions (dry run and real)**, **Mark a run as reviewed**, and **Set up the gardens** — the last seeds the four gardens from the workflow document and matches each member against `Item_Dictionary` by name where the match is unambiguous, listing whatever it could not match rather than quietly dropping it. A garden that lists something which is not a blueprint prefix is refused at packet-build time and named, because a garden silently missing an item reviews a garden nobody has.
+
+**Added — the `Interaction_Gardens` tab, and why progress does not live in a column**
+
+The other two programmes review *rows*, so a per-row marker column can carry their whole progress: a row has been looked at or it has not. This one reviews a **garden in a month**, and a task stamped because it appeared in *Awkward garden, April* has still never been seen in *Productive garden, September* — a completely different collision. Twenty runs is the real completeness question and no column can express it.
+
+So the bookkeeping is split. Columns A to C of the new tab are authored — the garden, its blueprint prefixes, and notes — and columns D onwards are written by the script: one column per canonical month, holding the date that run was last applied or marked. Four rows by five months, legible at a glance. **Derived, never stored**, read back out of `Review_Log` exactly as the `Review_Passes` status columns are, so there is no box to tick and nothing that can drift.
+
+`Review_Passes` gained no columns for this programme, and that is the design confirming itself rather than an omission: its unit is not a pass, so pass-shaped progress would have been meaningless for it.
+
+**Changed — `Master_Task_Matrix` column O goes live**
+
+- **`Interaction_Reviewed` (O)** was reserved and format-checked in 2.9; it is now written, on exactly the rows that were in a packet, following the timing programme's precedent rather than editorial's.
+- It carries a deliberately narrower claim than the run grid: *this task has appeared in at least one interaction packet*. That answers a question the grid cannot — which live tasks has an interaction reviewer never seen at all — which is one filter on a blank column O.
+- **Existing `I` entries in column M are left exactly where they are.** They are the honest record of the reviews run by hand before this programme existed, the audit still counts and reports them as historical, and rewriting them would have bought nothing. The interaction review simply stops adding new ones.
+
+**Added — an audit check that turns a silence into a number**
+
+`auditInteractionReviewState` reports how many of the twenty runs have been done and how many tasks carry a column O marker, but the figure worth reading is the third one: **what proportion of the live matrix the declared gardens can reach at all**. Four gardens of a dozen items cannot exercise a 250-blueprint catalogue, that is not a fault, and the fraction they *do* exercise was not visible from anywhere. A low number argues for a fifth garden rather than more runs of the four — and it is the kind of thing that would otherwise be assumed comfortably and never checked. Alongside it, three checks against reviewing a garden you did not describe: a garden with no members, a member that is not a blueprint prefix, and a duplicate garden name.
+
+**Added — a six-field mode, and the reasoning for the number**
+
+`interactionMode_().allowedFields` is `Instruction`, `Target_Asset_ID`, `Task_Name`, `Valid_Months`, `Estimated_Minutes`, `Retired` — wider than the timing review's two, narrower than editorial's ten. It follows what each finding type actually resolves to: contradictions, ordering and exclusions become a sentence added to an instruction; duplication becomes a retirement, a retarget or a rename; wrong-member becomes a retarget or a collection split; load becomes a moved window or a corrected minutes value, and this is the only pass that reads `Estimated_Minutes` seriously enough to notice a wrong one.
+
+**`Frequency_Days` and the three weather columns are withheld on purpose.** A weather gate cannot change what collides, and the cooldown belongs to the timing programme: an interaction reviewer who concludes a task recurs too often records a `NONE` finding and hands it across, which is the exact mirror of the timing programme handing instruction problems to editorial. Keeping that symmetry is what stops three programmes drifting into one general-purpose editor with three names.
+
+**Not changed — the decision block, despite the findings being *n*-ary**
+
+A finding here names a *set* of tasks colliding, not one task, and the six-column block has one `Task_ID` slot per row. It needed no contract change. By the time a conflict reaches the block it has already been resolved into cells, because the prompt requires the resolution to name which row to change and what sentence to add or remove — so one conflict becomes one row per cell, with every row carrying the same `Finding` text as the grouping key.
+
+The one shape that genuinely has no single cell — six lawn tasks all opening on the same morning — is a `NONE` finding, and a `NONE` row may name several tasks in its `Task_ID` cell (`TASK_0231 + TASK_0417`). **The existing applier already handled that with no change**, because it recognises `NONE` before it attempts to resolve the id, so the text passes straight through into the log. The same thing on a row that *does* change a cell is refused loudly, by name, which is the right failure. The alternative — a seventh `Finding_ID` column — was rejected: it would have shifted the tick-boxes on all three decisions tabs and broken the paste-into-A4-and-split habit for two working programmes, to buy a grouping the `Finding` text already provides.
+
+**Changed — `Audit.gs`**
+
+- The menu gains an "Interaction review" submenu, alongside Editorial review and Timing review. `onOpen` remains the project's single menu builder.
+- `INTERACTION_MONTHS` (March, April, September, October, December) and the month-name list are declared here rather than in `InteractionReview.gs`, for the same reason `TIMING_MIN_FREQUENCY_DAYS` is: the audit summary, the run grid and the packet builder all have to agree, and this file is where every cross-file constant already lives.
+- The malformed-column-O message no longer says a value there was necessarily typed by hand, and the review-state summary now describes its `I` count as historical, pointing at the column O finding for the live figure.
+- The `Estimated_Minutes` warning now says what the value is *for*, since a wrong one now distorts a whole garden-month's load judgement rather than one row.
+
+**Changed — `Review.gs` (three small things)**
+
+- **The log records the `Finding` text on applied rows.** It has always carried the reason, the impact and any warnings, but the reviewer's own four-to-eight-word label for the fault was written for `NOTED` rows only. The interaction review needs it, because that shared text is the only thing that groups a decomposed *n*-ary finding back together when the log is read a year later. It improves the other two programmes' logs at the cost of a few more words in the Notes column.
+- **"Mark a pass as reviewed" is editorial-only.** It used to ask whether you meant `E` or `I`, because the interaction review recorded itself in column M and had no menu of its own. Offering `I` now would stamp the wrong column with the wrong unit — a whole pass, when an interaction run is a garden and a month.
+- The derived status tabs are refreshed **after** the log is written rather than before — see Fixed.
+
+**Fixed — the status tabs were reporting the previous run's date**
+
+`reviewWritePassStatus_` derives each pass's "Last run" from `Review_Log`, and the applier was calling it *before* writing this run's log entry. The date it wrote was therefore the previous run's, and stayed wrong until the next audit refreshed it. Present since the column was added in 2.7 and unnoticed because an audit is usually run soon afterwards. Moving the call below `reviewWriteLog_` fixes it for the editorial and timing columns, and mattered more here: the interaction run grid is that programme's entire progress record, not one column of a summary, so a run would have appeared not to have happened.
+
+**Not changed**
+
+- `TimingReview.gs` — untouched. The mode contract absorbed a third programme without needing to change for it, which was the point of the 2.9 refactor.
+- `Publish.gs` — no edit needed, again. Column O sits past its fixed read index exactly as columns M and N do.
+- The applier itself — no change beyond the two above. Staging, validation, the same-cell guard, the retired-row guard and the orphan simulation are shared and identical for all three programmes.
+
+### Documentation
+
+`DATABASE_WORKFLOW.md` to v2.10: §7c rewritten from a hand-assembly procedure into the automated programme, with new subsections on the packet, the verdicts and field set, how an *n*-ary finding decomposes, and where progress lives; §8b's pasteable prompt replaced by a pointer to `interactionComposePrompt_`, matching what §8a and §8c already do, leaving a record of what the prompt asks and what is worth keeping if it is edited; the `Interaction_Gardens` tab and the promotion of column O from reserved to live (§2); the mode table in §7e extended to three programmes and given a row for where each one's progress lives; and the new audit checks (§7a). Top-level section numbers are unchanged — nothing was renumbered, since §7d–§7f are cross-referenced from comments inside the scripts. `SPEC.md`: `InteractionReview.gs` added to the content-pipeline component list, §5D item 7 updated now that all three passes assemble by script, and a new completed roadmap phase (4.4), which also clears "automating the interaction review" from the on-the-horizon list.
+
+### Known gaps and deferred work
+
+Unchanged from [2.9], less the interaction-review automation, with two additions:
+
+- **The gardens need their prefixes filling in once.** The seeded list names members the way the workflow document does — "mixed utility lawn", "compost bin" — and the setup step matches what it can against `Item_Dictionary`, but anything ambiguous is left for you. The packet builder refuses to build a garden with an unmatched member rather than reviewing a smaller garden than you described, so the cost of leaving one is a clear refusal rather than a quiet wrong answer.
+- **The verdict vocabularies are declared by each prompt, not enforced by the applier.** §7e's mode table has listed "which verdicts are legal" since 2.9, and no code checks it — a wrong verdict is recorded as typed and changes nothing. That is deliberate rather than an oversight (refusing a row over a label would cost more than it saves), and §7e now says so rather than implying an enforcement that does not exist.
+---
+## [2.9] — 2026-08-06
+
+### A second review programme, and the refactor that made it cheap to add
+
+The horticultural review of `Master_Task_Matrix` had a second, narrower question sitting outside what the editorial review (2.8) asks: not "is this advice right", but "does this task's window open in a month the job can actually be done". A worked-by-hand pass over the 443 tasks with a cooldown of 180 days or more found the shape of fault worth automating for — sixteen "prune immediately after flowering" tasks whose windows opened while the plant was still in flower, six Chelsea-chop tasks all opening three weeks early, an autumn lawn chain of six ordered steps all arriving on the same morning, and two opposite lift-before/lift-after-frost tasks sharing one window. None of that is visible from a pass-shaped review, because the pattern crosses pass boundaries; it is only visible when the whole long-cooldown set is in front of one reviewer at once.
+
+Rather than fork the editorial programme, the applier that transcribes accepted findings back into the sheet (2.8) became **mode-driven**: a mode is a small object declaring which decisions tab to read, which marker column to stamp and with which letter, which fields a row may change, and how to perform the stamp. Everything else — staging, validation, the same-cell guard, the retired-row guard, orphan simulation, the log — lives once and is shared between programmes. Three copies of that logic is how a rule ends up enforced in two programmes and quietly not in the third.
+
+**Added — `TimingReview.gs`**
+
+- **Build review packet.** Assembles the timing prompt with its data already slotted in, and shows it in a window with a copy button, writing a durable copy to a new `Timing_Packet` tab. The unit is a *filter*, not a pass: every live, non-retired task with `Frequency_Days` >= 180, sliceable by any declared review pass (reusing `reviewGatherPass_`, so a task reaching the pass through a collection its blueprints belong to is included exactly as it is for editorial review) or taken as **Everything** — every qualifying task in the workbook at once. The whole-workbook option is not a fallback; it is where the cross-pass patterns above were actually found, and a pass-only tool would have missed all of them.
+- **Context rows.** Every *other* live task sharing a target with a row under review — usually a short-cooldown task that never met the frequency threshold on its own — listed with name, months and frequency but explicitly marked not under review. Added because a reviewer judging "wait until you have mown it twice" cannot without the mowing task's own cooldown in view, and the mowing task is a 7-day job that would never otherwise appear in a long-cooldown filter.
+- **Full collection membership**, asterisked outside the slice — the same section and the same reasoning as the editorial packet, reused rather than reimplemented.
+- **Its own verdict vocabulary** — `EARLY`, `LATE`, `SEQUENCE`, `CONTRADICTS`, `OK` — kept distinct from editorial's `WRONG`/`RISKY`/`TIMING`/... set, because collapsing every finding here into editorial's single `TIMING` verdict would discard the distinction between "opens too early" and "the stated order is impossible", which is most of what makes `Review_Log` worth reading back a year from now.
+- **Apply decisions (dry run and real)** and **Mark a slice as reviewed** — both delegate to the shared applier in timing mode (below).
+- New tabs: `Timing_Packet`, `Timing_Decisions` — kept separate from editorial's own tabs rather than shared, because a Decisions tab is cleared the moment its own programme builds a new packet, and a shared tab would let building a timing packet mid-editorial-pass silently discard ticked editorial decisions, or the reverse.
+
+**Added — `Master_Task_Matrix` columns N and O**
+
+- **`Timing_Reviewed` (N).** Same `<letter> <date>` format as `Reviewed`, one letter (`T`). Stamped only on rows that were actually in a built packet — not every task a slice's pass reaches, which is editorial's unit and the wrong one here, since a timing sweep of a pass may cover a third of its live tasks and stamping the rest would claim a review that never happened.
+- **`Interaction_Reviewed` (O), reserved.** Format-checked by the audit; nothing writes it yet. Added now so the sheet is already the right shape when the interaction review (7c) is automated the way this one and the editorial one now are. The interaction review continues to record itself as `I` in column M until then.
+- Both are inert for publishing, for the same reason `Reviewed` always has been: `Publish.gs` reads the task matrix by fixed index 0–11 and never looks further.
+
+**Changed — `Review.gs` (the applier becomes mode-driven)**
+
+- `reviewApplyDecisions_` takes an optional `mode` argument, defaulting to `reviewEditorialMode_()` — so every existing editorial call site, and every editorial behaviour a user would notice, is unchanged.
+- `reviewStampPass_` is now a thin wrapper over a new `reviewStampRows_`, which takes an explicit array of rows rather than deriving them from a pass name. Editorial review's stamping behaviour ("every live task reaching the pass") is unchanged — it is simply `reviewStampPass_` calling the general form with `reviewGatherPass_(...).live`.
+- `reviewPrepareDecisionsSheet_` and `reviewCountPendingDecisions_` take the target sheet name as a parameter, defaulting to editorial's own tab where editorial calls them.
+- `Review_Log` gains a ninth column, `Mode` (I). A blank means `EDITORIAL` — every row logged before this column existed was written by the editorial programme, so that default is correct rather than a migration compromise. A pre-existing sheet gets the column added non-destructively on its next write. `reviewGapsFromLog_` and `reviewPassLastRun_` both filter on it, so a timing `NONE` finding can never be picked up by the editorial *authoring* prompt as a job to go and write, and a timing sweep can never make an editorial pass read as freshly run.
+- `reviewWritePassStatus_` writes four more columns (H–K) on `Review_Passes`, carrying the timing programme's own summary — eligible tasks, reviewed tasks, status, last run — scoped to qualifying rows only, so a pass whose tasks are all short-cooldown correctly reads "no qualifying tasks" rather than "not started".
+
+**Added — a narrow field set, enforced, not just documented**
+
+The timing mode's `allowedFields` is exactly `Valid_Months` and `Frequency_Days`. A timing finding that touches anything else — instruction wording, a retarget — is refused by the applier with a message pointing at the editorial programme, rather than silently accepted into a review that was never meant to judge it. This is checked in the shared applier once, immediately after a row's target column is resolved, so a future third mode gets the same guarantee without writing it again.
+
+**Changed — `Audit.gs`**
+
+- The menu gains a "Timing review" submenu, alongside Editorial review.
+- New checks: malformed `Timing_Reviewed` and `Interaction_Reviewed` values (via a shared `reviewedCellIsWellFormed_` helper, so the three marker-column checks cannot drift out of step with each other), and a new **`Valid_Months` not ascending** WARNING — see Fixed, below.
+- New `auditTimingReviewState`, the timing equivalent of the existing review-state summary, deliberately scoped to *qualifying* rows only (`Frequency_Days` >= 180): counting every live task in the denominator would report thousands of weekly and fortnightly tasks as "not yet timing reviewed", which is not a gap in the programme, it is a task the programme was never asked to look at.
+- `TIMING_MIN_FREQUENCY_DAYS` (180) declared here rather than in `TimingReview.gs`, since `Audit.gs`, `Review.gs` and `TimingReview.gs` all need to agree on which rows qualify.
+
+**Fixed — the `Valid_Months` ascending-order gap, and the question behind it**
+
+The authoring rules have always required `Valid_Months` written in ascending order, and the review applier has always *refused* to write a non-ascending list — but nothing in the audit checked for one, so a row typed `12,1,2` passed clean and would only be refused the day someone tried to edit it through a review. The new WARNING closes that.
+
+Whether correcting the order could ever change behaviour was an open question, carried as an explicit hedge in both `Audit.gs`'s finding text and `TimingReview.gs`'s header while the timing review was being designed. It is now settled by reading `select_tasks` itself: `db/03_functions.sql` tests the season with `v_month = any (t.valid_months)`, a membership test over a Postgres integer array with no notion of first, last or order, and `db/01_schema.sql`'s `task_valid_months_shape` constraint checks only cardinality, nullness and the 1–12 range. **Ordering is a pure authoring convention with no runtime meaning.** Both files, and the timing review prompt itself, now state this as fact rather than an assumption, and the timing prompt explicitly tells a reviewer not to report a non-ascending row as a timing fault.
+
+**Not changed**
+
+- `Publish.gs` — no edit was needed; the new marker columns sit past its fixed read index exactly as `Reviewed` always has.
+- The interaction review (7c) — still assembled and applied by hand. A brief for automating it, written to be handed to a fresh conversation with no context from this one, records what already exists, the mode contract it would need to satisfy, and four design questions specific to its shape (whether a per-task marker even fits a pass whose unit is a garden-and-month; how an *n*-ary finding — several tasks colliding, not one — decomposes into a six-column block built for one `Task_ID` per row; which fields it plausibly needs given its output is mostly added instruction sentences; and whether the packet builder can in fact serve it, which both `DATABASE_WORKFLOW.md` and the original design assumed it could not).
+
+### Documentation
+
+`DATABASE_WORKFLOW.md` to v2.9: the pass table extended to four (§7), the `Timing_Reviewed` and `Interaction_Reviewed` columns (§2), the mode-driven applier and the `Mode` column on `Review_Log` (§7e), the timing review programme in full (new §7g, numbered to avoid renumbering §7d–§7f, which are cross-referenced from the scripts themselves), the timing prompt (new §8c), and the confirmed `Valid_Months` set semantics with their source citation (new §9 section). `SPEC.md`: `Review.gs` and `TimingReview.gs` added to the content-pipeline component list (previously undocumented there even for the editorial programme), §5D item 7 widened to name all three review passes, and a new completed roadmap phase (4.3) for this release. In fixing this, a stale cross-reference was also closed: `DATABASE_WORKFLOW.md` §9 has pointed at a `Reveal_If_Wind_Above` roadmap entry in `SPEC.md` §6 since v2.4 that never existed; it now does.
+
+### Known gaps and deferred work
+
+Unchanged from [2.8], with two additions:
+
+- The whole-matrix version of the cooldown-versus-own-months check remains open. The applier warns when a *staged* change would create the fault; nothing yet sweeps every existing row the way the new ascending-order check does, and would make a good second WARNING addition to `Audit.gs` at the same severity.
+- The 19 rows identified as non-ascending during design of this release are a data cleanup, not a code change, and are unaffected by anything in this release — they display and match correctly today and will continue to.
+---
 ## [2.8] — 2026-08-03
 
 ### The editorial review programme is now assembled and applied by script

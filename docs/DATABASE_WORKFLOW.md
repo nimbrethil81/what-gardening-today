@@ -6,7 +6,7 @@ This covers the manual authoring process only — generating content with an LLM
 
 **As of v2.0, the workbook is an authoring workbench, not a live database.** Content is written here exactly as before, but it reaches the app only when it is *published* to the hosted database (Supabase) via an explicit **Garden Data → Publish to app** step. Authoring is unchanged; publishing is new. See §10.
 
-_Current as of v2.7 (2026-08-03). This revision documents the review programme automation added in `Review.gs`: the `Review_Pass` column and the `Review_Passes` tab (§1, §2, §3, §6, §9), the packet builder that assembles a complete editorial review pass and offers it wrapped in either the review prompt or the authoring prompt (§7b), the decisions tab and applier that transcribe accepted findings back into the matrix (§7e), and the process for filling a gap the review found (§7f). The editorial review prompt has moved out of this document and into `Review.gs`, so that there is exactly one copy of it (§8a)._
+_Current as of v2.10 (2026-08-06). This revision documents the interaction review programme added in `InteractionReview.gs` — the last of the three human review passes to be automated. It rewrites §7c, replaces the hand-pasted prompt in §8b with a pointer to the function that emits it, adds the `Interaction_Gardens` tab and promotes `Interaction_Reviewed` (column O) from reserved to live (§2), and extends the mode table in §7e to three programmes. Superseded a v2.9 revision documenting the timing review (§7g, §8c) and the mode-driven applier, and a v2.7 revision documenting the `Review_Pass` column, the `Review_Passes` tab, the packet builder and the decisions tab — all still current, none repeated here._
 
 > **If you read only one thing, read this.** The v2.0 migration **abolished bare-category targeting.** A task may no longer target `LAWN` or `PLANT` and sweep up everything beneath it — such a target now *blocks publishing*. Every task must target either one specific blueprint or a **declared collection**. The consequence for authoring is that **a new blueprint inherits nothing.** Add a plant and write no tasks for it, and it will silently receive zero tasks forever — there is no fallback tier to catch it. See §2 and §2a.
 
@@ -33,10 +33,11 @@ _Current as of v2.7 (2026-08-03). This revision documents the review programme a
 The authoring tabs in the Google Sheet:
 
 - **`Item_Dictionary`** — the catalogue of item *blueprints* shown in the "Add to My Garden" picker. Seven columns: `Category`, `Suggested_Name`, `Default_Asset_ID_Prefix`, `Groups`, `Browse_Group` (column E; see §2), `Botanical_Name` (column F; see §2) and `Review_Pass` (column G; see §2). Columns A–D are authored by prompt and pasted; E, F and G are filled by hand, by prompt, or (for G) by a menu item.
-- **`Master_Task_Matrix`** — the care tasks matched to those items. Thirteen columns: `Task_ID`, `Target_Asset_ID`, `Task_Name`, `Category`, `Instruction`, `Valid_Months`, `Frequency_Days`, `Suppress_If_Raining`, `Suppress_If_Temp_Below`, `Requires_Wind_Above`, `Estimated_Minutes`, `Retired` (column L; see §2) and `Reviewed` (column M; see §2). Columns A–K are authored by prompt and pasted; L and M are filled by hand or by the review applier (§7e).
+- **`Master_Task_Matrix`** — the care tasks matched to those items. Fifteen columns: `Task_ID`, `Target_Asset_ID`, `Task_Name`, `Category`, `Instruction`, `Valid_Months`, `Frequency_Days`, `Suppress_If_Raining`, `Suppress_If_Temp_Below`, `Requires_Wind_Above`, `Estimated_Minutes`, `Retired` (column L; see §2), `Reviewed` (column M; see §2), `Timing_Reviewed` (column N; see §2) and `Interaction_Reviewed` (column O; see §2). Columns A–K are authored by prompt and pasted; L is filled by hand; M, N and O are filled by the review appliers (§7e) or by hand.
 - **`Collections`** — added in v2.0. Two columns, `Code` and `Name`, declaring every `GROUP_*` collection that exists and giving it a human display name. Membership still lives in the `Groups` column of `Item_Dictionary`; this tab declares the collections that column may reference. See §2.
 - **`Browse_Groups`** — added in v2.4. Two columns, `Name` and `Sort_Order`, declaring every heading the picker may cluster items under and the order those headings appear in. Referenced by the `Browse_Group` column of `Item_Dictionary`. **Purely a display concern — a browse group is not a collection and can never be a task target.** See §2.
-- **`Review_Passes`** — added in v2.7. Columns A and B, `Pass_Name` and `Notes`, declare every editorial review pass that exists. Columns C to G are written by the script and show the state of each pass; see §2. Membership lives in the `Review_Pass` column of `Item_Dictionary`; this tab declares the passes that column may reference. **Bookkeeping only — a review pass affects neither what an item receives nor where it appears.** See §2 and §7b.
+- **`Review_Passes`** — added in v2.7. Columns A and B, `Pass_Name` and `Notes`, declare every review pass that exists. Columns C to K are written by the script and show the state of each pass — C to G for the editorial programme, H to K for the timing one; see §2. Membership lives in the `Review_Pass` column of `Item_Dictionary`; this tab declares the passes that column may reference. **Bookkeeping only — a review pass affects neither what an item receives nor where it appears.** See §2, §7b and §7g.
+- **`Interaction_Gardens`** — added in v2.10. Columns A, B and C, `Garden_Name`, `Members` and `Notes`, declare the plausible gardens the interaction review is run against and which blueprints each contains. Columns D onwards are written by the script and hold one column per canonical month, carrying the date that garden-and-month was last reviewed — the twenty-run programme as a four-by-five grid. Created and seeded by a menu item. **Bookkeeping only, and unreachable from matching: a garden here is a review fixture, not anything a user has.** See §2 and §7c.
 - **`Reference_Lists`** — maps the seven display categories to their top-level prefixes; the audit's source of truth for valid categories and prefixes.
 
 **Written by a script, never edited by hand:**
@@ -44,12 +45,16 @@ The authoring tabs in the Google Sheet:
 - **`Audit_Report`** — the findings from **Garden Data → Run Audit**.
 - **`Coverage_Grid`** — a blueprint-by-month table of how many live tasks reach each item in each month. Rebuilt on every audit run. It is a *reference artefact for the editorial review* (§7b), not a list of faults. See §7d.
 - **`Publish_Report`** — written by the publish step (§10).
-- **`Review_Packet`** — the assembled packet for one pass, one line per row: the review prompt, then a divider, then the authoring prompt. Rebuilt each time you build a packet, and the caption names the row range of each. See §7b.
-- **`Review_Log`** — appended to by the review applier and never cleared. The permanent record of every change the review programme has made to the task matrix, and the only place a *before* value survives. See §7e.
+- **`Review_Packet`** — the assembled packet for one editorial pass, one line per row: the review prompt, then a divider, then the authoring prompt. Rebuilt each time you build a packet, and the caption names the row range of each. See §7b.
+- **`Timing_Packet`** — the same, for one timing review slice. A separate tab from `Review_Packet` on purpose: each is cleared when its own programme builds a packet, so building one can never destroy the other. See §7g.
+- **`Interaction_Packet`** — the same again, for one interaction run: one garden in one month. See §7c.
+- **`Review_Log`** — appended to by all three review programmes and never cleared. The permanent record of every change any review has made to the task matrix, and the only place a *before* value survives. Column I, `Mode`, names which programme made each entry; a blank means editorial, because every row written before that column existed came from the editorial applier. It is also where the interaction review's own progress is derived from, since column B holds whatever the programme called the thing under review — a pass name, a slice name, or a run label such as `Awkward garden — April`. See §7e.
 
 **Written by a script, then filled in by hand:**
 
-- **`Review_Decisions`** — laid out by the packet builder, pasted into and ticked by you, then read by the applier. See §7e.
+- **`Review_Decisions`** — laid out by the editorial packet builder, pasted into and ticked by you, then read by the applier. See §7e.
+- **`Timing_Decisions`** — the same, for the timing review. Separate for the same reason the packet tabs are separate: a tab is cleared when its own programme builds a packet, and building a timing packet mid-editorial-pass must not discard decisions you have ticked but not applied. See §7g.
+- **`Interaction_Decisions`** — the same again, for the interaction review. See §7c.
 
 **Archived, and read by nothing:** the `User_Profile`, `Task_Log` and `Hidden_Tasks` tabs. A user's garden items, completion history and hidden tasks live in Postgres (`garden_item`, `task_completion`, `hidden_task`) and are written by the app, not the workbook. The tabs that remain are frozen snapshots from before the v2.0 cutover, kept only as a record of the pre-migration state; they are prefixed `ARCHIVE_` and no code looks them up. Do not edit them expecting an effect.
 
@@ -276,7 +281,7 @@ Column **L** of `Master_Task_Matrix`, headed `Retired`. Any non-blank value mark
 - **The reason text is read by the review packet builder** (§7b) and shown to the reviewer, so a job you withdrew on purpose is not reported back to you as a gap. Write the cell as a sentence someone else could act on — "Destroys grafted forms, see TASK_0401" rather than "no".
 - The old `RETIRED_TASK_IDS` constant in `Audit.gs` is **gone.** Retirement is now a property of the data, exactly here. To withdraw a task, fill its `Retired` cell and publish — do not delete the row.
 
-### The `Reviewed` column records review state
+### The `Reviewed` column records editorial review state
 
 Column **M** of `Master_Task_Matrix`, headed `Reviewed`. Added because re-reviewing the matrix is a multi-session programme of roughly two dozen passes (§7b) and there was previously no way to keep your place between sessions.
 
@@ -288,15 +293,65 @@ E 2026-07-25, I 2026-08-14      also covered by an interaction review
 ```
 
 - `E` — the editorial review (§7b) has covered this row.
-- `I` — the interaction review (§7c) has covered this row.
+- `I` — an interaction review covered this row **before v2.10**, when that programme had no column of its own. Historical only; nothing writes a new one. See column O below.
 
 Leave it **blank** for a row that has not been reviewed. Anything else in the cell is flagged by the audit as a malformed value, so the count stays trustworthy.
 
-**Since v2.7 it is normally written by script, not by hand.** Applying a pass's decisions (§7e) stamps `E` and today's date across every live task reaching that pass, and **Mark a pass as reviewed** does the same without applying anything. Both replace an existing entry of the same letter rather than adding to it, so a collection task that comes up in five shrub passes ends with one `E` entry carrying the most recent date, not five. Entries of the other letter are preserved. You can still type it by hand; the format is the same.
+**The two letters do not overwrite each other.** The applier replaces an existing entry of the *same* letter rather than adding to it, so a collection task that comes up in five shrub passes ends with one `E` entry carrying the most recent date, not five — and an entry of the other letter is preserved untouched. This was designed as a list from the outset, which is why one column can safely hold both, and it is why the existing `I` entries could simply be left alone when the interaction review moved to column O in v2.10. They are the honest record of the reviews that were run by hand, and rewriting them would have bought nothing.
+
+**Since v2.7 it is normally written by script, not by hand.** Applying a pass's decisions (§7e) stamps `E` and today's date across every live task reaching that pass, and **Mark a pass as reviewed** does the same without applying anything. Since v2.10 that menu item is editorial-only and always writes `E`; it used to ask whether you meant `E` or `I`, and offering `I` now would stamp the wrong column with the wrong unit. You can still type an entry by hand; the format is the same.
 
 **This column is inert for publishing.** `Publish.gs` reads `Master_Task_Matrix` by fixed column index 0–11 and never looks at index 12, so nothing in column M reaches the database. It exists purely for the authoring programme. The audit reports how many live tasks are reviewed and how many are not, and breaks that down by pass, which is how you find where you stopped.
 
 **A collection task is legitimately reviewed more than once.** A task targeting `GROUP_SHRUB_GENERIC` comes up in every shrub group pass, judged against a different awkward member each time. The column records the most recent look, not a one-time tick.
+
+### The `Timing_Reviewed` column records timing review state
+
+Column **N** of `Master_Task_Matrix`, added in v2.9 alongside the timing review programme (§7g). Same format as column M, one letter only:
+
+```
+T 2026-08-06
+```
+
+`T` means the timing review has looked at this row's window. Written by the timing applier, or by **Timing review → Mark a slice as reviewed**, or by hand.
+
+**Why a separate column rather than a third letter in column M.** Nothing was broken about column M holding three letters — it is a list, and the appliers already coexist safely in it. The reason is that you filter this sheet by eye, and "show me every long-cooldown task nobody has checked the timing of" is one click on a blank column N, against a text search inside a comma-separated list in column M. A column you can sort and filter on is worth more than a column you have to read.
+
+**Scope: it is stamped only on rows the timing review actually looked at.** The programme concerns itself with tasks whose cooldown is 180 days or more, where a wrong first firing costs a season rather than a week. A timing sweep of a pass may only have covered a third of its live tasks, and the applier stamps exactly those — not everything the pass reaches, which is the editorial programme's unit and would claim a review that never happened. Short-cooldown rows are therefore *correctly* blank here forever, and the audit's timing summary counts only qualifying rows so they never appear as a backlog.
+
+### The `Interaction_Reviewed` column records that a task has been seen in a run
+
+Column **O** of `Master_Task_Matrix`, reserved in v2.9 and written since v2.10 by the interaction review programme (§7c). Same format as columns M and N, one letter only:
+
+```
+I 2026-08-06
+```
+
+Written by the interaction applier, or by **Interaction review → Mark a run as reviewed**, or by hand.
+
+**It carries a narrower claim than the other two marker columns, and the narrowness is deliberate.** The other two programmes review *rows*: a row has been looked at or it has not, so a per-row column can express their whole progress. This one reviews a **garden in a month**. A task stamped because it appeared in *Awkward garden, April* has still never been seen in *Productive garden, September* — a completely different collision — and no column can say which. Twenty runs is the real completeness question, and it lives on the `Interaction_Gardens` tab instead (below).
+
+So column O means exactly one thing: **this task has appeared in at least one interaction packet.** It is stamped on the rows that were actually in that packet, not on everything the garden could reach in some other month, for the same reason the timing programme stamps only what it looked at.
+
+**What it is for.** One filter on a blank column O answers a question the run grid cannot: which live tasks has an interaction reviewer never seen *at all*? Many never will — a garden of a dozen items cannot reach a catalogue of 250 blueprints — and the audit reports that as a proportion, which is the number worth watching. If the programme can structurally see only a small fraction of the matrix, the answer is a fifth garden rather than more runs of the four.
+
+### The `Interaction_Gardens` tab declares every garden, and records the runs
+
+Added in v2.10. Columns **A**, **B** and **C** are yours:
+
+| Column | Holds |
+|---|---|
+| A `Garden_Name` | the name of the garden, e.g. `Awkward garden`. It is half of a run's identity, so keep it stable and keep an em dash out of it. |
+| B `Members` | the blueprint prefixes in that garden, comma separated. These are exact prefixes from `Item_Dictionary`, not display names. |
+| C `Notes` | why the garden is composed as it is. Read by nobody. |
+
+Columns **D onwards are written by the script** and rebuilt on every audit run, every apply and every mark — do not type in them. There is one column per canonical month plus a count, so the tab reads as a four-by-five grid of dates: which of the twenty runs have been done, and when. A blank cell is a run that has never happened.
+
+**Derived, never stored**, exactly like the status columns on `Review_Passes`. Every date is read back out of `Review_Log`, filtered to this programme's mode, so the grid cannot disagree with the log and there is nothing to tick.
+
+**Create it with Garden Data → Interaction review → Set up the gardens.** That seeds the four gardens below and matches each member against `Item_Dictionary` by name where the match is unambiguous, listing whatever it could not match for you to fill in by hand. A garden listing a prefix that is not a blueprint is reported by the audit, and the packet builder refuses to build that garden rather than quietly reviewing a smaller one than you described.
+
+**A garden here is a review fixture and nothing else.** It is not a user's garden, it publishes nowhere, and — like `Review_Pass` and `Browse_Group` — it can never affect which tasks an item receives.
 
 ---
 
@@ -665,15 +720,18 @@ This data fails **silently**. A task pointing at a target that doesn't exist doe
 
 Since v2.0 some of this is caught earlier and harder: the database rejects malformed rows at write time, and the publish gate refuses to run on any ERROR. But the gate cannot tell you that a task is *missing*, or that advice is *wrong*, or that two tasks issued in the same week contradict each other — so the human passes below still matter.
 
-**There are three passes, and they catch entirely different things.**
+**There are four passes, and they catch entirely different things.**
 
 | Pass | Unit of work | Catches | Run |
 |---|---|---|---|
 | **7a. Mechanical audit** | the whole workbook | broken references, malformed values, stubs, regressions | after every import; takes seconds |
 | **7b. Editorial review** | one declared pass (10–16 related blueprints) | wrong advice, wrong month, unsafe collection tasks, genuinely missing jobs | one pass per session |
-| **7c. Interaction review** | one garden, one month | contradictions, duplicates, ordering, cumulative load | after each category is editorially complete |
+| **7c. Interaction review** | one garden, one month | contradictions, duplicates, ordering, cumulative load | after each category is editorially complete; twenty runs for full coverage |
+| **7g. Timing review** | a filter across the matrix: long-cooldown tasks, sliced by pass or taken whole | windows that open a month before the job can reliably be done | as its own programme, independent of the others |
 
-The editorial review has two follow-on steps that are not themselves passes: **§7e**, transcribing the findings you accept back into the matrix, and **§7f**, filling the gaps it found. Both were done by hand until v2.7 and are now partly automated.
+**Why the timing review is a fourth pass rather than part of the editorial one.** The editorial review's unit is a *pass* — a group of related blueprints and everything reaching them — because "what is missing?" and "do these contradict?" need completeness over an item group to be answerable at all. The timing review's unit is a *filter across the whole matrix*, because its single question does not care about blueprints, and the faults worth most crossed pass boundaries freely: sixteen "prune after flowering" tasks whose windows opened in the month the plant is still flowering, six Chelsea chop tasks all opening three weeks early, an autumn lawn chain of six steps all arriving on the same morning. A pass-shaped review would have found the individual rows and missed every one of those shapes. It is documented at §7g rather than §7d so that adding it did not renumber §7d–§7f, which are cross-referenced from the scripts themselves.
+
+The editorial review has two follow-on steps that are not themselves passes: **§7e**, transcribing the findings you accept back into the matrix, and **§7f**, filling the gaps it found. Both were done by hand until v2.7 and are now partly automated. §7e serves all three programmes — since v2.10 every one of them assembles its packet and transcribes its accepted findings by script, and the judgement in between is still entirely yours.
 
 ### 7a. The mechanical audit — automated, run often
 
@@ -693,18 +751,21 @@ It checks for:
 - **Weather gates that suppress permanently** — a temperature floor on a task whose months all fall between November and March, and a wind ceiling below 10 mph. Both silently hide the task nearly always.
 - **Implausible cadences** — a `Frequency_Days` below 3, meaning the task can reappear almost daily throughout its season.
 - **Named chemicals** — any active ingredient or brand in a task name or instruction, flagged for review against the naming rule in §5. Withdrawn substances are called out separately and more loudly.
-- **Schema hygiene** — invalid categories, unknown top-level prefixes, `GROUP_` misused as an asset prefix, `_NNNN` suffixes in a task target, malformed `Valid_Months`, missing `Frequency_Days` or `Estimated_Minutes`, semicolons in free text, malformed `Reviewed` values, and `Suppress_If_Raining` sitting as the *text* "TRUE" rather than a real boolean.
+- **Schema hygiene** — invalid categories, unknown top-level prefixes, `GROUP_` misused as an asset prefix, `_NNNN` suffixes in a task target, malformed `Valid_Months`, missing `Frequency_Days` or `Estimated_Minutes`, semicolons in free text, malformed `Reviewed`, `Timing_Reviewed` or `Interaction_Reviewed` values, and `Suppress_If_Raining` sitting as the *text* "TRUE" rather than a real boolean.
+- **`Valid_Months` not in ascending order** — added in v2.9, closing a gap that had been open since the applier was written. The authoring rule has always required ascending order and the review applier has always *refused* to write a non-ascending list, but nothing in the audit reported one, so a row typed `12,1,2` passed clean and would only be refused the day someone tried to edit it through a review. WARNING, never ERROR: the row is already firing in exactly the right months, because matching treats `valid_months` as a **set** and not a range (§9). Correcting the order changes no behaviour — it brings the sheet in line with its own rule and unblocks the row for editing.
 - **Review passes that do not exist** — a name in the `Review_Pass` column that is not declared on `Review_Passes`. This no longer stops the pass being reviewed, since the picker offers undeclared names too; it is a typo check, and a name carrying one or two items next to a near-identical one carrying fifteen is what it is looking for.
 - **Blueprints in no review pass** — aggregated to a single finding with a count and the first dozen names, rather than one per row.
 - **Review programme state** — how many live tasks carry a `Reviewed` value and how many do not.
-- **Review pass status** — the audit rebuilds columns C to G of the `Review_Passes` tab (§2) on every run, and reports a one-line tally. That tab is the programme's bookmark: the global count tells you how much is left, the tab tells you *where* to pick it up.
+- **Timing review programme state** — the same for column N, but counted only over *qualifying* rows: live, with `Frequency_Days` of 180 or more. A short-cooldown task left blank in column N is not a backlog item, it is a row the programme was never asked to look at, and counting it would report thousands of phantom gaps.
+- **Interaction review programme state** — added in v2.10. How many of the twenty runs have been done, how many live tasks carry a column O marker, and, more usefully, **how much of the live matrix the declared gardens can reach at all**. Four gardens of a dozen items cannot exercise a 250-blueprint catalogue, but the fraction they *do* exercise is not obvious from anywhere else, and a low number argues for another garden rather than more runs. Alongside it: a garden with no members, a garden whose members are not blueprint prefixes, and a duplicate garden name — each of which would otherwise mean reviewing a garden you did not describe.
+- **Review pass status** — the audit rebuilds columns C to K of the `Review_Passes` tab (§2) on every run, and reports a one-line tally for each programme. That tab is the bookmark: the global counts tell you how much is left, the tab tells you *where* to pick it up.
 - **Review pass too large** — a pass holding more than 16 blueprints, which is more than one sitting can review properly.
 
 The `Reference_Lists` tab is the audit's source of truth for the seven categories and nine prefixes. Add a prefix there and the audit accepts it immediately — which is that tab's real job, and the reason to keep it.
 
 **None of the review-programme checks can block a publish.** They are all WARNING or REVIEW severity. The publish gate blocks on ERROR only, so tightening the audit never risks stranding content that was publishable yesterday — and an unassigned blueprint is a gap in the *review* programme, not a fault in the content.
 
-**A missing tab is now a finding, not a crash.** `Item_Dictionary` and `Master_Task_Matrix` carry the same guard `Reference_Lists` always had: rename one and the audit reports which tab it could not find, rather than stopping with a JavaScript error that names neither the tab nor the cause. The lookup is exact and case-sensitive, so a trailing space or a changed capital counts as missing. An absent `Review_Passes` tab is not a fault at all — the whole review-programme check simply stays quiet.
+**A missing tab is now a finding, not a crash.** `Item_Dictionary` and `Master_Task_Matrix` carry the same guard `Reference_Lists` always had: rename one and the audit reports which tab it could not find, rather than stopping with a JavaScript error that names neither the tab nor the cause. The lookup is exact and case-sensitive, so a trailing space or a changed capital counts as missing. An absent `Review_Passes` or `Interaction_Gardens` tab is not a fault at all — the relevant review-programme check simply stays quiet.
 
 Findings come in three severities: **ERROR** (silently broken now), **WARNING** (probably not intended), and **REVIEW** (the script cannot judge; a human should look).
 
@@ -759,24 +820,57 @@ The passes themselves live on the `Review_Passes` tab, not in this document, so 
 
 ### 7c. The interaction review — what fires together
 
-This pass does not exist to judge any single task. It exists to judge what happens when several correct tasks arrive in the same week.
+This pass does not exist to judge any single task. It exists to judge what happens when several correct tasks arrive in the same month.
 
 Neither of the other passes can catch this. The audit sees rows, not gardens. The editorial review sees one item group, but a real user's garden spans several — and the contradictions that matter are between a bed task and a plant task, or between two steps of the lawn programme that need doing in a particular order.
 
 **The method:** take a plausible garden and a month. Assemble every live task that could fire for those items in that month. Then ask: do any of these contradict each other, duplicate each other, or need doing in a particular order that nothing tells the user about? Is the total amount of work plausible for one month?
 
-**Four gardens, used consistently so results are comparable between runs:**
+**Four gardens, used consistently so results are comparable between runs.** They are declared on the `Interaction_Gardens` tab (§2) and seeded from this list, so the tab is the live copy and this is the reasoning behind it:
 
 - **The starter garden** — mixed utility lawn, herbaceous border, shed, water butt, compost bin, trowel, spade, secateurs, rose, hydrangea. The modal novice.
 - **The productive garden** — raised bed, greenhouse, cold frame, compost bin, tomato, courgette, runner bean, lettuce, carrot, strawberry, raspberry, basil, mint, watering can.
 - **The low-maintenance garden** — gravel bed, drive, patio, fence panels, conifer, ivy, ornamental grass, hedge, leaf rake.
 - **The awkward garden** — deliberately loaded with the exceptions: fine fescue lawn, clover lawn, moss lawn, lavender, plum, cherry, penstemon, echinacea, eryngium, chainsaw. This is the one that tests whether the collection boundaries actually hold.
 
-**Five months, chosen because they are where jobs collide:** March, April, September, October, and one of December or January.
+**Five months, chosen because they are where jobs collide:** March, April, September, October, and one of December or January. December is the one the script offers; swapping it for January is a one-number change in `Audit.gs`, and worth doing once and leaving alone, because the whole argument for a fixed set is that the runs stay comparable between sittings.
 
-That is twenty runs for full coverage, but the awkward garden in April and October is where the value is concentrated — start there.
+That is twenty runs for full coverage, but the awkward garden in April and October is where the value is concentrated — start there. The picker says so too.
 
-Use the interaction prompt in §8b. This pass is still assembled by hand: its unit is a garden rather than a pass, so the packet builder does not help. When a pass is complete, record it with **Garden Data → Editorial review → Mark a pass as reviewed**, choosing `I`, or type the entry into column M yourself.
+**Automated in v2.10, and the hand-assembly is gone.** Both this document and the original design assumed the packet builder could not serve this pass because its unit is a garden. That turned out to be wrong. "Every live task that could fire for these blueprints in October" is the same reaching logic the editorial packet already used — match on a blueprint prefix *or* on any collection those blueprints belong to — with a month filter on top, and the four gardens are fixed lists of blueprints that can live on a declared tab. The only genuinely missing ingredient was the tab.
+
+#### Building the packet
+
+**Garden Data → Interaction review → Build review packet.** The picker is a grid: one row per garden, one button per canonical month, each showing the date that run was last done or `never run`. Choosing the next run and seeing how far the programme has got are one glance. The script then assembles the packet, shows it with a copy button, writes a durable copy to `Interaction_Packet` and lays out `Interaction_Decisions`.
+
+What it contains, in order:
+
+1. **The prompt** (§8b), then the garden and the month.
+2. **Every live task arriving that month for that garden**, with full instruction text, months, cooldown and estimated minutes.
+3. **The month's workload, already totalled** — once-through and allowing for anything whose cooldown is shorter than a month, with the recurring tasks named. §8b used to ask the reviewer to do that arithmetic over thirty rows; a script gets it right every time and the `LOAD` judgement is worthless if the number under it is wrong. Tasks with no usable `Estimated_Minutes` are counted separately, so a small total is not mistaken for a light month when it is really an incomplete one.
+4. **Context rows — the same garden's tasks in the other eleven months**, with their windows and cooldowns but no instructions, explicitly not under review. Some collisions cannot be seen from one month's rows: the six-month gap between a lawn weedkiller and overseeding needs both windows in front of you. Same device as the timing packet's context section.
+5. **Full collection membership** for every collection targeted that month, asterisked outside the garden — where a `WRONG-MEMBER` fault usually hides.
+6. **The decision block specification** (§7e).
+
+Deliberately absent: the month coverage grid and the retired list. Both answer "what is missing", which is the editorial review's question, not this one.
+
+#### Verdicts, and what may be changed
+
+`CONTRADICTION`, `ORDERING`, `EXCLUSION`, `DUPLICATION`, `LOAD`, `WRONG-MEMBER` — the `Type` column of the output table, used unchanged as the block's verdict vocabulary. There is no `OK`: the output is a list of conflicts, not a per-task verdict table.
+
+`Field` may be `Instruction`, `Target_Asset_ID`, `Task_Name`, `Valid_Months`, `Estimated_Minutes`, `Retired` or `NONE` — six of the ten, wider than the timing review's two and narrower than editorial's full set. The reasoning is what each finding type actually resolves to: contradictions, ordering and exclusions all become a sentence added to an instruction; duplication becomes a retirement, a retarget or a rename; wrong-member becomes a retarget or a `NONE` finding proposing a collection split; load becomes a moved window or a corrected minutes value. **`Frequency_Days` and the three weather columns are withheld on purpose.** A weather gate cannot change what collides, and the cooldown belongs to the timing programme — an interaction reviewer who concludes a task recurs too often records a `NONE` finding and hands it across, which is the mirror of the timing programme handing instruction problems to editorial.
+
+#### How a finding about three tasks fits a block with one `Task_ID`
+
+A finding here names a *set* of tasks colliding, and the six-column block is unchanged all the same. By the time a conflict reaches the block it has already been resolved into cells, because the prompt requires the resolution to name which row to change and what sentence to add or remove. **One conflict therefore becomes one row per cell, and every row of one conflict carries the same `Finding` text** — that shared text is what groups them again in `Review_Log`, which is why the log now records the finding on applied rows and not only on noted ones.
+
+The one shape that genuinely has no single cell — six lawn tasks all opening on the same morning — is a `NONE` finding, and **a `NONE` row may name several tasks in its `Task_ID` cell**, separated by a plus sign: `TASK_0231 + TASK_0417`. The applier recognises `NONE` before it tries to look the id up, so the text passes straight through into the log. Doing the same on a row that *does* change a cell is refused, loudly and by name.
+
+#### Stamping, and where progress lives
+
+Applying stamps `I` and today's date into column O on exactly the rows that were in the packet, and the run itself is recorded in `Review_Log` — which is what fills in the grid on `Interaction_Gardens` (§2). Use **Interaction review → Mark a run as reviewed** for a run you have read through with nothing to apply.
+
+Note that `Review_Passes` gained no columns for this programme, and that is the design confirming itself: its unit is not a pass, so pass-shaped progress would be meaningless for it.
 
 ### 7d. The `Coverage_Grid` tab
 
@@ -798,11 +892,33 @@ The review returns prose findings plus a **decision block** — a semicolon-sepa
 
 **This does not weaken the "apply nothing automatically" rule.** Nothing reaches `Master_Task_Matrix` that you have not ticked, one row at a time. A dry run shows every before-and-after first. And the applier is stricter than a human transcriber, because it enforces the authoring rules in §5 at the moment of writing — which nothing else in this workflow does, since the audit can only inspect what is already in the sheet.
 
+**Since v2.9 one applier serves every review programme, and since v2.10 there are three of them.** It takes a *mode*, and a mode is a short list of things that differ: which decisions tab to read, which marker column to stamp and with which letter, which fields a row may change, and how to perform the stamp. Everything else — staging, validation, the same-cell guard, the retired-row guard, orphan simulation, the log — lives once and is identical for all three. Three copies of this logic is how a rule ends up enforced in two programmes and quietly not in the third. That the interaction review needed nothing added to the applier is the clearest evidence the refactor was the right shape.
+
+(The verdict vocabularies below are declared by each programme's *prompt*, not enforced by the applier: a wrong verdict is recorded as typed and changes nothing, because refusing a row over a label would cost more than it saves.)
+
+What differs, in practice:
+
+| | Editorial review (§7b) | Timing review (§7g) | Interaction review (§7c) |
+|---|---|---|---|
+| Unit | one declared pass | a filter across the matrix | one garden, one month |
+| Reads | `Review_Decisions` | `Timing_Decisions` | `Interaction_Decisions` |
+| Stamps | column M, letter `E` | column N, letter `T` | column O, letter `I` |
+| May change | any of the ten authoring fields | `Valid_Months` and `Frequency_Days` only | `Instruction`, `Target_Asset_ID`, `Task_Name`, `Valid_Months`, `Estimated_Minutes`, `Retired` |
+| Verdicts | WRONG, RISKY, TIMING, UNSAFE, CHEMICAL, UNCLEAR, DUPLICATE, MISSING | EARLY, LATE, SEQUENCE, CONTRADICTS | CONTRADICTION, ORDERING, EXCLUSION, DUPLICATION, LOAD, WRONG-MEMBER |
+| Stamps which rows | every live task reaching the pass | only the rows that were in the packet | only the rows that were in the packet |
+| Progress lives on | `Review_Passes` columns C–G | `Review_Passes` columns H–K | `Interaction_Gardens` columns D onwards |
+
+**A narrow field set is the point of a mode, not a limitation of it.** A timing review that notices something about instruction wording is out of its lane, and the applier refuses the row rather than letting it drift into an editorial rewrite; an interaction review that wants a different cooldown is equally out of its lane, and hands that to the timing programme. What either should do instead is record the observation as a `NONE` finding, which lands in `Review_Log` and passes it to the programme that *is* allowed to change that column. The refusal names the allowed fields, so the message tells you what to do rather than only what you cannot.
+
+**The three programmes cannot tread on each other.** Each reads its own decisions tab, writes its own packet tab, and stamps its own column, so building one programme's packet mid-pass cannot discard decisions you have ticked but not applied in another. `Review_Log` is shared but carries a `Mode` column (I) naming which programme wrote each row; a blank means editorial, which is simply correct for every row written before the column existed. That column is load-bearing in two places: it is what stops a timing or interaction `NONE` finding — "these six tasks all open on the same day, this needs a decision" — being picked up by the editorial *authoring* prompt (§7f) as a missing job to go and write, and it is what lets the interaction run grid count only its own runs.
+
 #### The decision block
 
 Six columns: `Task_ID`, `Finding`, `Verdict`, `Field`, `New_Value`, `Reason`.
 
-`Field` is the single column to change — one of `Task_Name`, `Target_Asset_ID`, `Instruction`, `Valid_Months`, `Frequency_Days`, `Suppress_If_Raining`, `Suppress_If_Temp_Below`, `Requires_Wind_Above`, `Estimated_Minutes`, `Retired` — or `NONE` where the finding needs a decision from you rather than a cell change. `Task_ID` is `NEW` for a job that does not exist yet.
+`Field` is the single column to change — one of `Task_Name`, `Target_Asset_ID`, `Instruction`, `Valid_Months`, `Frequency_Days`, `Suppress_If_Raining`, `Suppress_If_Temp_Below`, `Requires_Wind_Above`, `Estimated_Minutes`, `Retired` — or `NONE` where the finding needs a decision from you rather than a cell change. A mode may narrow that list; see the table above. `Task_ID` is `NEW` for a job that does not exist yet.
+
+**One row per cell, always** — which is also how a finding naming several tasks fits a block with one `Task_ID` slot. A conflict that needs a sentence adding to three instructions is three rows sharing one `Finding` text, and that shared text is the grouping key when the log is read back. Where a finding has no single cell at all, `Field` is `NONE` and the `Task_ID` may name every task involved, plus-separated (§7c).
 
 `New_Value` is the complete new value: for `Instruction`, the whole rewritten instruction; for `Retired`, the withdrawal reason; for a weather column, a number or the word `BLANK` to clear it.
 
@@ -839,7 +955,7 @@ Two kinds of change alter *who* receives a task rather than what it says, and bo
 
 #### Afterwards
 
-Applying stamps `E` and today's date into column M for every live task reaching the pass (§2). A task retired by the same run is not stamped, since there is nothing to review about a tombstone.
+Applying stamps the mode's own marker column and today's date — `E` in column M for every live task reaching the pass, `T` in column N or `I` in column O for exactly the rows that were in the packet (§2). A task retired by the same run is not stamped, since there is nothing to review about a tombstone. The derived status tabs are then rebuilt, and since v2.10 that happens *after* the log is written rather than before: both read the log to find out when a pass or run last ran, and refreshing them first wrote the previous run's date and left it there until the next audit.
 
 `Review_Log` is appended to and never cleared. It is the permanent record of every change the review programme has made, and the only place a *before* value survives. `Review_Decisions`, by contrast, is cleared each time a new packet is built — so anything you want to keep must be either applied, or written down somewhere else (§7f).
 
@@ -895,6 +1011,54 @@ The applier changes cells and never writes new tasks. A `MISSING` finding — or
 
 **A NOTED finding that is neither filled nor written down disappears the next time you build a packet**, because `Review_Decisions` is cleared. The log keeps it, but a log is a record, not a to-do list. So if you are not filling it now, record it in `CHANGELOG.md` under known gaps and deferred work, where the earlier deferred lists already live. A gap that is written down is a decision; a gap that only exists in a log is an accident waiting to be repeated by the next review, which will find it again and report it again.
 
+### 7g. The timing review — does the window open when the job can be done?
+
+Added in v2.9. A second, deliberately narrow review programme asking one question of every long-cooldown task: **does its `Valid_Months` window open in a month the job can reliably be done in a UK garden, or does it open a month or more before that, when the job is merely conceivable?**
+
+#### Why it is worth a programme of its own
+
+Because of what the app does with a task the user cannot yet act on. A task appears on the daily list on the first day of the first month in its window and every day after that until acted on, and the only two things a user can do are complete it or hide it. There is no defer and no snooze. On a 365-day cooldown, **the first day of the window is effectively when the job gets done or lost**: live with daily noise for a month, tick it off to clear the list and silently lose the job for a year, or hide it and lose it until you remember to go and unhide it. An early window on an annual task does not cost a month. It costs the season.
+
+The worked example is `TASK_0012`, autumn overseeding, once widened from `9,10` to `8,9,10` on the sound reasoning that late August has warm soil and autumn rain. That is a conditional — *when the rains have come* — encoded as though it were unconditional. It fired on 1 August in a drought, and following it would have meant hand-watering a whole lawn daily through the hottest part of the year. It was reverted. **Every finding this programme looks for has that shape:** a precondition the app has no field for — soil moisture, whether growth has started, whether the frost has come, whether a previous step in a sequence has been done — written into the instruction and then ignored by the window.
+
+#### The unit is a filter, not a pass
+
+Every live, non-retired task with `Frequency_Days` of **180 or more**. Below that a wrong first firing self-corrects within weeks; above it, it costs a season.
+
+That set can be sliced two ways, and both matter:
+
+- **By declared review pass** — the same passes the editorial programme uses, and gathered by the same routine, so a task reaching a pass through a collection its blueprints belong to is included exactly as it would be for an editorial review.
+- **Everything** — every qualifying task in the workbook at once.
+
+**Do not skip the whole-workbook run.** The findings worth most in the first pass were all cross-pass patterns, and a pass-shaped review would have found the individual rows and missed every one of them: sixteen "prune immediately after flowering" tasks whose windows opened in the month the plant is still in flower, six Chelsea chop tasks all opening three weeks before the job is due, an autumn lawn chain of six ordered steps all arriving on 1 September, and two opposite jobs — "lift after the first frost" and "lift before the first frost" — sharing one `10,11` window.
+
+#### The packet
+
+**Garden Data → Timing review → Build review packet.** Pick a slice and the script assembles it, shows it with a copy button, writes a durable copy to `Timing_Packet` and lays out `Timing_Decisions`.
+
+It contains the prompt, then the rows under review with their full instructions and all three weather columns, then two sections that exist because of what the first hand-run pass had to go looking for:
+
+- **Context rows — other live tasks sharing a target, explicitly *not* under review.** Usually short-cooldown tasks that never met the frequency threshold. An instruction reading "wait until you have mown it twice" cannot be judged without the mowing task's own months and cooldown in front of you, and a reviewer without them either guesses or goes hunting through the workbook. The prompt tells the reviewer to use them for context and keep them out of the findings table.
+- **Full collection membership**, asterisked outside the slice, exactly as in the editorial packet. This is where a fault that depends on *which* members a collection carries hides: `TASK_0010`'s "do this last, after top dressing" breaks only for the lawns that sit in `GROUP_GRASS_LAWN` but not `GROUP_LAWN_RENOVATION`, and that is invisible without both memberships side by side.
+
+The month coverage grid is deliberately absent — it answers "what is missing", which is not this pass's question.
+
+#### Verdicts, and what may be changed
+
+`EARLY`, `LATE`, `SEQUENCE`, `CONTRADICTS`, `OK`. Its own vocabulary rather than the editorial set, because collapsing all of this into editorial's single `TIMING` verdict would throw away the distinction between "opens too early" and "the stated order is impossible", which is most of what makes the log worth reading a year later.
+
+The block is the same six columns as §7e, and the applier is the same one in timing mode — so `Field` may only be `Valid_Months`, `Frequency_Days` or `NONE`.
+
+`SEQUENCE` deserves a note, because it covers two shapes. One is the chain: several tasks whose instructions state an order that their windows make impossible, which is usually a `NONE` finding since no single cell fixes six tasks opening on the same morning. The other is a cooldown outlasting the gap between a task's own two declared windows, so only one of them can ever fire for anyone who actually does the job — that one *is* a single cell, and it is the same fault §9 describes under `Frequency_Days`.
+
+#### Stamping, and when it is done
+
+Applying stamps `T` and today's date into column N, on **exactly the rows that were in the packet** — not everything the slice reaches. A timing sweep of a pass may have covered a third of its live tasks, and stamping the rest would claim a review that never happened. Use **Timing review → Mark a slice as reviewed** for a slice you have read through and want to record with no changes to apply.
+
+Progress shows in columns H to K of `Review_Passes`, counted against qualifying rows only, so a pass whose tasks are all short-cooldown reads as *no qualifying tasks* rather than as never started.
+
+**When to run it:** as its own programme, independent of the editorial one. It is worth a run after any large content injection, and worth re-running the affected slice whenever a batch of windows is edited.
+
 ---
 
 ## 8. The review prompts
@@ -924,93 +1088,43 @@ For the record, what it asks the reviewer to check: horticultural accuracy (with
 
 ### 8b. Interaction review prompt
 
-Still assembled and pasted by hand — the unit of this pass is a garden rather than a declared review pass, so the packet builder does not apply.
+**No longer reproduced here. It lives in `interactionComposePrompt_` in `InteractionReview.gs`,** and is emitted with the run's data already assembled into it by **Garden Data → Interaction review → Build review packet** (§7c). Same reasoning as §8a and §8c: one copy, assembled together with its data, so it cannot be pasted around a stale garden or the wrong month.
 
-```
-Act as an expert UK horticulturist. You are reviewing how a set of individually
-plausible gardening tasks behave WHEN THEY ARRIVE TOGETHER.
+This section carried the full prompt as pasteable text until v2.10, because the pass was assembled by hand and there was nowhere else for it to live. There is now, so it has moved — and the copy that moved is better than the one that was here, because the script can fill in things the hand-assembled version asked the reviewer to work out.
 
-Do not review the tasks one at a time for correctness — that is done elsewhere.
-Assume each task is broadly right in isolation. Your job is what happens when a
-real person opens the app in one month and sees all of them at once.
+To read it, build a packet and look at the top of the `Interaction_Packet` tab, or open the function in the Apps Script editor.
 
-THE GARDEN:
-[paste the blueprint list: Suggested_Name | Default_Asset_ID_Prefix]
+For the record, what it asks for. Six assessments: **contradictions** (with the bed-task-versus-plant-task case called out, because those are authored by different passes that never see each other), **ordering** (the lawn programme is the worked example, and the test is whether every task in a sequence actually *says* where it sits), **mutual exclusion** (checked in both directions, since a one-sided warning is how two rows drift apart later), **duplication**, **load**, and **the awkward members**. It outputs a conflicts table — `Tasks involved | Type | What goes wrong | Recommended resolution` — then a month summary, then `COULD NOT VERIFY`, then one line for anything serious noticed outside its scope.
 
-THE MONTH: [e.g. October]
+**Two things about it are worth keeping if you edit the function.** First, "Tasks involved" is plural, and the prompt says so explicitly: a finding here names a *set* of tasks colliding, and a reviewer writing a single id in that column has probably found a single-row fault that belongs to the editorial review. Second, the resolution must name which row to change and what sentence to add or remove. "The two tasks should be reconciled" is not a resolution, and a pass that returns general principles produces nothing that can be ticked and applied.
 
-EVERY LIVE TASK THAT COULD FIRE THIS MONTH FOR THIS GARDEN:
-[paste rows: Task_ID | Target_Asset_ID | Task_Name | Instruction | Valid_Months |
- Frequency_Days | Estimated_Minutes]
+The arithmetic the old prompt asked for — add up `Estimated_Minutes`, allowing for anything that recurs within the month — is now done by the script before the reviewer sees it (§7c). The prompt asks them to judge the number instead of computing it.
 
-CONTEXT:
-- The app shows these tasks without any ordering. There is no dependency system.
-  The only way one task can tell the user it must follow another is in its own
-  instruction text.
-- A task reappears after its Frequency_Days cooldown, so a low number means it
-  recurs within the month.
-- The user is a novice and will do what the cards say, in whatever order they
-  appear.
+### 8c. Timing review prompt
 
-ASSESS:
+**Not reproduced here either. It lives in `timingComposePrompt_` in `TimingReview.gs`,** and is emitted with the slice's data already assembled into it by **Garden Data → Timing review → Build review packet** (§7g). Same reasoning as §8a: one copy, assembled together with its data, so it cannot be pasted around a stale slice.
 
-1. CONTRADICTIONS. Do any two tasks tell the user to do opposite things? (A real
-   bug: an autumn bed clear-up saying to cut back herbaceous plants in October,
-   while three other tasks correctly said to leave echinacea, penstemon and
-   eryngium standing over winter.) Contradictions between a BED task and a PLANT
-   task are the ones most easily missed, because they are authored separately.
+To read it, build a packet and look at the top of the `Timing_Packet` tab, or open the function in the Apps Script editor.
 
-2. ORDERING. Do any of these need doing in a particular sequence to work? (The
-   lawn programme is the worked example: moss treatment, then scarify, then
-   aerate, then overseed, then top dress, then feed. Done in the wrong order,
-   several of them undo each other.) For each sequence you find, check whether
-   every task in it actually SAYS where it sits. A sequence that is only correct
-   if the user happens to guess the order is a defect.
+For the record, what it asks for and — as importantly — what it forbids. It asks one question, about the month a window *opens*. It rules out of scope: diagnostic tasks (firing early costs nothing when the user only has to look), the closing month unless the late month is actively harmful, the cooldown value itself unless the frequency is what makes the early window harmful, and anything about instruction wording except where it bears on timing. It names the signal worth hunting — an instruction that contradicts its own window — and tells the reviewer that where the two disagree the instruction is usually right and the window is usually the error. It ends with `THE SHORTLIST` (of everything flagged, which would actually cost a user a season), `PATTERNS` (is there a systematic cause, which is worth more than the individual rows because it says where else to look), `COULD NOT VERIFY`, and a single line for anything serious noticed outside its scope.
 
-3. MUTUAL EXCLUSION. Does any task rule out another within its stated window? (A
-   real bug: a lawn weedkiller whose window overlapped both overseeding tasks,
-   when the weedkiller must not be used within six months of sowing.) Check that
-   the warning exists in BOTH rows, not just one.
-
-4. DUPLICATION. Do two tasks amount to the same job reaching the user twice by
-   different routes — typically one specific task and one collection task?
-
-5. LOAD. Add up the Estimated_Minutes, allowing for anything that recurs within
-   the month. Is this a plausible amount of gardening for one month? A month that
-   demands two full days from a novice with a small garden will simply be ignored,
-   which is worse than a month that asks for less.
-
-6. THE AWKWARD MEMBERS. For each item in this garden, ask whether any task here is
-   wrong for THAT specific item even though it is right for the others it reaches.
-
-OUTPUT:
-
-CONFLICTS — most serious first:
-
-Tasks involved | Type | What goes wrong | Recommended resolution
-
-Type is one of: CONTRADICTION, ORDERING, EXCLUSION, DUPLICATION, LOAD, WRONG-MEMBER
-
-Recommended resolution should say WHICH row to change and WHAT sentence to add or
-remove — not a general principle.
-
-Then:
-
-MONTH SUMMARY — total estimated time, the number of tasks, and your judgement of
-whether this month is realistic for a novice.
-
-Then:
-
-COULD NOT VERIFY — anything you could not judge from the material given, including
-any task whose interaction with something OUTSIDE this garden you suspect but
-cannot check.
-```
-
-Findings from this pass are applied by hand. The decision block and the applier (§7e) are built around the editorial review's shape and the `Review_Decisions` tab is cleared when an editorial packet is built, so do not route interaction findings through it.
+**The out-of-scope list is doing real work and is worth keeping if you edit the function.** A reviewer handed 443 rows of gardening advice and one narrow question will drift into general critique unless told not to, and a timing pass that returns instruction rewrites is a timing pass that has stopped being cheap to run.
 
 ---
 
 ## 9. Notes on specific columns
+
+### `Valid_Months` — a set, not a range
+
+A comma-separated list of month numbers, authored in ascending order with no spaces: `3,4,5`. `1,12` means January and December only — it does **not** mean the whole year, and reading it as a range is the single easiest misreading of this column.
+
+**Matching treats the list as a set.** `select_tasks` tests the season with `v_month = any (t.valid_months)` (`db/03_functions.sql`) — a membership test over a Postgres integer array — and the `task_valid_months_shape` constraint (`db/01_schema.sql`) checks only that the array is non-empty, has no nulls, and holds values in 1–12. **Nothing at runtime has any notion of a first month, a last month, or an order.**
+
+Three things follow, and they are worth holding together:
+
+- **Ascending order is an authoring convention with no runtime meaning.** A row written `12,1,2` fires in December, January and February, exactly as `1,2,12` would. Correcting the order can never change behaviour. This was an open question for some time, and the timing review programme (§7g) was built with a hedge in it until it was settled by reading the function — so it is written down here rather than left to be rediscovered.
+- **The convention is still worth enforcing**, which is why the audit flags a non-ascending row (§7a) and the review applier refuses to write one. A workbook that follows its own rules is one where a surprising value means something.
+- **"The window opens in March" is a statement about the calendar, not the data.** A task listing 3 and 4 first becomes visible on 1 March because March comes round first, not because 3 is typed first. The distinction matters when judging a row that declares two separate windows in a year: `10,11,3,4` has an autumn window and a spring one, and whether both are reachable is a question about the *cooldown*, not the ordering. See `Frequency_Days` below.
 
 ### `Estimated_Minutes`
 
@@ -1020,7 +1134,7 @@ Since v2.0 this is a real database column with a constraint: it must be a positi
 
 The scale in §5 is calibrated against the values already in the matrix — 5 minutes for a look, 10 to 15 for one plant, 20 to 30 for a bed or a mow, 45 to 60 for a whole-bed job, 90 to 150 for a lawn renovation step, 240 for treating every fence panel. Keep new content on that scale so the numbers stay comparable.
 
-It **is** returned by the matching engine (`select_tasks`, and therefore by the `today` call the app makes), but is **not yet displayed** in the app. Surfacing it — a time badge on task cards, or a "quick jobs under 15 minutes" filter — is on the roadmap (`SPEC.md` §6). The interaction review (§7c) uses it now, which is the first thing that has.
+It **is** returned by the matching engine (`select_tasks`, and therefore by the `today` call the app makes), but is **not yet displayed** in the app. Surfacing it — a time badge on task cards, or a "quick jobs under 15 minutes" filter — is on the roadmap (`SPEC.md` §6). The interaction review (§7c) uses it now, which is the first thing that has, and since v2.10 it totals it by script for the month under review. That makes a wrong value cost more than one row: it distorts the load judgement for a whole garden-month, which is why the audit's complaint about a missing one is worth acting on.
 
 ### `Frequency_Days`
 
@@ -1064,15 +1178,19 @@ The mapping to `suppress_if_wind_above` is confirmed in `Publish.gs` §4 of the 
 
 The signature to look for is an instruction whose text implies the wind is the *reason* for the task rather than an obstacle to it. Any surviving row of that shape is inverted. It is worth grepping the whole matrix for a non-blank value in this column and reading each instruction against it, because nothing in the audit or the publish gate can tell the difference — both see a valid integer.
 
-**There is no way to make a task appear because of the weather**, and the two v1 rows that tried are the evidence for why one might be wanted. A `Reveal_If_Wind_Above` column alongside the existing suppression — deliberately restoring the v1 behaviour rather than inheriting it by accident — would make storm checks, wind-rock checks and "bring the pots in" viable. It is a schema change plus a `select_tasks` change, and is recorded on the roadmap in `SPEC.md` §6 rather than here.
+**There is no way to make a task appear because of the weather**, and the two v1 rows that tried are the evidence for why one might be wanted. A `Reveal_If_Wind_Above` column alongside the existing suppression — deliberately restoring the v1 behaviour rather than inheriting it by accident — would make storm checks, wind-rock checks and "bring the pots in" viable. It is a schema change plus a `select_tasks` change, and it is recorded under "considered, not scheduled" on the roadmap in `SPEC.md` §6 rather than here.
 
 ### `Groups` — a warning about silent failure
 
 A task targeting a collection tag that no blueprint carries will match nothing, with no error at runtime. If a collection-level task never appears, check the spelling of the tag in all three places — the `Groups` cell, the `Collections` tab, and the task's `Target_Asset_ID` — before assuming the matcher is broken. The audit catches all three cases; the app does not.
 
-### `Reviewed` — inert by design
+### `Reviewed`, `Timing_Reviewed`, `Interaction_Reviewed` — inert by design
 
-Column M is read by nothing except the audit's review-state summary and the review applier, which writes it. `Publish.gs` reads columns 0–11 by fixed index and never looks further, so whatever is in column M cannot reach the database or affect a user. That is deliberate: the review programme needed a bookmark, and the safest bookmark is one the pipeline cannot see.
+Columns **M**, **N** and **O** are read by nothing except the audit's review-state summaries and the three review appliers, which write them. `Publish.gs` reads columns 0–11 by fixed index and never looks further, so whatever is in any of the three cannot reach the database or affect a user. That is deliberate: the review programme needed a bookmark, and the safest bookmark is one the pipeline cannot see.
+
+All three are live as of v2.10. Column M holds `E` and, historically, the `I` entries written before the interaction review had a column of its own; column N holds `T`; column O holds `I` (§2).
+
+**Adding a fourth would be free, and that is the point.** The pipeline's fixed-index reads mean review bookkeeping can grow without any risk to publishing — which is what made the second review programme cheap to add, and made the third cheaper still.
 
 ### `Review_Pass` — bookkeeping, never behaviour
 
