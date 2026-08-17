@@ -34,6 +34,21 @@ const configLooksValid =
 const { createClient } = window.supabase;
 const sb = configLooksValid ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
+/* ---- Small helpers ------------------------------------------------------- */
+
+// Makes a user-supplied string safe to drop into innerHTML. A garden called
+// "Mum & Dad's" would otherwise render wrongly, and anything sharper than an
+// ampersand would render as markup.
+function escapeHtml(s) {
+  return String(s === null || s === undefined ? "" : s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+
 /* ---- App state ---------------------------------------------------------- */
 let currentGardenId = null;
 let routedUserId = undefined;      // guards against redundant re-routing on focus
@@ -250,6 +265,121 @@ async function handleSignOut() {
   try { await sb.auth.signOut(); } catch (e) { console.error("Sign out error:", e); }
   closeHiddenTasksModal();
   // onAuthStateChange (SIGNED_OUT) will route() us back to the sign-in screen.
+}
+
+
+/* ==========================================================================
+ *  DELETING YOUR ACCOUNT
+ *
+ *  Two taps: "Delete my account" in Settings opens a confirmation panel that
+ *  spells out what happens to each garden, and only the second button actually
+ *  does it. Immediate and irreversible — there is no grace period and no backup.
+ *
+ *  The database does all the thinking (delete_my_account, db/12). A garden you
+ *  tend alone is deleted outright; a garden you share is handed to whoever has
+ *  been a member longest, so their plants and history survive you leaving.
+ *
+ *  AFTERWARDS WE MUST CLEAR THE SESSION LOCALLY. The saved token stays
+ *  technically valid for up to an hour after the account is gone, and an app
+ *  holding one looks signed in but shows nothing — which reads as "broken",
+ *  not as "signed out". So: clear locally, then reload to a clean slate.
+ * ========================================================================== */
+
+function openDeleteAccountModal() {
+  document.getElementById("delete-error").textContent = "";
+  document.getElementById("delete-account-modal").classList.remove("hidden");
+  describeDeletionImpact();
+}
+
+function closeDeleteAccountModal() {
+  document.getElementById("delete-account-modal").classList.add("hidden");
+}
+
+/* Say what will actually happen, garden by garden, rather than a vague warning.
+ * Someone who tends a shared garden deserves to know it survives; someone with
+ * one garden of their own deserves to know it doesn't. */
+async function describeDeletionImpact() {
+  const box = document.getElementById("delete-impact");
+  box.innerHTML = '<div class="loading-spinner-box">Checking your gardens…</div>';
+
+  try {
+    const { data: { user } } = await sb.auth.getUser();
+    if (!user) throw new Error("no user");
+
+    // RLS lets you see the members of any garden you belong to, so this returns
+    // every garden you're in, with everyone else who's in it.
+    const { data, error } = await sb
+      .from("garden_member")
+      .select("garden_id, user_id, garden:garden_id ( name )");
+    if (error) throw error;
+
+    const gardens = {};
+    (data || []).forEach(row => {
+      if (!gardens[row.garden_id]) {
+        gardens[row.garden_id] = {
+          name: (row.garden && row.garden.name) ? row.garden.name : "Your garden",
+          others: 0
+        };
+      }
+      if (row.user_id !== user.id) gardens[row.garden_id].others++;
+    });
+
+    const list = Object.values(gardens);
+    if (list.length === 0) {
+      box.innerHTML = '<p class="delete-impact-line">Your account will be deleted. You have no gardens set up.</p>';
+      return;
+    }
+
+    box.innerHTML = list.map(g => {
+      const name = escapeHtml(g.name);
+      return g.others > 0
+        ? `<p class="delete-impact-line keep">
+             <strong>${name}</strong> is shared, so it stays. Whoever has tended it
+             longest becomes its owner, and everything in it is left exactly as it is.
+           </p>`
+        : `<p class="delete-impact-line gone">
+             <strong>${name}</strong> will be deleted — every plant, tool and structure
+             in it, and everything you've ever ticked off.
+           </p>`;
+    }).join("");
+
+  } catch (err) {
+    // Never let this block the deletion itself: fall back to honest generic wording.
+    console.error("Deletion impact check failed:", err);
+    box.innerHTML = `<p class="delete-impact-line gone">
+        Your account and any garden you tend on your own will be deleted, along with
+        everything in them. Gardens you share with someone else will stay with them.
+      </p>`;
+  }
+}
+
+async function handleConfirmDeleteAccount() {
+  const btn = document.getElementById("delete-confirm-btn");
+  const cancelBtn = document.getElementById("delete-cancel-btn");
+  const errEl = document.getElementById("delete-error");
+  const orig = btn.textContent;
+
+  errEl.textContent = "";
+  btn.disabled = true;
+  cancelBtn.disabled = true;
+  btn.textContent = "Deleting…";
+
+  try {
+    const { error } = await sb.rpc("delete_my_account");
+    if (error) throw error;
+
+    // Gone. Drop the saved session without asking the server (there is no
+    // account left to ask about), then reload into the sign-in screen.
+    try { await sb.auth.signOut({ scope: "local" }); } catch (e) { /* nothing left to sign out of */ }
+    window.location.reload();
+
+  } catch (err) {
+    console.error("Delete account failed:", err);
+    errEl.textContent = "Something went wrong and your account has NOT been deleted. Please try again.";
+    btn.disabled = false;
+    cancelBtn.disabled = false;
+    btn.textContent = orig;
+  }
 }
 
 
@@ -1357,6 +1487,20 @@ document.addEventListener("DOMContentLoaded", () => {
   if (hiddenTasksList) hiddenTasksList.addEventListener("click", handleRestoreTask);
   const signOutBtn = document.getElementById("signout-btn");
   if (signOutBtn) signOutBtn.addEventListener("click", handleSignOut);
+
+  // Account deletion: two taps, and the second one is the only one that acts.
+  const deleteAccountBtn = document.getElementById("delete-account-btn");
+  if (deleteAccountBtn) deleteAccountBtn.addEventListener("click", openDeleteAccountModal);
+  const closeDeleteBtn = document.getElementById("close-delete-modal");
+  if (closeDeleteBtn) closeDeleteBtn.addEventListener("click", closeDeleteAccountModal);
+  const deleteCancelBtn = document.getElementById("delete-cancel-btn");
+  if (deleteCancelBtn) deleteCancelBtn.addEventListener("click", closeDeleteAccountModal);
+  const deleteConfirmBtn = document.getElementById("delete-confirm-btn");
+  if (deleteConfirmBtn) deleteConfirmBtn.addEventListener("click", handleConfirmDeleteAccount);
+  const deleteModal = document.getElementById("delete-account-modal");
+  if (deleteModal) {
+    deleteModal.addEventListener("click", (e) => { if (e.target === deleteModal) closeDeleteAccountModal(); });
+  }
 
   // --- The gate: react to sign-in / sign-out / initial session ---
   sb.auth.onAuthStateChange((event, session) => {

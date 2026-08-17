@@ -9,6 +9,8 @@
 //    2. Looks up the garden's own coordinates + timezone SERVER-SIDE. The client
 //       never supplies coordinates, so this can't be used as a free weather proxy
 //       for arbitrary locations.
+//    2a. Records the open in garden_day (file 10), so we can tell whether people
+//       come back. Best-effort: see the note at that step.
 //    3. Gets current weather through a short-lived shared cache (weather_cache,
 //       keyed by rounded coordinates). On a cache miss it calls OpenWeather with
 //       the key held as a function secret — never in client code or the repo —
@@ -20,7 +22,9 @@
 //  GRACEFUL DEGRADATION: if anything about weather fails, the function still
 //  returns the tasks — just unfiltered by weather — and marks the weather
 //  "available: false" so the widget shows its unavailable state. This mirrors
-//  the 1.x failsafe exactly.
+//  the 1.x failsafe exactly. The activity record follows the same principle,
+//  more strictly still: it can fail in any way at all without the user ever
+//  knowing, because bookkeeping must never cost someone their daily view.
 //
 //  AUTH: JWT verification is left ON (the default). Only a signed-in caller
 //  reaches this handler. Do NOT deploy with --no-verify-jwt.
@@ -100,7 +104,8 @@ Deno.serve(async (req: Request) => {
     auth: { persistSession: false },
   });
 
-  // Client B — service role, used ONLY for the weather cache (users can't touch it).
+  // Client B — service role, used ONLY for the weather cache and the activity
+  // record (users can't touch either table).
   const adminClient = createClient(SUPABASE_URL, SERVICE_KEY, {
     auth: { persistSession: false },
   });
@@ -116,6 +121,24 @@ Deno.serve(async (req: Request) => {
 
   if (gardenErr) return json({ error: "Could not read garden" }, 500);
   if (!garden)   return json({ error: "You are not a member of this garden" }, 403);
+
+  // --- 2a. Record the open --------------------------------------------------
+  // Deliberately AFTER the membership check, so a probe at someone else's
+  // garden id can never register as activity — only a real member's real open
+  // is counted.
+  //
+  // Deliberately BEFORE the weather and task work, so an open still counts on a
+  // day when OpenWeather is down or select_tasks fails: the person opened the
+  // app, which is the thing being measured.
+  //
+  // Nothing here can reach the caller. supabase-js returns errors rather than
+  // throwing them, so both the returned error and any thrown network failure
+  // are swallowed. The day this table breaks, nobody misses a task.
+  try {
+    await adminClient.rpc("record_garden_day", { p_garden_id: gardenId });
+  } catch (_e) {
+    // Bookkeeping only. Never surfaced, never retried.
+  }
 
   // --- 3. Weather via the short-lived shared cache --------------------------
   const latR = roundTo(Number(garden.latitude),  COORD_ROUNDING_DP);

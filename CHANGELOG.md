@@ -8,6 +8,89 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **MINOR** (e.g. 1.0 → 1.1) — user-facing features, UI changes, and bug fixes within the current phase.
 
 ---
+## [2.11] — 2026-08-17
+
+### Groundwork: measuring return, somewhere for ownership to live, and the way out
+
+Three pieces of work that share one property and were done together for that reason: each is far cheaper to install now than to retrofit later, and one of them cannot be installed later at all.
+
+**The measurement is the urgent one.** `task_completion` records what a garden *did*. Nothing recorded that somebody *looked* — and an open that produces no completion is precisely the churn signal. That number cannot be reconstructed after the fact: every day without the table is a day of baseline that will never exist. Every conversation about growth, pricing and conversion had been running on guesswork, and it will keep doing so until there is a season of data. So it went in first, alone, before anything that depends on it.
+
+**Added — `garden_day` and `record_garden_day()` (`db/10_activity.sql`)**
+
+- One row per garden per day, with a count of opens. Two small columns and an integer: a garden opened every day of a year contributes 365 rows at roughly 100 bytes, so a thousand active gardens is about 20 MB a year against a 500 MB free-tier database. It adds nothing to Supabase's MAU billing, which counts users rather than rows, and nothing to egress — the write happens inside a call the app was already making.
+- **The day is resolved in the garden's own timezone**, not UTC and not the device's, by the function rather than by the Edge Function. The rule for “which day is it here?” already exists once in `select_tasks`; a second implementation in TypeScript would have been a second thing to keep correct.
+- **Not user-accessible at all.** RLS enabled with no policies and no grant, the same posture as `weather_cache`. A user can neither read it nor inflate their own count.
+- **The keep-alive cannot contaminate it**, because the scheduled ping calls `keepalive()` and never `today`.
+- Pruning old rows into a monthly summary is described in a comment and deliberately **not built**: at present it would solve a problem that does not exist.
+
+**Changed — the `today` Edge Function**
+
+One call added, and its position is the whole of the design. It sits **after** the membership check, so probing somebody else's garden id can never register as activity; and **before** the weather and task work, so an open still counts on a day when OpenWeather is down or matching fails — the person opened the app, which is the thing being measured. It is wrapped so that nothing it does can reach the caller. The day this table breaks, nobody misses a task.
+
+### Somewhere for ownership to live, installed switched off
+
+**Added — `product`, `pack_member`, `entitlement` (`db/11_entitlement.sql`)**
+
+Dormant by construction: no products exist, no entitlements exist, every blueprint is core, and the picker is unchanged. Nothing is for sale and no paywall exists. It is here because doing it later would mean one migration touching every blueprint, the picker and the add path simultaneously.
+
+- **Entitlement sits on the user, not the garden.** The deciding case was somebody who tends their own garden and also a relative's: garden-based entitlement would charge them twice for one purchase, and they are the most engaged kind of user there is.
+- **The governing principle, which everything else follows from: entitlement grants the right to *add*, not the right to *see*.** Once an item is in a garden it belongs to the garden — every member sees it, every member gets its tasks, and a lapsed subscription takes none of it away. Only *adding* a pack item asks whether the caller is entitled. This is why the check is a trigger on inserting a `garden_item` and appears nowhere in `select_tasks`: two people looking at the same garden can never see different plants, and no paywall can ever withhold care advice for something somebody is actually growing.
+- **A junction table, not a column on `blueprint`.** The first draft of the design had both, which would have been two representations of one fact and free to drift apart — the exact failure class the v2 migration existed to kill. The junction won: a plant may sit in several packs, owning any one of them is enough, and it is the same shape as `collection_member`. “Core” needs no migration, because a plant in no pack is free by silence.
+- **Retiring a pack releases its contents** rather than stranding them. A withdrawn product must never leave a plant permanently un-addable, because that would put its care advice out of reach too — the deliberate failure direction.
+- **A `feature` product with blueprint members is unrepresentable**, via a composite foreign key on `(product_id, product_kind)`, the same technique the task/garden-item key already uses.
+- **Nobody can grant themselves anything.** No insert, update or delete grant exists at any level; a user reads their own rows only, and a signed-out caller is refused the table one layer earlier still, holding no grant at all.
+- **Prices are not stored.** The App Store and Play Console are the merchants of record.
+
+**Added — a 200-item guard on `garden_item`, which is explicitly not a paywall**
+
+Inventory size was considered as a freemium lever and rejected on product grounds rather than commercial ones: a cap that binds pushes people to leave things *out* of their inventory to stay under it, and the app is then advising on a garden it can no longer see properly. That degrades the recommendations in order to sell a subscription. What remains is an abuse and performance guard — garden inventory is the one user-controlled input to `select_tasks`, which walks every active item on every open — set far above any real garden and invisible in the UI. Enforced in the database, because `app.js` and `config.js` are public files served with a published key and a browser-side check is decorative.
+
+### The way out
+
+**Added — `delete_my_account()` (`db/12_account_deletion.sql`) and the two-tap flow in the app**
+
+Required in-app by Apple and by UK GDPR regardless of any store. It turned out to be less about deleting a person than about not orphaning a garden.
+
+- **The schema had already made the hard part easy.** `task_completion` and `hidden_task` are keyed on the garden, not the user — there is no “who did this” column anywhere — so the ugliest question in account deletion never arises: nothing needs anonymising, because nothing was ever attributed. A departing partner cannot resurrect tasks the other had already done.
+- **The actual problem is the orphan.** Gardens do not cascade from users and must not, since one member leaving cannot be allowed to destroy the others' data. But delete the last member and the garden survives with nobody in it: unreachable, because every policy requires membership, yet still holding a location, an inventory, years of history and its activity record. Data that should have been erased, sitting there forever. Clearing that up is the substance of the file.
+- **Three outcomes.** Last member out: the garden goes, and cascades take everything below it. Sole owner leaving with others still there: the garden is **handed to the longest-standing remaining member**, ties broken by user id so the result is deterministic. Another owner remaining: nothing happens to the garden at all.
+- **Immediate, with no grace period** — for a reason specific to this project rather than a general preference. The deferred version needs something to run a month later and finish the job, and the only scheduler here is a twice-weekly GitHub Action that has already been observed to stop silently. A deletion that quietly never happens is worse than none.
+- **The function takes no arguments.** That is the security design: with nothing to pass there is nothing to tamper with, and it cannot be aimed at anybody else. One transaction, so nobody is ever half-deleted.
+- **A hard delete, never a soft one.** A soft delete keeps the row and leaves the email permanently taken; as built, signing up again with the same email works and produces a genuinely new person with an empty slate. Proven by test rather than assumed.
+- **The client clears the session locally afterwards.** The stored token stays technically valid for up to an hour after the account is gone, and an app holding one looks signed in but shows nothing — which reads as “broken”, not “signed out”.
+
+**Changed — `index.html`, `app.js`, `style.css`**
+
+The entry point is deliberately quiet: plain muted text, last in the settings panel, because it is irreversible and should never be what a thumb finds by accident. The confirmation panel reverses the weight — “Keep my account” is the prominent button and comes first. Confirming destruction should not be the easiest thing on the screen.
+
+Rather than a generic warning, the panel **names each garden and says what happens to it**: one you tend alone will be deleted with everything in it, one you share stays and passes to whoever has tended it longest. Somebody who shares a garden deserves to know it survives them leaving. If that lookup fails it falls back to honest generic wording rather than blocking the deletion. A small `escapeHtml` helper came with it, since a garden called “Mum & Dad's” would otherwise render wrongly.
+
+**Added — a foreign-key audit in the deletion file's readout**
+
+Deletion works only while every table referencing `auth.users` or `garden` declares `ON DELETE CASCADE`. A future table that forgets would make it fail with an obscure constraint error at the worst possible moment. The readout lists every such link and flags anything that would block it — worth re-running after any schema change.
+
+### Tests
+
+`db/11_entitlement_test.sql` (28 checks) and `db/12_account_deletion_test.sql` (36 checks), both throwaway-and-rollback in the house style. Between them they prove: dormant means dormant; a pack item is refused to a non-owner and allowed to an owner; an expired entitlement stops granting while an item already added stays put; retiring a pack releases it; an un-entitled co-member keeps full sight of a pack item in a shared garden; nobody can grant themselves anything; the ceiling binds at 200 and a removed item frees a slot; every deletion outcome including one user with two gardens in different situations at once; the email is freed for re-registration; and, the single check that matters most, that **no garden anywhere is left with nobody in it**.
+
+Two findings came out of writing them. The signed-out entitlement check originally expected an empty result and got a refusal instead — `anon` holds no grant at all, so the door does not open a layer earlier than the policy would have been consulted. That is stronger than what was tested for, so the test was corrected rather than the schema. And the deletion suite fails when run as one file while both halves pass in isolation; the halves are retained as `_FIRSTHALF` / `_SECONDHALF` diagnostics until that is understood. Every check passes, so the logic is verified; the fault is in the scaffolding.
+
+### Deliberate non-changes
+
+- **No paywall, no store billing, no receipt validation, no restore-purchases, no prices in the UI.** All cheap to add when there is something to sell, all expensive to maintain before then.
+- **`select_tasks` is untouched**, and that is the point: the matching engine never learns that entitlement exists.
+- **House plants were considered as the first content pack and rejected for now.** Indoors there is no weather, no frost and no wind suppression, and the seasonal logic barely applies — the engine's most distinctive inputs go dead. It is a separate product rather than a pack.
+- **Notifications will not be gated**, despite being the obvious candidate. They are the retention mechanism: a free user who is never nudged drifts away in November and never returns in April, and a churned free user converts at zero. Frost warnings are also time-critical advice, which is the wrong side of the line.
+
+### Known gaps recorded
+
+- The `garden_item` guard fires on **insert only**, so a future “restore a removed item” feature would bypass both the ceiling and the entitlement check. Noted at the point in the code where it would need fixing.
+- **Nobody is told when a garden changes hands.** There is no notification mechanism; the new owner discovers it by noticing they can manage members.
+- **Behavioural data is now recorded and the privacy notice must say so before public launch**, alongside ICO registration as a data controller.
+- **No automated backups on the free tier.** Curated content regenerates from the workbook; a user's garden does not.
+
+---
 ## [2.10] — 2026-08-06
 
 ### The third and last review programme, and an assumption worth testing

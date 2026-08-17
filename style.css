@@ -722,6 +722,64 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
 
 .signout-btn:active { transform: scale(0.99); }
 
+/* --- DELETE ACCOUNT (settings modal, then its own confirmation panel) ---
+   The entry point is deliberately quiet — plain text, muted, sitting last —
+   because it is irreversible and should never be the thing a thumb finds by
+   accident. All the weight lives on the confirmation panel instead. */
+.danger-row {
+  margin-top: 10px;
+  text-align: center;
+}
+
+.danger-text-btn {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.danger-text-btn:active { color: var(--accent-red); }
+
+.delete-lede {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent-red);
+  margin: 0 0 14px 0;
+  line-height: 1.4;
+}
+
+.delete-impact { display: flex; flex-direction: column; gap: 8px; }
+
+.delete-impact-line {
+  background: var(--bg-card);
+  border-radius: 10px;
+  border-left: 3px solid var(--border-color);
+  padding: 11px 12px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+/* Deleted vs kept, distinguishable at a glance without reading. */
+.delete-impact-line.gone { border-left-color: var(--accent-red); }
+.delete-impact-line.keep { border-left-color: var(--brand-green); }
+
+.delete-note {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.45;
+  margin: 14px 0 0 0;
+}
+
+/* "Keep my account" is the prominent one, and comes first. Confirming
+   destruction should never be the easiest thing on the screen. */
+.delete-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.delete-actions .primary-action-btn { margin: 0; }
+
 /* --- FULL-SCREEN AUTH / SETUP / SPLASH VIEWS --- */
 .fullscreen-view {
   width: 100%;

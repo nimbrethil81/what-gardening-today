@@ -248,6 +248,40 @@
         <div class="signout-row">
           <button id="signout-btn" class="signout-btn">Sign out</button>
         </div>
+        <!-- Deliberately understated and last: irreversible, so it should never
+             be the thing your thumb finds by accident. -->
+        <div class="danger-row">
+          <button id="delete-account-btn" class="text-btn danger-text-btn">Delete my account</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step two of two. Opens over the settings panel and says, in plain
+         words, what is about to happen to each garden. -->
+    <div id="delete-account-modal" class="modal-overlay hidden">
+      <div class="modal-panel">
+        <div class="modal-header">
+          <h2 class="section-title">Delete my account</h2>
+          <button id="close-delete-modal" class="modal-close-btn" aria-label="Close">✕</button>
+        </div>
+
+        <p class="delete-lede">This cannot be undone. There is no way to get any of it back.</p>
+
+        <div id="delete-impact" class="delete-impact">
+          <div class="loading-spinner-box">Checking your gardens…</div>
+        </div>
+
+        <p class="delete-note">
+          You can sign up again with the same email whenever you like — but you'd
+          be starting from scratch, with an empty garden.
+        </p>
+
+        <p id="delete-error" class="auth-error"></p>
+
+        <div class="delete-actions">
+          <button id="delete-cancel-btn" class="primary-action-btn">Keep my account</button>
+          <button id="delete-confirm-btn" class="signout-btn">Yes, delete everything</button>
+        </div>
       </div>
     </div>
 
