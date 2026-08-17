@@ -23,9 +23,31 @@ body {
   align-items: center;
 }
 
+/* WHY #app-root NEEDS AN EXPLICIT WIDTH, because getting this wrong is subtle
+   and it has already bitten once (2.12.1).
+
+   `body` is a column flex container with `align-items: center`. That centres its
+   children, but it also means they are NOT stretched across the cross axis —
+   each one is sized to fit its own contents unless it says otherwise. The
+   splash / sign-in / garden-form screens say otherwise: `.fullscreen-view` sets
+   `width: 100%`. `#app-root` never did, so it has always been shrink-to-fit.
+
+   It looked correct for a year purely by accident: the header contained the
+   fixed string "🌱 What Gardening Today?", which is wide enough to prop the
+   whole container open to full width. Replacing that title with the current
+   garden's name in 2.12 removed the prop, and the app silently began sizing
+   itself to whatever its widest content happened to be — narrower on My Garden
+   than on Today, and changing again when you switched to a garden with a longer
+   name. Content that must never be narrower than the screen should say so
+   itself, not rely on a caption to hold the door open. */
+#app-root {
+  width: 100%;
+}
+
 .app-container {
   width: 100%;
   max-width: 440px;
+  margin: 0 auto;   /* centres the column once the screen is wider than 440px */
 }
 
 /* --- GENERIC UTILITY --- */
