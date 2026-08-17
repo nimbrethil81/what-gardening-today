@@ -1,5 +1,5 @@
 /* ==========================================================================
- *  What Gardening Today? — frontend (v2.0)
+ *  What Gardening Today? — frontend (v2.1)
  *
  *  Talks to Supabase, not the old Apps Script. The daily view goes through the
  *  `today` Edge Function (weather + tasks in one call); everything else is a
@@ -7,8 +7,18 @@
  *
  *  On open, a small gate decides what to show:
  *    - not signed in            -> the sign-in screen
- *    - signed in, no garden yet -> the first-run garden setup screen
- *    - signed in, has a garden  -> the app (Today, My Garden), fed from Supabase
+ *    - signed in, no garden yet -> the garden form, in first-run mode
+ *    - signed in, has gardens   -> the app (Today, My Garden), showing the
+ *                                  garden you were last in
+ *
+ *  MULTIPLE GARDENS. A user may belong to any number of gardens (garden_member
+ *  has always been many-to-many); the header names the one you are looking at
+ *  and switches between them. Everything per-garden — tasks, weather,
+ *  inventory, hidden tasks, completion history — is keyed on garden_id in the
+ *  database, so switching is a matter of changing currentGardenId and
+ *  re-fetching. What it is NOT a matter of is leaving stale state on screen:
+ *  see resetPerGardenUiState(), and the in-flight guards in loadToday() and
+ *  loadInventory().
  * ========================================================================== */
 
 /* ---- Supabase connection -------------------------------------------------
@@ -38,7 +48,8 @@ const sb = configLooksValid ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : nu
 
 // Makes a user-supplied string safe to drop into innerHTML. A garden called
 // "Mum & Dad's" would otherwise render wrongly, and anything sharper than an
-// ampersand would render as markup.
+// ampersand would render as markup. Garden names are now shown in three places
+// (header, switcher, settings), so this matters more than it used to.
 function escapeHtml(s) {
   return String(s === null || s === undefined ? "" : s)
     .replace(/&/g, "&amp;")
@@ -48,9 +59,18 @@ function escapeHtml(s) {
     .replace(/'/g, "&#39;");
 }
 
+// "1 item" / "3 items" — used in the delete confirmation, where saying
+// "1 items" would undercut the seriousness of the sentence it sits in.
+function plural(n, one, many) {
+  return n + " " + (n === 1 ? one : many);
+}
+
 
 /* ---- App state ---------------------------------------------------------- */
 let currentGardenId = null;
+let currentUserId = null;
+let gardens = [];                  // [{id, name, latitude, longitude, timezone,
+                                   //   created_at, role, otherMembers}] oldest first
 let routedUserId = undefined;      // guards against redundant re-routing on focus
 let pendingSigninEmail = null;
 
@@ -60,8 +80,11 @@ let pendingSigninEmail = null;
 //   {Category, Suggested_Name, blueprint_id, browseGroup, browseSort, botanical}
 // browseGroup is null for anything the workbook has not assigned a heading to;
 // those are shown under "Other" at the bottom rather than being hidden.
+// The catalogue is GLOBAL and entitlement is per USER, so it survives a garden
+// switch untouched and is only ever loaded once.
 let globalDictionary = [];
 let userInventory = [];            // {item_id, friendly_name, category, blueprint_name}
+let inventoryLoadedFor = null;     // which garden userInventory actually describes
 let selectedCategoryRef = null;
 let selectedSubItemObj = null;
 
@@ -70,9 +93,20 @@ let selectedSubItemObj = null;
 const UNGROUPED_SORT = 32000;
 const UNGROUPED_LABEL = "Other";
 
-// Location captured on the setup screen
+// Location captured on the garden form
 let setupLat = null;
 let setupLon = null;
+
+// Which job the garden form is doing: "first-run" | "add" | "edit"
+let gardenFormMode = "first-run";
+let editingGardenId = null;
+
+// Which way out of a garden the confirmation panel is asking about
+let gardenDangerMode = "delete";   // "delete" | "leave"
+
+// Set while recovering from a garden the server says we can no longer see, so
+// a persistent 403 cannot spin route() and loadToday() against each other.
+let missingGardenRecovery = false;
 
 // Display order for inventory category groups (mirrors the picker tiles)
 const CATEGORY_ORDER = [
@@ -84,8 +118,118 @@ const CATEGORY_ORDER = [
 const HIDE_REVEAL_WIDTH = 76; // px — must match .task-hide-action's width in style.css
 let currentlyRevealedWrapper = null;
 let dragState = null;
-let undoToastTimeout = null;
+let toastTimeout = null;
 let undoToastTaskId = null;
+
+
+/* ==========================================================================
+ *  WHICH GARDEN OPENS BY DEFAULT
+ *
+ *  The one you were last in. That is the whole rule, and it matches the way
+ *  the feature is actually used: you are mostly in your own garden and
+ *  occasionally in somebody else's, so the app should stay where you left it
+ *  rather than making you re-navigate every morning.
+ *
+ *  Kept on the device, KEYED BY USER ID, so two people sharing a tablet don't
+ *  inherit each other's last garden. Every read is validated against the
+ *  gardens you can actually see — a remembered id may point at a garden that
+ *  has since been deleted, or one you were removed from, or a leftover from a
+ *  different account — and anything unrecognised falls back silently to your
+ *  oldest garden. This must never produce an error: it is a convenience, and a
+ *  convenience that can break the app is not one.
+ *
+ *  Every access is wrapped, because localStorage throws rather than returning
+ *  null in some private-browsing modes. If storage is unavailable you simply
+ *  always get your oldest garden, and everything else works.
+ * ========================================================================== */
+
+const LAST_GARDEN_KEY = "wgt.lastGarden";
+
+function readLastGardenMap() {
+  try {
+    const raw = window.localStorage.getItem(LAST_GARDEN_KEY);
+    const map = raw ? JSON.parse(raw) : null;
+    return (map && typeof map === "object") ? map : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function readLastGardenId(userId) {
+  if (!userId) return null;
+  return readLastGardenMap()[userId] || null;
+}
+
+function writeLastGardenId(userId, gardenId) {
+  if (!userId || !gardenId) return;
+  try {
+    const map = readLastGardenMap();
+    map[userId] = gardenId;
+    window.localStorage.setItem(LAST_GARDEN_KEY, JSON.stringify(map));
+  } catch (e) {
+    /* storage blocked — you'll get your oldest garden instead. Not an error. */
+  }
+}
+
+function forgetLastGardenId(userId) {
+  if (!userId) return;
+  try {
+    const map = readLastGardenMap();
+    delete map[userId];
+    window.localStorage.setItem(LAST_GARDEN_KEY, JSON.stringify(map));
+  } catch (e) { /* nothing to forget */ }
+}
+
+
+/* ==========================================================================
+ *  THE GARDENS YOU BELONG TO
+ *
+ *  Two reads rather than one join, deliberately. `garden` gives the gardens
+ *  themselves in a stable order (oldest first — alphabetical would silently
+ *  reshuffle the switcher every time you renamed something). `garden_member`
+ *  gives your role in each, AND who else is in them, which is what decides
+ *  whether "Delete this garden" is offered, refused, or replaced by "Leave".
+ *  RLS returns only gardens you are a member of, from both.
+ * ========================================================================== */
+
+async function loadGardens() {
+  const [gardenRes, memberRes] = await Promise.all([
+    sb.from("garden")
+      .select("id, name, latitude, longitude, timezone, created_at")
+      .order("created_at", { ascending: true }),
+    sb.from("garden_member").select("garden_id, user_id, role")
+  ]);
+
+  if (gardenRes.error) throw gardenRes.error;
+  if (memberRes.error) throw memberRes.error;
+
+  const membership = {};
+  (memberRes.data || []).forEach(row => {
+    if (!membership[row.garden_id]) membership[row.garden_id] = { role: null, others: 0 };
+    if (row.user_id === currentUserId) membership[row.garden_id].role = row.role;
+    else membership[row.garden_id].others += 1;
+  });
+
+  gardens = (gardenRes.data || []).map(g => {
+    const m = membership[g.id] || {};
+    return {
+      id: g.id,
+      name: g.name,
+      latitude: g.latitude,
+      longitude: g.longitude,
+      timezone: g.timezone,
+      created_at: g.created_at,
+      role: m.role || "member",
+      otherMembers: m.others || 0
+    };
+  });
+
+  return gardens;
+}
+
+function currentGarden() {
+  return gardens.filter(g => g.id === currentGardenId)[0] || null;
+}
 
 
 /* ==========================================================================
@@ -107,28 +251,48 @@ async function route() {
   const { data: { session } } = await sb.auth.getSession();
   if (!session) {
     currentGardenId = null;
+    currentUserId = null;
+    gardens = [];
+    closeAllModals();
     showSigninDefault();
     showView("signin");
     return;
   }
 
-  try {
-    const { data, error } = await sb.from("garden").select("id, name").limit(1);
-    if (error) throw error;
+  currentUserId = session.user.id;
 
-    if (!data || data.length === 0) {
-      showView("setup");
+  try {
+    await loadGardens();
+
+    // Zero gardens is a real, handled state — it is where every new user
+    // starts, and where you land after deleting your last one. No special case.
+    if (gardens.length === 0) {
+      currentGardenId = null;
+      showGardenForm("first-run");
       return;
     }
 
-    currentGardenId = data[0].id;
+    // The remembered garden if it still exists and is still yours; the oldest
+    // otherwise. NB the old code took .limit(1) with no ORDER BY, which was
+    // fine with one garden and non-deterministic the moment there were two.
+    const remembered = readLastGardenId(currentUserId);
+    const chosen = gardens.filter(g => g.id === remembered)[0] || gardens[0];
+
+    currentGardenId = chosen.id;
+    writeLastGardenId(currentUserId, currentGardenId);
+
+    renderGardenHeader();
     showView("app");
-    await loadCatalogue();
+
+    // Global and entitlement-free, so it is fetched once per session and
+    // survives every garden switch.
+    if (globalDictionary.length === 0) await loadCatalogue();
+
     loadToday();
     loadInventory();
   } catch (err) {
     console.error("Routing failed:", err);
-    setSplashMessage("Something went wrong loading your garden. Check your connection, then tap Retry.", true);
+    setSplashMessage("Something went wrong loading your gardens. Check your connection, then tap Retry.", true);
     showView("splash");
   }
 }
@@ -263,129 +427,251 @@ async function handleVerifyCode() {
 
 async function handleSignOut() {
   try { await sb.auth.signOut(); } catch (e) { console.error("Sign out error:", e); }
-  closeHiddenTasksModal();
+  closeAllModals();
   // onAuthStateChange (SIGNED_OUT) will route() us back to the sign-in screen.
 }
 
 
 /* ==========================================================================
- *  DELETING YOUR ACCOUNT
+ *  THE GARDEN SWITCHER
  *
- *  Two taps: "Delete my account" in Settings opens a confirmation panel that
- *  spells out what happens to each garden, and only the second button actually
- *  does it. Immediate and irreversible — there is no grace period and no backup.
+ *  The header shows the current garden's name and opens a bottom sheet listing
+ *  every garden you belong to. Two things make this safe rather than merely
+ *  compact:
  *
- *  The database does all the thinking (delete_my_account, db/12). A garden you
- *  tend alone is deleted outright; a garden you share is handed to whoever has
- *  been a member longest, so their plants and history survive you leaving.
+ *    - the name sits directly above the task list at all times, so "which
+ *      garden am I ticking things off in?" is answered without looking for it;
+ *    - switching visibly clears and reloads that list, which is the signal
+ *      that something changed.
  *
- *  AFTERWARDS WE MUST CLEAR THE SESSION LOCALLY. The saved token stays
- *  technically valid for up to an hour after the account is gone, and an app
- *  holding one looks signed in but shows nothing — which reads as "broken",
- *  not as "signed out". So: clear locally, then reload to a clean slate.
+ *  The header updates BEFORE the data arrives, from the list we already hold,
+ *  so the switch feels immediate rather than waiting on a round trip.
  * ========================================================================== */
 
-function openDeleteAccountModal() {
-  document.getElementById("delete-error").textContent = "";
-  document.getElementById("delete-account-modal").classList.remove("hidden");
-  describeDeletionImpact();
+function renderGardenHeader() {
+  const nameEl = document.getElementById("garden-switch-name");
+  const btn = document.getElementById("garden-switch-btn");
+  const g = currentGarden();
+  if (nameEl) nameEl.textContent = g ? g.name : "Your garden";
+  if (btn) {
+    btn.setAttribute("aria-label",
+      g ? ("Current garden: " + g.name + ". Switch garden") : "Switch garden");
+  }
 }
 
-function closeDeleteAccountModal() {
-  document.getElementById("delete-account-modal").classList.add("hidden");
+function openGardenModal() {
+  renderGardenList();
+  document.getElementById("garden-modal").classList.remove("hidden");
+  const btn = document.getElementById("garden-switch-btn");
+  if (btn) btn.setAttribute("aria-expanded", "true");
 }
 
-/* Say what will actually happen, garden by garden, rather than a vague warning.
- * Someone who tends a shared garden deserves to know it survives; someone with
- * one garden of their own deserves to know it doesn't. */
-async function describeDeletionImpact() {
-  const box = document.getElementById("delete-impact");
-  box.innerHTML = '<div class="loading-spinner-box">Checking your gardens…</div>';
+function closeGardenModal() {
+  document.getElementById("garden-modal").classList.add("hidden");
+  const btn = document.getElementById("garden-switch-btn");
+  if (btn) btn.setAttribute("aria-expanded", "false");
+}
 
-  try {
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) throw new Error("no user");
+function renderGardenList() {
+  const listEl = document.getElementById("garden-list");
+  listEl.innerHTML = "";
 
-    // RLS lets you see the members of any garden you belong to, so this returns
-    // every garden you're in, with everyone else who's in it.
-    const { data, error } = await sb
-      .from("garden_member")
-      .select("garden_id, user_id, garden:garden_id ( name )");
-    if (error) throw error;
+  if (gardens.length === 0) {
+    listEl.innerHTML = '<div class="loading-spinner-box">You haven\'t set up a garden yet.</div>';
+    return;
+  }
 
-    const gardens = {};
-    (data || []).forEach(row => {
-      if (!gardens[row.garden_id]) {
-        gardens[row.garden_id] = {
-          name: (row.garden && row.garden.name) ? row.garden.name : "Your garden",
-          others: 0
-        };
-      }
-      if (row.user_id !== user.id) gardens[row.garden_id].others++;
-    });
+  gardens.forEach(g => {
+    const isCurrent = g.id === currentGardenId;
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "garden-row" + (isCurrent ? " current" : "");
+    row.setAttribute("data-garden-id", g.id);
+    if (isCurrent) row.setAttribute("aria-current", "true");
 
-    const list = Object.values(gardens);
-    if (list.length === 0) {
-      box.innerHTML = '<p class="delete-impact-line">Your account will be deleted. You have no gardens set up.</p>';
-      return;
+    // Only shown when it's true, so the common case stays a plain list of names.
+    const shared = g.otherMembers > 0
+      ? '<span class="garden-row-meta">Shared with ' +
+        plural(g.otherMembers, "other person", "other people") + '</span>'
+      : "";
+
+    row.innerHTML =
+      '<span class="garden-row-text">' +
+        '<span class="garden-row-name">' + escapeHtml(g.name) + '</span>' +
+        shared +
+      '</span>' +
+      '<span class="garden-row-tick" aria-hidden="true">' + (isCurrent ? "✓" : "") + '</span>';
+
+    listEl.appendChild(row);
+  });
+}
+
+function handleGardenListClick(event) {
+  const row = event.target.closest(".garden-row");
+  if (!row) return;
+  switchGarden(row.getAttribute("data-garden-id"));
+}
+
+function switchGarden(gardenId) {
+  closeGardenModal();
+  if (!gardenId || gardenId === currentGardenId) return;
+  if (!gardens.some(g => g.id === gardenId)) return;
+
+  currentGardenId = gardenId;
+  writeLastGardenId(currentUserId, gardenId);
+
+  resetPerGardenUiState();
+  renderGardenHeader();
+
+  // Land on Today. Switching gardens is nearly always "what needs doing over
+  // there?", and it guarantees the task list visibly reloads — which is the
+  // thing that stops you ticking a job off in the wrong garden.
+  goToTab("today");   // switchTab re-runs loadToday for us
+  loadInventory();
+}
+
+/* Everything on screen that belonged to the garden we are leaving.
+ *
+ * The undo toast is the one that actually bites: hide a task in one garden,
+ * switch, then tap Undo, and without this the delete would be aimed at the NEW
+ * garden using the OLD garden's task id. The rest is tidiness, but tidiness
+ * that stops a half-swiped card or a primed "Remove?" button carrying over
+ * into a garden it was never meant for. */
+function resetPerGardenUiState() {
+  hideToast();
+
+  currentlyRevealedWrapper = null;
+  dragState = null;
+
+  userInventory = [];
+  inventoryLoadedFor = null;
+  const inventoryList = document.getElementById("inventory-list");
+  if (inventoryList) {
+    inventoryList.innerHTML = '<div class="loading-spinner-box">Growing garden...</div>';
+  }
+
+  selectedCategoryRef = null;
+  selectedSubItemObj = null;
+  document.querySelectorAll(".tile-btn").forEach(tile => tile.classList.remove("selected"));
+  const custom = document.getElementById("custom-name");
+  if (custom) custom.value = "";
+  clearPillSearch();
+}
+
+/* Called when the server tells us we can no longer see the garden we are in —
+ * because it was deleted, or we were removed from it, on another device. The
+ * generic "check your connection" message would be both wrong and confusing. */
+async function handleGardenGone() {
+  const lostName = (currentGarden() || {}).name || "That garden";
+
+  if (missingGardenRecovery) {
+    // We already re-routed once and landed on another dead end. Stop rather
+    // than bouncing between route() and loadToday() indefinitely.
+    const c = document.getElementById("task-container");
+    if (c) {
+      c.dataset.empty = "false";
+      c.innerHTML = '<div class="loading-spinner-box">Couldn\'t open that garden. Close the app and open it again.</div>';
     }
-
-    box.innerHTML = list.map(g => {
-      const name = escapeHtml(g.name);
-      return g.others > 0
-        ? `<p class="delete-impact-line keep">
-             <strong>${name}</strong> is shared, so it stays. Whoever has tended it
-             longest becomes its owner, and everything in it is left exactly as it is.
-           </p>`
-        : `<p class="delete-impact-line gone">
-             <strong>${name}</strong> will be deleted — every plant, tool and structure
-             in it, and everything you've ever ticked off.
-           </p>`;
-    }).join("");
-
-  } catch (err) {
-    // Never let this block the deletion itself: fall back to honest generic wording.
-    console.error("Deletion impact check failed:", err);
-    box.innerHTML = `<p class="delete-impact-line gone">
-        Your account and any garden you tend on your own will be deleted, along with
-        everything in them. Gardens you share with someone else will stay with them.
-      </p>`;
+    return;
   }
-}
+  missingGardenRecovery = true;
 
-async function handleConfirmDeleteAccount() {
-  const btn = document.getElementById("delete-confirm-btn");
-  const cancelBtn = document.getElementById("delete-cancel-btn");
-  const errEl = document.getElementById("delete-error");
-  const orig = btn.textContent;
+  forgetLastGardenId(currentUserId);
+  currentGardenId = null;
+  closeAllModals();
+  resetPerGardenUiState();
 
-  errEl.textContent = "";
-  btn.disabled = true;
-  cancelBtn.disabled = true;
-  btn.textContent = "Deleting…";
-
-  try {
-    const { error } = await sb.rpc("delete_my_account");
-    if (error) throw error;
-
-    // Gone. Drop the saved session without asking the server (there is no
-    // account left to ask about), then reload into the sign-in screen.
-    try { await sb.auth.signOut({ scope: "local" }); } catch (e) { /* nothing left to sign out of */ }
-    window.location.reload();
-
-  } catch (err) {
-    console.error("Delete account failed:", err);
-    errEl.textContent = "Something went wrong and your account has NOT been deleted. Please try again.";
-    btn.disabled = false;
-    cancelBtn.disabled = false;
-    btn.textContent = orig;
-  }
+  await route();   // another garden, or the setup screen if that was the last
+  showToast(lostName + " is no longer available.", false);
 }
 
 
 /* ==========================================================================
- *  FIRST-RUN GARDEN SETUP  (a new friend sees this; you skip it)
+ *  THE GARDEN FORM — first run, adding another, and editing
+ *
+ *  All three ask for the same two things, so they are the same screen. The
+ *  differences are the wording, whether Cancel exists (on the first run there
+ *  is nowhere to go back to), and whether Save creates or updates.
+ *
+ *  Editing covers a real defect as well as a new feature: before this, a
+ *  garden's location was set once at creation and could never be corrected, so
+ *  a mistyped postcode meant permanently wrong weather — and the weather is
+ *  what decides which tasks appear.
  * ========================================================================== */
+
+function showGardenForm(mode, garden) {
+  gardenFormMode = mode;
+  editingGardenId = (mode === "edit" && garden) ? garden.id : null;
+
+  const title = document.getElementById("setup-title");
+  const subtitle = document.getElementById("setup-subtitle");
+  const saveBtn = document.getElementById("setup-create-btn");
+  const cancelBtn = document.getElementById("setup-cancel-btn");
+  const nameInput = document.getElementById("setup-name");
+  const confirmEl = document.getElementById("setup-location-confirm");
+
+  document.getElementById("setup-error").textContent = "";
+  document.getElementById("setup-postcode").value = "";
+  saveBtn.disabled = true;
+  cancelBtn.disabled = false;
+
+  if (mode === "edit" && garden) {
+    title.textContent = "Edit garden";
+    subtitle.textContent = "Change what it's called, or put it in the right place.";
+    saveBtn.textContent = "Save changes";
+    nameInput.value = garden.name || "";
+    setupLat = (garden.latitude === null || garden.latitude === undefined) ? null : Number(garden.latitude);
+    setupLon = (garden.longitude === null || garden.longitude === undefined) ? null : Number(garden.longitude);
+    confirmEl.textContent = "📍 Using the location saved for this garden";
+    confirmEl.classList.remove("hidden");
+    describeSavedLocation(setupLat, setupLon);
+  } else if (mode === "add") {
+    title.textContent = "Add a garden";
+    subtitle.textContent = "A name and a location, and you can switch to it whenever you like.";
+    saveBtn.textContent = "Create garden";
+    nameInput.value = "";
+    setupLat = null; setupLon = null;
+    confirmEl.classList.add("hidden");
+  } else {
+    title.textContent = "Set up your garden";
+    subtitle.textContent = "Just a name and a location, and you're ready to go.";
+    saveBtn.textContent = "Create my garden";
+    nameInput.value = "";
+    setupLat = null; setupLon = null;
+    confirmEl.classList.add("hidden");
+  }
+
+  cancelBtn.classList.toggle("hidden", mode === "first-run");
+
+  validateSetup();
+  showView("setup");
+}
+
+/* In edit mode we know the coordinates but not what to call the place. Naming
+ * it is reassuring ("📍 Amersham, Buckinghamshire" beats a bare promise), but
+ * it is decoration: if the lookup fails, or the user has already moved on, the
+ * neutral wording stands and nothing is blocked. */
+async function describeSavedLocation(lat, lon) {
+  if (lat === null || lon === null) return;
+  const confirmEl = document.getElementById("setup-location-confirm");
+  try {
+    const res = await fetch("https://api.postcodes.io/postcodes?lon=" + lon + "&lat=" + lat);
+    if (!res.ok) return;
+    const j = await res.json();
+    const r = j.result && j.result[0];
+    if (!r) return;
+    const area = [r.admin_ward || r.parish, r.admin_district].filter(Boolean).join(", ");
+    if (area && gardenFormMode === "edit") confirmEl.textContent = "📍 " + area;
+  } catch (e) { /* the neutral wording stands */ }
+}
+
+function handleCancelGardenForm() {
+  if (gardenFormMode === "first-run") return;   // nowhere to go back to
+  gardenFormMode = "add";
+  editingGardenId = null;
+  renderGardenHeader();
+  showView("app");
+}
 
 async function handleFindPostcode() {
   const pc = document.getElementById("setup-postcode").value.trim();
@@ -469,9 +755,41 @@ function validateSetup() {
   const name = document.getElementById("setup-name").value.trim();
   const ready = !!name && setupLat !== null && setupLon !== null;
   document.getElementById("setup-create-btn").disabled = !ready;
+
+  // Duplicate names are allowed — the name lives on the garden, which can be
+  // shared, so uniqueness "per user" isn't a rule the database can hold. But
+  // two entries called "Home" in the switcher are genuinely hard to tell apart,
+  // so say so before it happens rather than after.
+  const note = document.getElementById("setup-name-note");
+  if (!note) return;
+  const clash = !!name && gardens.some(g =>
+    g.id !== editingGardenId &&
+    g.name && g.name.trim().toLowerCase() === name.toLowerCase());
+
+  if (clash) {
+    note.textContent = "You already have a garden called “" + name +
+      "”. That's allowed, but they'll look identical in the switcher.";
+    note.classList.remove("hidden");
+  } else {
+    note.textContent = "";
+    note.classList.add("hidden");
+  }
 }
 
-async function handleCreateGarden() {
+function gardenSaveErrorMessage(err) {
+  const code = err && err.code ? String(err.code) : "";
+  const msg = String((err && err.message) || "");
+
+  if (code === "54000" || msg.indexOf("maximum of") !== -1) {
+    return "You've reached the maximum number of gardens. Delete one you no longer tend, then try again.";
+  }
+  if (gardenFormMode === "edit") {
+    return "Couldn't save your changes. Check your connection and try again.";
+  }
+  return "Couldn't create your garden. Check your connection and try again.";
+}
+
+async function handleSaveGarden() {
   const name = document.getElementById("setup-name").value.trim();
   const errEl = document.getElementById("setup-error");
   errEl.textContent = "";
@@ -479,27 +797,343 @@ async function handleCreateGarden() {
   if (!name || setupLat === null || setupLon === null) return;
 
   const btn = document.getElementById("setup-create-btn");
+  const cancelBtn = document.getElementById("setup-cancel-btn");
   const orig = btn.textContent;
+  const mode = gardenFormMode;
   btn.disabled = true;
-  btn.textContent = "Creating…";
+  cancelBtn.disabled = true;
+  btn.textContent = mode === "edit" ? "Saving…" : "Creating…";
 
   try {
-    const { data, error } = await sb.rpc("create_garden", {
-      p_name: name,
-      p_latitude: setupLat,
-      p_longitude: setupLon
-    });
+    if (mode === "edit") {
+      const targetId = editingGardenId;
+      const { error } = await sb.from("garden")
+        .update({ name: name, latitude: setupLat, longitude: setupLon })
+        .eq("id", targetId);
+      if (error) throw error;
+
+      await loadGardens();
+
+      // Renaming is owner-only by policy, and a blocked UPDATE under RLS
+      // changes nothing SILENTLY rather than raising. So confirm it landed,
+      // instead of reporting a success we haven't actually seen.
+      const saved = gardens.filter(g => g.id === targetId)[0];
+      if (!saved || saved.name !== name) throw new Error("update affected no rows");
+
+      renderGardenHeader();
+      showView("app");
+      loadToday();      // the location may have moved: weather and filtering change
+
+    } else {
+      const { data, error } = await sb.rpc("create_garden", {
+        p_name: name,
+        p_latitude: setupLat,
+        p_longitude: setupLon
+      });
+      if (error) throw error;
+
+      await loadGardens();
+      currentGardenId = data;   // create_garden returns the new garden's id
+      writeLastGardenId(currentUserId, currentGardenId);
+
+      resetPerGardenUiState();
+      renderGardenHeader();
+      showView("app");
+
+      if (globalDictionary.length === 0) await loadCatalogue();
+      goToTab("today");   // switchTab runs loadToday for us
+      loadInventory();
+    }
+  } catch (err) {
+    console.error("Save garden failed:", err);
+    errEl.textContent = gardenSaveErrorMessage(err);
+  } finally {
+    btn.disabled = false;
+    cancelBtn.disabled = false;
+    btn.textContent = orig;
+    validateSetup();
+  }
+}
+
+
+/* ==========================================================================
+ *  LEAVING OR DELETING ONE GARDEN
+ *
+ *  Two different actions, worded differently on purpose:
+ *
+ *    Delete this garden — destroys it for everyone. Owner only, and the
+ *      database REFUSES it while anybody else is a member (db/13). Somebody
+ *      who merely tends a garden has no notification channel: they would open
+ *      the app one morning to find years of their own history gone, erased by
+ *      a tap they never saw. Remove them first, or leave it to them.
+ *
+ *    Leave this garden — removes only you. If you were the sole owner and
+ *      others remain, the garden is handed to the longest-standing member;
+ *      if you were the last one, leaving IS deleting, so the UI offers Delete
+ *      instead and never shows Leave.
+ *
+ *  Both act on the garden you are CURRENTLY IN, which is named at the top of
+ *  Settings — so it is not possible to destroy one you aren't looking at.
+ *  Neither is reversible, and leaving is unrecoverable by you: with no invite
+ *  flow, nobody can add you back from inside the app.
+ * ========================================================================== */
+
+function openGardenDangerModal(mode) {
+  const g = currentGarden();
+  if (!g) return;
+
+  gardenDangerMode = mode;
+
+  document.getElementById("garden-danger-error").textContent = "";
+  document.getElementById("garden-danger-title").textContent =
+    mode === "leave" ? "Leave this garden" : "Delete this garden";
+  document.getElementById("garden-danger-lede").textContent =
+    mode === "leave"
+      ? "You'll stop seeing this garden and its tasks. Nobody can add you back from inside the app, so treat it as permanent."
+      : "This cannot be undone. There is no way to get any of it back.";
+
+  const confirmBtn = document.getElementById("garden-danger-confirm-btn");
+  confirmBtn.textContent = mode === "leave" ? "Yes, leave it" : "Yes, delete everything";
+  confirmBtn.classList.remove("hidden");
+  confirmBtn.disabled = false;
+
+  const cancelBtn = document.getElementById("garden-danger-cancel-btn");
+  cancelBtn.textContent = mode === "leave" ? "Stay in this garden" : "Keep this garden";
+  cancelBtn.disabled = false;
+
+  document.getElementById("garden-danger-modal").classList.remove("hidden");
+  describeGardenImpact(g, mode);
+}
+
+function closeGardenDangerModal() {
+  document.getElementById("garden-danger-modal").classList.add("hidden");
+}
+
+/* Say what is actually in this garden, rather than warning in the abstract.
+ * "34 items and 212 completed jobs" is a number somebody can weigh; "this
+ * cannot be undone" on its own is not. Same principle as the account-deletion
+ * panel, which describes each garden by name. */
+async function describeGardenImpact(garden, mode) {
+  const box = document.getElementById("garden-danger-impact");
+  const confirmBtn = document.getElementById("garden-danger-confirm-btn");
+  const name = escapeHtml(garden.name);
+
+  box.innerHTML = '<div class="loading-spinner-box">Checking this garden…</div>';
+
+  // Refused by the database anyway — so say so BEFORE the tap, not after, and
+  // take the confirm button away rather than leaving it there to fail.
+  if (mode === "delete" && garden.otherMembers > 0) {
+    confirmBtn.classList.add("hidden");
+    box.innerHTML =
+      '<p class="delete-impact-line keep"><strong>' + name + '</strong> is shared with ' +
+      (garden.otherMembers === 1 ? "someone else" : "other people") +
+      ", so it can't be deleted — everything in it is theirs too. Remove them from " +
+      "the garden first, or leave it yourself and let them keep it.</p>";
+    return;
+  }
+
+  try {
+    const [items, done] = await Promise.all([
+      sb.from("garden_item").select("id", { count: "exact", head: true })
+        .eq("garden_id", garden.id).is("removed_at", null),
+      sb.from("task_completion").select("id", { count: "exact", head: true })
+        .eq("garden_id", garden.id)
+    ]);
+    if (items.error) throw items.error;
+    if (done.error) throw done.error;
+
+    const contents = "<strong>" + name + "</strong> holds " +
+      plural(items.count || 0, "item", "items") + " and " +
+      plural(done.count || 0, "completed job", "completed jobs") + ".";
+
+    box.innerHTML = mode === "leave"
+      ? '<p class="delete-impact-line keep">' + contents +
+        " It stays exactly as it is for everyone else — you simply stop seeing it.</p>"
+      : '<p class="delete-impact-line gone">' + contents +
+        " All of it goes: every plant, tool and structure, and everything you've ever ticked off.</p>";
+
+  } catch (err) {
+    // Never let the description block the action. Honest generic wording.
+    console.error("Garden impact check failed:", err);
+    box.innerHTML = mode === "leave"
+      ? '<p class="delete-impact-line keep">You\'ll stop seeing <strong>' + name +
+        "</strong>. It stays exactly as it is for everyone else.</p>"
+      : '<p class="delete-impact-line gone"><strong>' + name +
+        "</strong> will be deleted, along with every plant, tool and structure in it, " +
+        "and everything you've ever ticked off.</p>";
+  }
+}
+
+function gardenDangerErrorMessage(err, mode) {
+  const msg = String((err && err.message) || "");
+  if (msg.indexOf("shared with") !== -1) {
+    return "This garden is shared, so it can't be deleted. Remove the other members first, or leave it yourself.";
+  }
+  if (msg.indexOf("Only the owner") !== -1) {
+    return "Only the owner of a garden can delete it.";
+  }
+  if (msg.indexOf("not a member") !== -1) {
+    return "You're no longer a member of this garden.";
+  }
+  return mode === "leave"
+    ? "Something went wrong and you have NOT left this garden. Please try again."
+    : "Something went wrong and this garden has NOT been deleted. Please try again.";
+}
+
+async function handleConfirmGardenDanger() {
+  const btn = document.getElementById("garden-danger-confirm-btn");
+  const cancelBtn = document.getElementById("garden-danger-cancel-btn");
+  const errEl = document.getElementById("garden-danger-error");
+  const orig = btn.textContent;
+
+  const mode = gardenDangerMode;
+  const targetId = currentGardenId;
+  const targetName = (currentGarden() || {}).name || "That garden";
+  if (!targetId) return;
+
+  errEl.textContent = "";
+  btn.disabled = true;
+  cancelBtn.disabled = true;
+  btn.textContent = mode === "leave" ? "Leaving…" : "Deleting…";
+
+  try {
+    const { error } = mode === "leave"
+      ? await sb.rpc("leave_garden", { p_garden_id: targetId })
+      : await sb.rpc("delete_garden", { p_garden_id: targetId });
     if (error) throw error;
 
-    currentGardenId = data; // create_garden returns the new garden's id
-    showView("app");
-    await loadCatalogue();
-    loadToday();
-    loadInventory();
+    // Everything on screen belonged to a garden that is no longer ours.
+    forgetLastGardenId(currentUserId);
+    currentGardenId = null;
+    closeAllModals();
+    resetPerGardenUiState();
+
+    // route() picks the next garden, or the setup screen if that was the last
+    // one — which is a real state, not an error: it's where every user starts.
+    await route();
+    showToast(mode === "leave" ? "You've left " + targetName + "." : targetName + " deleted.", false);
+
   } catch (err) {
-    console.error("Create garden failed:", err);
-    errEl.textContent = "Couldn't create your garden. Check your connection and try again.";
+    console.error("Garden " + mode + " failed:", err);
+    errEl.textContent = gardenDangerErrorMessage(err, mode);
     btn.disabled = false;
+    cancelBtn.disabled = false;
+    btn.textContent = orig;
+  }
+}
+
+
+/* ==========================================================================
+ *  DELETING YOUR ACCOUNT
+ *
+ *  Two taps: "Delete my account" in Settings opens a confirmation panel that
+ *  spells out what happens to each garden, and only the second button actually
+ *  does it. Immediate and irreversible — there is no grace period and no backup.
+ *
+ *  The database does all the thinking (delete_my_account, db/12). A garden you
+ *  tend alone is deleted outright; a garden you share is handed to whoever has
+ *  been a member longest, so their plants and history survive you leaving.
+ *
+ *  AFTERWARDS WE MUST CLEAR THE SESSION LOCALLY. The saved token stays
+ *  technically valid for up to an hour after the account is gone, and an app
+ *  holding one looks signed in but shows nothing — which reads as "broken",
+ *  not as "signed out". So: clear locally, then reload to a clean slate.
+ * ========================================================================== */
+
+function openDeleteAccountModal() {
+  document.getElementById("delete-error").textContent = "";
+  document.getElementById("delete-account-modal").classList.remove("hidden");
+  describeDeletionImpact();
+}
+
+function closeDeleteAccountModal() {
+  document.getElementById("delete-account-modal").classList.add("hidden");
+}
+
+/* Say what will actually happen, garden by garden, rather than a vague warning.
+ * Someone who tends a shared garden deserves to know it survives; someone with
+ * one garden of their own deserves to know it doesn't. */
+async function describeDeletionImpact() {
+  const box = document.getElementById("delete-impact");
+  box.innerHTML = '<div class="loading-spinner-box">Checking your gardens…</div>';
+
+  try {
+    const { data: { user } } = await sb.auth.getUser();
+    if (!user) throw new Error("no user");
+
+    // RLS lets you see the members of any garden you belong to, so this returns
+    // every garden you're in, with everyone else who's in it.
+    const { data, error } = await sb
+      .from("garden_member")
+      .select("garden_id, user_id, garden:garden_id ( name )");
+    if (error) throw error;
+
+    const gardenImpact = {};
+    (data || []).forEach(row => {
+      if (!gardenImpact[row.garden_id]) {
+        gardenImpact[row.garden_id] = {
+          name: (row.garden && row.garden.name) ? row.garden.name : "Your garden",
+          others: 0
+        };
+      }
+      if (row.user_id !== user.id) gardenImpact[row.garden_id].others++;
+    });
+
+    const list = Object.values(gardenImpact);
+    if (list.length === 0) {
+      box.innerHTML = '<p class="delete-impact-line">Your account will be deleted. You have no gardens set up.</p>';
+      return;
+    }
+
+    box.innerHTML = list.map(g => {
+      const name = escapeHtml(g.name);
+      return g.others > 0
+        ? `<p class="delete-impact-line keep">
+             <strong>${name}</strong> is shared, so it stays. Whoever has tended it
+             longest becomes its owner, and everything in it is left exactly as it is.
+           </p>`
+        : `<p class="delete-impact-line gone">
+             <strong>${name}</strong> will be deleted — every plant, tool and structure
+             in it, and everything you've ever ticked off.
+           </p>`;
+    }).join("");
+
+  } catch (err) {
+    // Never let this block the deletion itself: fall back to honest generic wording.
+    console.error("Deletion impact check failed:", err);
+    box.innerHTML = `<p class="delete-impact-line gone">
+        Your account and any garden you tend on your own will be deleted, along with
+        everything in them. Gardens you share with someone else will stay with them.
+      </p>`;
+  }
+}
+
+async function handleConfirmDeleteAccount() {
+  const btn = document.getElementById("delete-confirm-btn");
+  const cancelBtn = document.getElementById("delete-cancel-btn");
+  const errEl = document.getElementById("delete-error");
+  const orig = btn.textContent;
+
+  errEl.textContent = "";
+  btn.disabled = true;
+  cancelBtn.disabled = true;
+  btn.textContent = "Deleting…";
+
+  try {
+    const { error } = await sb.rpc("delete_my_account");
+    if (error) throw error;
+
+    // Gone. Drop the saved session without asking the server (there is no
+    // account left to ask about), then reload into the sign-in screen.
+    forgetLastGardenId(currentUserId);
+    try { await sb.auth.signOut({ scope: "local" }); } catch (e) { /* nothing left to sign out of */ }
+    window.location.reload();
+
+  } catch (err) {
+    console.error("Delete account failed:", err);
+    errEl.textContent = "Something went wrong and your account has NOT been deleted. Please try again.";
+    btn.disabled = false;
+    cancelBtn.disabled = false;
     btn.textContent = orig;
   }
 }
@@ -520,6 +1154,13 @@ function switchTab(viewId, element) {
   if (viewId === "today") loadToday();
 }
 
+// Same thing, without needing the button element to hand — used after
+// switching or creating a garden.
+function goToTab(viewId) {
+  const btn = document.getElementById(viewId === "today" ? "nav-today" : "nav-profile");
+  if (btn) switchTab(viewId, btn);
+}
+
 
 /* ==========================================================================
  *  TODAY  (weather + tasks, via the `today` Edge Function)
@@ -528,19 +1169,38 @@ function switchTab(viewId, element) {
 async function loadToday() {
   if (!currentGardenId) return;
   const taskContainer = document.getElementById("task-container");
+  taskContainer.dataset.empty = "false";
   taskContainer.innerHTML = '<div class="loading-spinner-box">Gathering seasonal rules...</div>';
+
+  // Which garden this request is FOR. Switching is faster than a round trip, so
+  // a reply can arrive after the user has moved on; painting it over the new
+  // garden would show one garden's tasks under another garden's name.
+  const gardenAtRequest = currentGardenId;
 
   try {
     const { data, error } = await sb.functions.invoke("today", {
-      body: { garden_id: currentGardenId }
+      body: { garden_id: gardenAtRequest }
     });
-    if (error) throw error;
+
+    if (gardenAtRequest !== currentGardenId) return;   // stale: discard
+
+    if (error) {
+      // 403 is the `today` function saying "you are not a member of this
+      // garden" — it was deleted, or you were removed, on another device.
+      // "Check your connection" would be both wrong and baffling.
+      const status = (error.context && typeof error.context.status === "number")
+        ? error.context.status : null;
+      if (status === 403 || status === 404) { await handleGardenGone(); return; }
+      throw error;
+    }
 
     renderWeather(data.weather);
     renderTaskCards(data.tasks || []);
   } catch (err) {
+    if (gardenAtRequest !== currentGardenId) return;   // stale: discard
     console.error("Today failed:", err);
     renderWeather(null);
+    taskContainer.dataset.empty = "false";
     taskContainer.innerHTML = '<div class="loading-spinner-box">Couldn\'t reach your garden. Check your connection and try again.</div>';
   }
 }
@@ -567,15 +1227,34 @@ function renderWeather(weather) {
   }
 }
 
+/* "Nothing due" and "you haven't told us what's in it yet" are completely
+ * different messages, and a brand-new garden must never be congratulated for
+ * finishing work it has never had. The two can only be told apart once the
+ * inventory for THIS garden has actually arrived — which may be after the task
+ * list does, since the two load in parallel. So the message is rendered from
+ * whatever is known now, and loadInventory() calls this again when it knows
+ * more. */
+function renderTodayEmptyState() {
+  const c = document.getElementById("task-container");
+  if (!c) return;
+  c.dataset.empty = "true";
+  const inventoryKnown = inventoryLoadedFor === currentGardenId;
+  c.innerHTML = (inventoryKnown && userInventory.length === 0)
+    ? '<div class="loading-spinner-box">Nothing here yet — add your first plants, tools and structures in My Garden.</div>'
+    : '<div class="loading-spinner-box">✨ Your garden is up to date!</div>';
+}
+
 function renderTaskCards(tasks) {
   const taskContainer = document.getElementById("task-container");
   taskContainer.innerHTML = "";
   currentlyRevealedWrapper = null;
+  missingGardenRecovery = false;   // a successful load clears the recovery latch
 
   if (tasks.length === 0) {
-    taskContainer.innerHTML = `<div class="loading-spinner-box">✨ Your garden is up to date!</div>`;
+    renderTodayEmptyState();
     return;
   }
+  taskContainer.dataset.empty = "false";
 
   tasks.forEach(task => {
     const wrapper = document.createElement("div");
@@ -656,6 +1335,7 @@ function handleTaskCardExpand(event) {
 
 async function loadInventory() {
   if (!currentGardenId) return;
+  const gardenAtRequest = currentGardenId;
   const inventoryList = document.getElementById("inventory-list");
   inventoryList.innerHTML = '<div class="loading-spinner-box">Growing garden...</div>';
 
@@ -663,9 +1343,11 @@ async function loadInventory() {
     const { data, error } = await sb
       .from("garden_item")
       .select("id, friendly_name, legacy_category, blueprint:blueprint_id ( name )")
-      .eq("garden_id", currentGardenId)
+      .eq("garden_id", gardenAtRequest)
       .is("removed_at", null)
       .order("id");
+
+    if (gardenAtRequest !== currentGardenId) return;   // stale: discard
     if (error) throw error;
 
     userInventory = (data || []).map(r => ({
@@ -674,8 +1356,16 @@ async function loadInventory() {
       category: r.legacy_category || "Other",
       blueprint_name: (r.blueprint && r.blueprint.name) ? r.blueprint.name : ""
     }));
+    inventoryLoadedFor = gardenAtRequest;
     renderGroupedInventory();
+
+    // Today may already be showing its empty state, which could not choose the
+    // right wording until this arrived. Now it can.
+    const taskContainer = document.getElementById("task-container");
+    if (taskContainer && taskContainer.dataset.empty === "true") renderTodayEmptyState();
+
   } catch (err) {
+    if (gardenAtRequest !== currentGardenId) return;   // stale: discard
     console.error("Inventory failed:", err);
     inventoryList.innerHTML = '<div class="loading-spinner-box">Couldn\'t load your garden. Check your connection.</div>';
   }
@@ -914,7 +1604,7 @@ function renderSearchResults(rawQuery) {
   });
 
   if (matches.length === 0) {
-    setPillPlaceholder("Nothing matches \u201C" + rawQuery.trim() + "\u201D.");
+    setPillPlaceholder("Nothing matches “" + rawQuery.trim() + "”.");
     return;
   }
 
@@ -1027,7 +1717,10 @@ async function handleAddAsset() {
     loadToday();
   } catch (error) {
     console.error("Add item error:", error);
-    btn.textContent = "Couldn't add — try again";
+    // The per-garden item ceiling (db/11) is the one refusal worth naming: the
+    // generic "try again" would send someone round a loop that cannot succeed.
+    const full = String((error && error.message) || "").indexOf("maximum of") !== -1;
+    btn.textContent = full ? "This garden is full" : "Couldn't add — try again";
     btn.style.backgroundColor = "#f44336";
     setTimeout(() => {
       btn.textContent = "Add to My Garden";
@@ -1184,6 +1877,11 @@ function closeSwipeWrapper(wrapper) {
 
 /* ==========================================================================
  *  HIDE / UNHIDE A TASK
+ *
+ *  hidden_task is keyed on the GARDEN, so hiding "Mow the lawn" at your own
+ *  place leaves it showing at your mother-in-law's — which is right. It is also
+ *  why the undo toast has to be stood down when you switch: see
+ *  resetPerGardenUiState().
  * ========================================================================== */
 
 async function handleHideTaskClick(event) {
@@ -1194,6 +1892,7 @@ async function handleHideTaskClick(event) {
   const wrapper = hideBtn.closest(".task-card-wrapper");
   const nameEl = wrapper ? wrapper.querySelector(".task-info h3") : null;
   const taskName = nameEl ? nameEl.textContent : "Task";
+  const gardenAtHide = currentGardenId;
 
   if (currentlyRevealedWrapper === wrapper) currentlyRevealedWrapper = null;
   if (wrapper) wrapper.remove();
@@ -1202,7 +1901,7 @@ async function handleHideTaskClick(event) {
 
   try {
     const { error } = await sb.from("hidden_task").insert({
-      garden_id: currentGardenId,
+      garden_id: gardenAtHide,
       task_id: taskId
     });
     // 23505 = already hidden (unique key). That's a success, not a failure.
@@ -1212,34 +1911,46 @@ async function handleHideTaskClick(event) {
   }
 }
 
-function showUndoToast(taskId, taskName) {
-  if (undoToastTimeout) clearTimeout(undoToastTimeout);
+/* One banner, two jobs: the undoable "task hidden", and a plain notice with
+ * nothing to undo ("Mum's garden deleted"). The notice class hides the button.
+ * It lives outside #app-root in the markup, so a notice still shows on the
+ * setup screen — which is exactly where you land after deleting your last
+ * garden. */
+function showToast(message, withUndo) {
+  if (toastTimeout) { clearTimeout(toastTimeout); toastTimeout = null; }
 
-  undoToastTaskId = taskId;
   const toast = document.getElementById("undo-toast");
-  const message = document.getElementById("undo-toast-message");
-  message.textContent = `"${taskName}" hidden.`;
+  if (!toast) return;
+  document.getElementById("undo-toast-message").textContent = message;
+  toast.classList.toggle("notice", !withUndo);
   toast.classList.add("visible");
 
-  undoToastTimeout = setTimeout(() => {
-    toast.classList.remove("visible");
-    undoToastTimeout = null;
-    undoToastTaskId = null;
-  }, 5000);
+  toastTimeout = setTimeout(hideToast, withUndo ? 5000 : 4000);
+}
+
+function hideToast() {
+  if (toastTimeout) { clearTimeout(toastTimeout); toastTimeout = null; }
+  undoToastTaskId = null;
+  const toast = document.getElementById("undo-toast");
+  if (toast) toast.classList.remove("visible");
+}
+
+function showUndoToast(taskId, taskName) {
+  undoToastTaskId = taskId;
+  showToast('"' + taskName + '" hidden.', true);
 }
 
 async function handleUndoHide() {
   if (undoToastTaskId === null || undoToastTaskId === undefined) return;
   const taskId = undoToastTaskId;
+  const gardenAtUndo = currentGardenId;
 
-  if (undoToastTimeout) { clearTimeout(undoToastTimeout); undoToastTimeout = null; }
-  document.getElementById("undo-toast").classList.remove("visible");
-  undoToastTaskId = null;
+  hideToast();
 
   try {
     const { error } = await sb.from("hidden_task")
       .delete()
-      .eq("garden_id", currentGardenId)
+      .eq("garden_id", gardenAtUndo)
       .eq("task_id", taskId);
     if (error) throw error;
     loadToday(); // bring the restored task straight back
@@ -1250,28 +1961,63 @@ async function handleUndoHide() {
 
 
 /* ==========================================================================
- *  HIDDEN TASKS MANAGEMENT (settings gear icon)
+ *  SETTINGS  (gear icon)
+ *
+ *  Two groups, because it holds two different kinds of thing. Everything under
+ *  the garden's name applies to THAT garden only — including the hidden-task
+ *  list, which was always per-garden but never said so, and became genuinely
+ *  ambiguous the moment a second garden existed.
  * ========================================================================== */
 
-function openHiddenTasksModal() {
-  document.getElementById("hidden-tasks-modal").classList.remove("hidden");
+function openSettingsModal() {
+  const g = currentGarden();
+  const isOwner = !!(g && g.role === "owner");
+  const shared = !!(g && g.otherMembers > 0);
+
+  const nameEl = document.getElementById("settings-garden-name");
+  if (nameEl) nameEl.textContent = g ? g.name : "This garden";
+
+  // Rename and location are owner-only by policy (garden_update_owner), so
+  // don't offer what RLS would silently refuse.
+  const editBtn = document.getElementById("edit-garden-btn");
+  if (editBtn) editBtn.classList.toggle("hidden", !isOwner);
+
+  // Leaving only means something while there is somebody to leave it TO. As the
+  // last member, leaving IS deleting, so Delete is the honest word for it.
+  const leaveBtn = document.getElementById("leave-garden-btn");
+  if (leaveBtn) leaveBtn.classList.toggle("hidden", !(shared || !isOwner));
+
+  // Deleting destroys it for everyone: an owner's action only.
+  const deleteBtn = document.getElementById("delete-garden-btn");
+  if (deleteBtn) deleteBtn.classList.toggle("hidden", !isOwner);
+
+  document.getElementById("settings-modal").classList.remove("hidden");
   fetchHiddenTasks();
 }
 
-function closeHiddenTasksModal() {
-  document.getElementById("hidden-tasks-modal").classList.add("hidden");
+function closeSettingsModal() {
+  document.getElementById("settings-modal").classList.add("hidden");
+}
+
+function closeAllModals() {
+  closeSettingsModal();
+  closeGardenModal();
+  closeGardenDangerModal();
+  closeDeleteAccountModal();
 }
 
 async function fetchHiddenTasks() {
   const listEl = document.getElementById("hidden-tasks-list");
   listEl.innerHTML = '<div class="loading-spinner-box">Loading...</div>';
+  const gardenAtRequest = currentGardenId;
 
   try {
     const { data, error } = await sb
       .from("hidden_task")
       .select("task_id, hidden_at, task:task_id ( name, category:category_id ( name ) )")
-      .eq("garden_id", currentGardenId)
+      .eq("garden_id", gardenAtRequest)
       .order("hidden_at", { ascending: false });
+    if (gardenAtRequest !== currentGardenId) return;   // stale: discard
     if (error) throw error;
 
     const rows = (data || []).map(r => ({
@@ -1292,7 +2038,7 @@ function renderHiddenTasksList(hiddenTasks) {
   listEl.innerHTML = "";
 
   if (hiddenTasks.length === 0) {
-    listEl.innerHTML = '<div class="loading-spinner-box">You haven\'t hidden any tasks.</div>';
+    listEl.innerHTML = '<div class="loading-spinner-box">You haven\'t hidden any tasks in this garden.</div>';
     return;
   }
 
@@ -1332,7 +2078,7 @@ async function handleRestoreTask(event) {
 
     const listEl = document.getElementById("hidden-tasks-list");
     if (listEl.children.length === 0) {
-      listEl.innerHTML = '<div class="loading-spinner-box">You haven\'t hidden any tasks.</div>';
+      listEl.innerHTML = '<div class="loading-spinner-box">You haven\'t hidden any tasks in this garden.</div>';
     }
   } catch (error) {
     console.error("Restore task error:", error);
@@ -1428,13 +2174,15 @@ document.addEventListener("DOMContentLoaded", () => {
   const codeInput = document.getElementById("signin-code");
   if (codeInput) codeInput.addEventListener("keydown", e => { if (e.key === "Enter") handleVerifyCode(); });
 
-  // --- Garden setup screen ---
+  // --- Garden form (first run / add another / edit) ---
   const findBtn = document.getElementById("setup-find-btn");
   if (findBtn) findBtn.addEventListener("click", handleFindPostcode);
   const locateBtn = document.getElementById("setup-locate-btn");
   if (locateBtn) locateBtn.addEventListener("click", handleUseLocation);
   const createBtn = document.getElementById("setup-create-btn");
-  if (createBtn) createBtn.addEventListener("click", handleCreateGarden);
+  if (createBtn) createBtn.addEventListener("click", handleSaveGarden);
+  const cancelSetupBtn = document.getElementById("setup-cancel-btn");
+  if (cancelSetupBtn) cancelSetupBtn.addEventListener("click", handleCancelGardenForm);
   const setupName = document.getElementById("setup-name");
   if (setupName) setupName.addEventListener("input", validateSetup);
   const setupPostcode = document.getElementById("setup-postcode");
@@ -1443,6 +2191,22 @@ document.addEventListener("DOMContentLoaded", () => {
   // --- Splash retry ---
   const splashRetry = document.getElementById("splash-retry");
   if (splashRetry) splashRetry.addEventListener("click", route);
+
+  // --- Garden switcher ---
+  const gardenSwitchBtn = document.getElementById("garden-switch-btn");
+  if (gardenSwitchBtn) gardenSwitchBtn.addEventListener("click", openGardenModal);
+  const closeGardenBtn = document.getElementById("close-garden-modal");
+  if (closeGardenBtn) closeGardenBtn.addEventListener("click", closeGardenModal);
+  const gardenModal = document.getElementById("garden-modal");
+  if (gardenModal) {
+    gardenModal.addEventListener("click", (e) => { if (e.target === gardenModal) closeGardenModal(); });
+  }
+  const gardenList = document.getElementById("garden-list");
+  if (gardenList) gardenList.addEventListener("click", handleGardenListClick);
+  const addGardenBtn = document.getElementById("add-garden-btn");
+  if (addGardenBtn) {
+    addGardenBtn.addEventListener("click", () => { closeGardenModal(); showGardenForm("add"); });
+  }
 
   // --- Today view: completion, hide, swipe ---
   const taskContainer = document.getElementById("task-container");
@@ -1470,23 +2234,49 @@ document.addEventListener("DOMContentLoaded", () => {
   const pillSearchClear = document.getElementById("pill-search-clear");
   if (pillSearchClear) pillSearchClear.addEventListener("click", clearPillSearch);
 
-  // --- Undo toast ---
+  // --- Undo / notice toast ---
   const undoBtn = document.getElementById("undo-toast-btn");
   if (undoBtn) undoBtn.addEventListener("click", handleUndoHide);
 
   // --- Settings modal ---
   const settingsBtn = document.getElementById("settings-btn");
-  if (settingsBtn) settingsBtn.addEventListener("click", openHiddenTasksModal);
-  const closeModalBtn = document.getElementById("close-hidden-modal");
-  if (closeModalBtn) closeModalBtn.addEventListener("click", closeHiddenTasksModal);
-  const hiddenModal = document.getElementById("hidden-tasks-modal");
-  if (hiddenModal) {
-    hiddenModal.addEventListener("click", (e) => { if (e.target === hiddenModal) closeHiddenTasksModal(); });
+  if (settingsBtn) settingsBtn.addEventListener("click", openSettingsModal);
+  const closeSettingsBtn = document.getElementById("close-settings-modal");
+  if (closeSettingsBtn) closeSettingsBtn.addEventListener("click", closeSettingsModal);
+  const settingsModal = document.getElementById("settings-modal");
+  if (settingsModal) {
+    settingsModal.addEventListener("click", (e) => { if (e.target === settingsModal) closeSettingsModal(); });
   }
   const hiddenTasksList = document.getElementById("hidden-tasks-list");
   if (hiddenTasksList) hiddenTasksList.addEventListener("click", handleRestoreTask);
   const signOutBtn = document.getElementById("signout-btn");
   if (signOutBtn) signOutBtn.addEventListener("click", handleSignOut);
+
+  // --- This garden: rename / change location, leave, delete ---
+  const editGardenBtn = document.getElementById("edit-garden-btn");
+  if (editGardenBtn) {
+    editGardenBtn.addEventListener("click", () => {
+      const g = currentGarden();
+      if (!g) return;
+      closeSettingsModal();
+      showGardenForm("edit", g);
+    });
+  }
+  const leaveGardenBtn = document.getElementById("leave-garden-btn");
+  if (leaveGardenBtn) leaveGardenBtn.addEventListener("click", () => openGardenDangerModal("leave"));
+  const deleteGardenBtn = document.getElementById("delete-garden-btn");
+  if (deleteGardenBtn) deleteGardenBtn.addEventListener("click", () => openGardenDangerModal("delete"));
+
+  const closeGardenDangerBtn = document.getElementById("close-garden-danger-modal");
+  if (closeGardenDangerBtn) closeGardenDangerBtn.addEventListener("click", closeGardenDangerModal);
+  const gardenDangerCancelBtn = document.getElementById("garden-danger-cancel-btn");
+  if (gardenDangerCancelBtn) gardenDangerCancelBtn.addEventListener("click", closeGardenDangerModal);
+  const gardenDangerConfirmBtn = document.getElementById("garden-danger-confirm-btn");
+  if (gardenDangerConfirmBtn) gardenDangerConfirmBtn.addEventListener("click", handleConfirmGardenDanger);
+  const gardenDangerModal = document.getElementById("garden-danger-modal");
+  if (gardenDangerModal) {
+    gardenDangerModal.addEventListener("click", (e) => { if (e.target === gardenDangerModal) closeGardenDangerModal(); });
+  }
 
   // Account deletion: two taps, and the second one is the only one that acts.
   const deleteAccountBtn = document.getElementById("delete-account-btn");

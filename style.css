@@ -34,17 +34,47 @@ body {
 /* --- TYPOGRAPHY --- */
 h1, h2, h3 { margin: 0; font-weight: 700; }
 
-.main-app-title {
-  font-size: 24px;
-  text-align: center;
-  margin: 0;
-  color: var(--text-main);
+/* The header line used to be a static app title. It is now the name of the
+   garden you are looking at, and the control that switches between them — so
+   the switcher costs NO vertical space above the task list. min-width:0 plus
+   the truncation on .garden-switch-name is what lets a long garden name shrink
+   instead of pushing the gear off the edge. */
+.garden-switch-btn {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  flex: 1;
+  background: none;
+  border: none;
+  padding: 6px 4px;
+  margin: 0;
+  font-family: inherit;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-main);
+  cursor: pointer;
+  border-radius: 12px;
+  transition: transform 0.1s ease, background-color 0.15s ease;
+}
+
+.garden-switch-btn:active { transform: scale(0.98); background-color: rgba(0, 0, 0, 0.04); }
+
+.garden-switch-emoji { flex-shrink: 0; }
+
+.garden-switch-name {
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.garden-switch-chevron {
+  flex-shrink: 0;
+  font-size: 15px;
+  color: var(--text-muted);
+  line-height: 1;
 }
 
 /* --- SECTION HEADINGS (accent bar style) --- */
@@ -619,6 +649,10 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
   pointer-events: auto;
 }
 
+/* The same banner doubles as a plain notice ("Mum's garden deleted"), where
+   there is nothing to undo. */
+.undo-toast.notice .undo-toast-btn { display: none; }
+
 .undo-toast-btn {
   background: none;
   border: none;
@@ -670,6 +704,103 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
   cursor: pointer;
   padding: 4px 8px;
 }
+
+/* --- GARDEN SWITCHER SHEET (opened from the header) --- */
+.garden-switch-list { display: flex; flex-direction: column; gap: 8px; }
+
+.garden-row {
+  width: 100%;
+  background: var(--bg-card);
+  border: 1.5px solid transparent;
+  border-radius: 12px;
+  padding: 14px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);
+  transition: transform 0.1s ease, border-color 0.15s ease;
+  box-sizing: border-box;
+}
+
+.garden-row:active { transform: scale(0.99); }
+
+/* The one you're in, marked two ways — a tint and a tick — so it reads at a
+   glance and does not rely on colour alone. */
+.garden-row.current {
+  border-color: var(--brand-green);
+  background: var(--brand-light);
+}
+
+.garden-row-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+
+.garden-row-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-main);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.garden-row-meta { font-size: 11px; color: var(--text-muted); }
+
+.garden-row-tick {
+  flex-shrink: 0;
+  width: 20px;
+  text-align: center;
+  color: var(--brand-green);
+  font-weight: 700;
+}
+
+.garden-add-row {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-color);
+}
+
+.garden-add-row .secondary-action-btn { margin-top: 0; }
+
+/* --- SETTINGS GROUPS --- */
+/* Settings holds two different kinds of thing now: this garden, and the
+   account. Naming the garden is what makes "Hidden tasks" and "Delete this
+   garden" unambiguous — both were always per-garden, neither ever said so. */
+.settings-group-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-main);
+  margin: 4px 0 12px 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-group-title--account {
+  margin-top: 26px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border-color);
+}
+
+.settings-row-btn {
+  width: 100%;
+  background: var(--bg-card);
+  border: none;
+  border-radius: 12px;
+  padding: 14px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-main);
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);
+  transition: transform 0.1s ease;
+}
+
+.settings-row-btn:active { transform: scale(0.99); }
 
 .hidden-tasks-list { display: flex; flex-direction: column; gap: 8px; }
 
@@ -731,12 +862,22 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
   text-align: center;
 }
 
-.danger-text-btn {
+/* The garden group can show two of these (Leave / Delete). Stacked, not
+   side by side, so neither becomes a 50%-width target next to the other. */
+.danger-row .danger-text-btn + .danger-text-btn { margin-top: 0; }
+
+/* Scoped to .danger-row on purpose. These buttons also carry .text-btn, which
+   is declared LATER in this file and paints it accent-blue — so an unscoped
+   .danger-text-btn loses the cascade and "Delete my account" has in fact been
+   rendering as a bright blue call-to-action, which is the opposite of what the
+   comment above intends. One extra selector puts that right, for the account
+   entry and for the two garden entries that now sit beside it. */
+.danger-row .danger-text-btn {
   color: var(--text-muted);
   font-size: 13px;
 }
 
-.danger-text-btn:active { color: var(--accent-red); }
+.danger-row .danger-text-btn:active { color: var(--accent-red); }
 
 .delete-lede {
   font-size: 14px;
@@ -877,3 +1018,17 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
   text-align: center;
   margin: 14px 0 0;
 }
+
+/* A nudge, not a rule: you may legitimately have two gardens called "Home"
+   for a while, but you should be told before they land in the switcher
+   looking identical. */
+.setup-name-note {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.45;
+  margin: 8px 2px 0;
+}
+
+/* Cancel sits under the primary action and is deliberately unemphatic: on the
+   first run it is not shown at all, because there is nowhere to go back to. */
+#setup-cancel-btn { margin-top: 2px; }

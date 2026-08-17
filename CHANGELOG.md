@@ -8,6 +8,100 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **MINOR** (e.g. 1.0 → 1.1) — user-facing features, UI changes, and bug fixes within the current phase.
 
 ---
+## [2.12] — 2026-08-17
+
+### Multiple gardens per user
+
+One person, several gardens. The case that drove it is the ordinary one: somebody who tends their own garden and also a relative's, and wants to switch between them rather than choose.
+
+Most of this was already true and simply not offered. `garden_member` has been many-to-many since the v2 schema was drawn, every per-garden table keys on `garden_id`, `select_tasks` and `today` both take a garden id and verify membership themselves, and `create_garden` was written **permissive about a second garden on purpose** — `db/03_functions.sql` says so in a comment written a month before this feature existed. Reading, switching and creating therefore needed no database change at all.
+
+Two things were genuinely impossible rather than merely un-exposed, and they are the whole of the new SQL. **Deleting** a garden: `garden` is granted SELECT and UPDATE only, and `02_rls_test.sql` asserts "Alice cannot delete her garden" as a *passing* test. **Leaving** one: `garden_member`'s delete policy requires ownership, so an ordinary member could not remove their own row — exactly the person who would want to. The obvious fix for the second, letting anyone delete their own row, is the wrong one: it re-opens the orphan hole file 12 exists to close.
+
+**Added — the garden switcher**
+
+The header line used to say the name of the app you had just opened, which in an installed PWA is the one fact you already have. It now says **which garden you are looking at**, and tapping it opens the list.
+
+That placement was chosen over the alternatives for a specific reason: it costs **no vertical space**, so the task list stays exactly where it was and opening the app still puts today's jobs in front of you immediately. A row of chips under the header would have made switching a single tap, but at the price of a permanent band above the tasks, a list that doesn't survive five gardens, and a layout that visibly reshapes the day a second one appears. A third bottom-nav tab was rejected on semantics: the nav bar is for destinations, and switching gardens is not somewhere you go — it is a change of context that alters what both existing tabs show.
+
+The list itself is a bottom sheet reusing the modal the settings and delete-account panels already use — which were, it turned out, already bottom sheets. So the switcher introduces no new interaction to learn and almost no new CSS, and it lands under the thumb rather than at the top of the screen where it was opened from.
+
+- **The garden you were last in reopens**, remembered per user id on the device so two people sharing a tablet don't inherit each other's. Validated on every open against the gardens you can actually see, with a silent fall back to your oldest if the remembered one has gone. Never an error: it is a convenience, and a convenience that can break the app is not one. The app's first use of browser storage, and it degrades to "your oldest garden" if storage is blocked.
+- **Ordered oldest first.** Alphabetical would silently reshuffle the list every time something was renamed.
+- **The header updates before the data arrives**, from the list already held, so the switch feels immediate rather than waiting on a round trip. The task list visibly reloading underneath it is the signal that something changed — which is what stops a job being ticked off in the wrong garden.
+- Tappable even with one garden, because otherwise nobody would discover the feature exists and "Add another garden" would have nowhere to live.
+
+**Added — creating, renaming and relocating a garden**
+
+The first-run setup screen became one form doing three jobs — first run, adding another, and editing — because all three ask for the same two things, and three copies of the postcode lookup would be three things to keep correct. Cancel appears only when there is an app to go back to.
+
+**Editing covers a real defect as well as a new feature.** A garden's location was previously set once at creation and could never be corrected, so a mistyped postcode meant permanently wrong weather — and the weather is what decides which tasks appear. Renaming matters more than it used to for a different reason: with a switcher, the name *is* the navigation, and a list reading "Garden" and "Garden 2" is unusable.
+
+**Added — `leave_garden()` and `delete_garden()` (`db/13_gardens.sql`)**
+
+Both `SECURITY DEFINER` with a pinned empty `search_path`, in the house style. Neither takes a user argument, so neither can be aimed at anybody else.
+
+- **`leave_garden` applies exactly the rules `delete_my_account` already applies**, so the two paths out of a garden cannot disagree: last member out deletes the garden and everything below it; a departing sole owner hands it to the longest-standing remaining member, ties broken by user id; anybody else simply goes. It returns which of the three happened, because the three are genuinely different from the user's point of view.
+- **`delete_garden` is refused while anybody else is a member.** Somebody who merely tends a garden has no notification channel: they would open the app one morning to find years of their own history gone, erased by a tap they never saw. Remove them first, or leave it to them. This deliberately makes deleting a *garden* stricter than deleting an *account*, which hands shared gardens on rather than destroying them — both err in the same direction, which is never to destroy data on behalf of somebody who did not ask.
+- **Deleting your last garden is allowed**, and the function deliberately does not check for it. Zero gardens is already a real, handled state — it is where every new user starts, and where `route()` sends anybody with none. Refusing would have built a trap whose only exit was deleting the entire account, which is far more destructive than what was asked for.
+- **Deletion is hard, not soft**, matching file 12 and the position `10_activity.sql` states outright: deletion means deletion. The cascades take items, manual tasks, completions, hidden tasks and the activity record.
+
+**Changed — the `garden_member` delete policy, closing two states that were reachable today**
+
+The policy let an owner delete *any* row in their garden, including their own. Nothing in the UI did that, but `app.js` and `config.js` are public files served with a published key, so the Data API is reachable directly whatever the UI offers. Two bad end states followed: a garden with **nobody in it** — file 12's orphan, by a different route — and, worse, a garden with members and **no owner**, a state with no exit at all, because there is no update policy on `garden_member` and so nobody could ever be promoted.
+
+Two clauses make both unrepresentable, declaratively, where they can be read rather than inferred: you cannot remove *yourself* this way (that is `leave_garden`'s job, because leaving is the case that has to decide between deleting the garden and handing it over), and an owner row cannot be removed by this path at all. Removing an ordinary member — which is how a shared garden becomes deletable — still works exactly as `02_rls_test.sql` has always asserted.
+
+**Added — a ten-garden ceiling in `create_garden`**
+
+The same reasoning as the 200-item guard, and the same disclaimer: **not a paywall**. Nothing previously bounded the number of gardens, because nothing offered a second one. Counted over membership rather than ownership, so it cannot be walked around once sharing exists. Ten is far above any honest use — the case this was built for is two — and invisible until somebody is doing something absurd.
+
+**Changed — Settings, split into two groups**
+
+It now holds two different kinds of thing, and one of them was already ambiguous: **`hidden_task` is per garden**, so the flat "Hidden Tasks" list has always meant "hidden in *this* garden" without ever saying so. Naming the current garden as a section heading fixes that, and makes "Delete this garden" unambiguous at the same time. The account actions sit below it, separated. Which way out of a garden is offered depends on who else is in it: Leave appears only when there is somebody to leave it to, Delete only to an owner, and rename only to an owner because that is what the policy permits.
+
+The confirmation panel says what is actually in the garden — "Home holds 34 items and 212 completed jobs" — rather than warning in the abstract, following the precedent set by the account-deletion panel that describes each garden by name. When the garden is shared it says so *before* the tap and takes the confirm button away, rather than letting a refusal arrive as an error afterwards.
+
+### Fixed
+
+- **`route()` picked an arbitrary garden.** It read `.select("id, name").limit(1)` with no `ORDER BY` — correct-looking with one garden, non-deterministic with two, and free to return a different one on each open. A latent bug that a second garden detonates rather than a new one.
+- **The destructive buttons have been rendering as bright blue calls-to-action.** `.danger-text-btn` sets a muted grey, but those buttons also carry `.text-btn`, which is declared *later* in the stylesheet and paints them `--accent-blue`. Equal specificity, so the later rule won — and "Delete my account" has been styled as an invitation since 2.11, despite the comment directly above it saying it should never be what a thumb finds by accident. Scoping to `.danger-row .danger-text-btn` puts it right, for the account entry and the two garden entries now beside it.
+- **A brand-new garden was congratulated for work it had never had.** An empty Today showed "✨ Your garden is up to date!" — the no-tasks-due message — which for a garden with nothing in it is actively misleading. It now distinguishes the two, and can only do so because the empty state re-renders once the inventory for *that* garden arrives; the two calls run in parallel and either can land first.
+
+### Changed — cross-garden state, which is where the bugs would otherwise have been
+
+Switching is faster than a round trip, so a reply can arrive after the user has moved on. `loadToday`, `loadInventory` and `fetchHiddenTasks` now record which garden each request was *for* and discard anything stale, rather than painting one garden's tasks under another garden's name.
+
+Everything transient is stood down on a switch. The undo toast is the one that actually bites: hide a task, switch, then tap Undo, and the delete would have been aimed at the **new** garden using the **old** garden's task id. The half-swiped card, the primed "Remove?" button and the picker's selection go with it.
+
+A 403 from the daily call — the garden was deleted, or you were removed from it, on another device — is now caught specifically and re-routes with "that garden is no longer available", instead of the generic "check your connection", which would have been both wrong and baffling. The toast moved outside `#app-root` so that message still shows on the setup screen, which is exactly where you land after deleting your last garden.
+
+`sw.js` `CACHE_NAME` bumped `gardening-v9` → `gardening-v10`.
+
+### Tests
+
+`db/13_gardens_test.sql` — 64 checks, throwaway-and-rollback in the house style. It proves: a second garden is allowed and an eleventh refused; all three leave outcomes, including that the **longest-standing** member is the one promoted — and the fixture makes that member deliberately not the lowest user id, so a wrong tie-break would show up rather than pass by luck; that deleting a shared garden is refused **and refused without side effects**; that removing the member first and then deleting reaches the same end state; that deleting your last garden leaves you with none, which is a real state and not an error; that an owner cannot remove herself through the policy but can still remove an ordinary member; and the two invariants — no garden anywhere left with nobody in it, and none left with no owner.
+
+The SQL was **executed rather than reasoned about**. A local PostgreSQL 16 was stood up with a stub of the Supabase pieces the schema relies on (`auth.users`, `auth.uid()`, the three roles) and `db/01` through `db/13` loaded into it in order. 64/64 pass, with no regressions: `02` 49/49, `03` 26/26, `11` 28/28, `12` 36/36. One note for anyone repeating it — give the local `service_role` `BYPASSRLS` as Supabase does, or two publish-pipeline checks in `02` fail for reasons that have nothing to do with this change.
+
+The frontend was driven headlessly in Chromium against a stubbed Supabase client: 35 checks, all passing, zero uncaught errors. They cover the default garden with and without a memory, switching, persistence across a reload, the empty-garden wording, rename, the duplicate-name warning, cancel, creating, deleting, the 403 recovery path, and deleting the last garden.
+
+### Deliberate non-changes
+
+- **No invite flow, and no members list.** Sharing a garden with another *user* remains a separate feature; this one is about one person holding several gardens. Adding a member still requires their user id and there is no email lookup, so in practice you create both gardens yourself — which is exactly what the driving use case needs.
+- **"Leave this garden" was built anyway**, hidden unless somebody else is in the garden. It costs one button reusing the confirmation panel in a different mode, and it means Settings is not quietly wrong the moment a second member exists.
+- **`select_tasks` and the `today` function are untouched.** Both already took a garden id and verified membership themselves. Neither needed to learn that this feature happened.
+- **Garden timezone stays fixed at `Europe/London`** and is not editable, even though location now is. Moving a garden abroad needs more than a postcode box, and the timezone drives all the date arithmetic.
+- **Duplicate garden names are allowed**, with a warning on the form. The name lives on the garden, which can be shared, so "unique per user" is not a rule the database can hold.
+
+### Known gaps recorded
+
+- **A removed member is not told, and cannot be re-added from inside the app.** With no invite flow, removing somebody is effectively permanent; the confirmation says so.
+- **The switcher is a live read.** Offline it cannot list your other gardens, though the one you are in still works from cache.
+- **The last-used garden is per device, not per account.** Switching on your phone does not move your tablet. Storing it server-side would mean a write on every switch to save a tap.
+- **`escapeHtml` now carries more weight.** Garden names are user-typed and appear in the header, the switcher, the settings heading and two confirmation panels. `"Mum's garden"` is a test case in the frontend suite for that reason.
+
+---
 ## [2.11] — 2026-08-17
 
 ### Groundwork: measuring return, somewhere for ownership to live, and the way out
