@@ -8,6 +8,127 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **MINOR** (e.g. 1.0 → 1.1) — user-facing features, UI changes, and bug fixes within the current phase.
 
 ---
+## [2.13] — 2026-08-20
+
+### `Valid_Months` ordering, and a check that was wrong twice
+
+A content-pipeline release. Nothing in the app changes, no user sees anything different, and no published data changes meaning — but three things in the workbook's own rules were wrong, and two of them were wrong in the audit report, which is the worst place for a rule to be wrong because it is where you go to find out whether anything is.
+
+It began with about fifty **`Valid_Months` not ascending** warnings, and the question of whether they mattered at all.
+
+**Changed — the ordering convention is now SEASON ORDER, not ascending**
+
+They did not matter, in the sense that ordering has no runtime meaning — that was settled in [2.9] and is unchanged. But reading fifty of them showed the *rule* was wrong.
+
+Roughly forty of the flagged rows were a single continuous window that crosses the new year, written from the month it opens: `11,12,1,2`, `12,1,2`, `10,11,12,1,2,3`. That is not carelessness. It is a second convention, and a **more informative one than ascending**, because the order tells a reader — and, more to the point, tells the timing review — when the job starts. The ascending rule wanted those rewritten `1,2,11,12`, which reads as a January job. Following the audit's advice would have destroyed real information on forty rows and made the timing review worse on precisely the rows it exists to protect, since its whole question is about the month a window opens.
+
+So the convention changed to fit the data rather than the other way round:
+
+- Group the months into maximal runs of consecutive months, wrapping December into January. Each run is a **window**.
+- **One window** — write it from its opening month forward. `11,12,1,2`, `3,4,5`.
+- **Two or more** — order the windows by opening month ascending, each written from its own opening month forward. `10,11,3,4` becomes `3,4,10,11`.
+- **All twelve months** — plain ascending, because there is no opening month to start from.
+
+For any window that does not cross the new year this is **identical to ascending**, so the overwhelming majority of the matrix was already compliant and untouched.
+
+One implementation, `monthsCanonicalOrder_` in `Audit.gs`, is shared by the audit's sweep and the review applier's validator, so the two cannot drift apart about what a corrected row looks like. The applier still refuses a badly-ordered value and now names the canonical form in the refusal, so the fix is a copy and paste. It writes the accepted value **in the order given, not sorted** — under the old rule sorting would have been harmless, under this one it would silently undo the convention.
+
+**Fixed — the ordering finding claimed a blockage that did not exist**
+
+The old finding said a non-ascending row "cannot be edited through either Apply decisions flow until it is corrected". It can. `reviewApplyDecisions_` reads the existing cell only as a before-value for the log; the sole validation is `reviewValidateValue_` on the value being **written**. Nothing anywhere inspects the order of what is already stored. The applier's refusal bites on a *proposed* value, never a stored one, so every one of those rows was editable the whole time.
+
+Worth recording as a class of mistake rather than a typo: the finding asserted a downstream consequence that had never been traced through the downstream code.
+
+**Fixed — the two-window cooldown check, twice**
+
+[2.9] recorded the whole-matrix version of the cooldown-versus-own-months check as an open gap and suggested it "would make a good second WARNING addition to `Audit.gs`". It was added, run against the live matrix, and returned thirty-three rows. Reading them showed it wrong in two separate ways.
+
+**First, it measured the wrong span.** It compared the cooldown against the run from one window *closing* to the next *opening*. But the user this check exists to protect is the diligent one, and a diligent user completes the job the day the window **opens**, not the day it shuts — so the gap actually available is a whole window wider than the check allowed. Seven of the thirty-three were fine: `3,4 + 9,10` on a 180-day cooldown was reported as broken, when 1 March plus 180 days is 28 August and September opens entirely on time.
+
+`monthsWindowReach_` now **walks the days** rather than doing month arithmetic around a wrapping year. It follows a user who completes the task the first day it appears and reports which windows they actually reach, run once per possible entry window — because a user meets a task in whichever window comes round first for them, and everything after that is determined. It is a few hundred thousand integer operations across the few dozen rows with more than one window.
+
+**Second, and more interesting, it was reporting two different things as one:**
+
+- A cooldown **under a year** that still leaves a window unreachable *contradicts its own row*. Writing 180 says "twice a year"; if the user only ever gets one firing, the number and the months disagree and one of them is wrong. Two rows in the live matrix are like this and both are real. Per-row **WARNING**, `Cooldown contradicts the declared windows`.
+- A cooldown of **a year or more** can fire at most once a year whatever the months say, so several windows cannot mean several occasions and never could. What they mean is several ways *in*: a user is offered the job in whichever window reaches them first and keeps that one for good. That is not a fault — it is why somebody joining in autumn gets a reminder in months rather than waiting until spring. Twenty-four rows are like this, and the honest finding is not "this is broken" but "your users are permanently split between these windows, so check both are equally good advice". One aggregate **REVIEW**, `Annual tasks offering a choice of window`, following the `Blueprints in no review pass` precedent — two dozen findings nobody can act on teaches you to skim the report.
+
+Thirty-three warnings became two warnings and one review.
+
+The lesson worth keeping: the original check asserted "that window can never come round for them" — a claim about behaviour — on the strength of arithmetic nobody had tested against the behaviour. Where a finding makes a claim that strong, the check should answer it the way a person would, by following what actually happens.
+
+**Changed — the timing review prompt states the opening month rather than implying it**
+
+`timingComposePrompt_` said a task appears "on the FIRST day of the first month in its `Valid_Months`". That is only correct for a window that does not cross the new year; for the forty-odd winter rows the phrase had **no correct reading in either ordering**, and those are exactly the rows where an early window costs a season.
+
+Every row in the packet now carries a script-computed **`Window_Opens`** column — the month whose predecessor is absent from the set — and the prompt reasons about that instead. `11,12,1,2` and `1,2,11,12` both answer November. A two-window task names both openings and the prompt asks the reviewer to judge each. Context rows carry the column too, which makes the lawn-chain shape ("several tasks all opening on one day") readable straight down the column. The hedge that stood in `TimingReview.gs`'s header while this was uncertain is gone, replaced by the derivation.
+
+**Added — `Normalise.gs`, a maintenance utility**
+
+Thirty-two rows needed reordering, which is thirty-two chances to fat-finger a month into a cell nobody re-reads. `Normalise.gs` does it mechanically, using the same `monthsCanonicalOrder_` as everything else. Dry run first, one batched read and write, reads the cells back and **verifies** what landed, pins the number format of only the cells it touches to plain text (a short list such as `12,1` is the one value Sheets might take for a number), skips anything malformed or carrying a duplicate month, and records every before-and-after in `Review_Log` under a new mode `NORMALISE` — which no reader of that log mistakes for a review.
+
+It is the **third thing that can write to `Master_Task_Matrix`**, after `Publish.gs` and `Review.gs`, and that is a deliberate decision rather than a drift. It is safe to automate where nothing else in this project is, for one reason: it is not a judgement. The only value it can write to a cell is `monthsCanonicalOrder_` of the months already in that cell, and matching treats the list as a set, so the months a task fires in provably cannot change. The "apply nothing automatically" rule in DATABASE_WORKFLOW §7b governs judgements, and there is no judgement here.
+
+Its first version failed and is worth recording, because both faults are the classic ways an Apps Script utility dies. It asked for confirmation with a **modal dialog** and was documented to be run from the **editor** — but `SpreadsheetApp.getUi()` dialogs render in the spreadsheet tab, so the confirmation appeared where nobody was looking, the script waited for a click that never came, and the six-minute limit killed it with every write still ahead of it. And it wrote **one cell at a time**: sixty-four separate round trips where three would do. It now uses no dialogs at all — everything goes to a `Normalise_Report` tab, so it behaves identically from the editor, a menu or a trigger — and the dry run is the confirmation.
+
+**Fixed — the worked example the documentation had been teaching from was arithmetically wrong**
+
+Found while correcting the check, and the same mistake wearing different clothes. `DATABASE_WORKFLOW.md` had cited **"months 3 and 10 with a cooldown of 180"** as *the* worked example of a stranded window since [2.7], in §5, §6 and §9, and from there it had propagated into both live prompts in `Review.gs`. It is wrong. 1 March plus 180 days is 28 August; October opens on time; 1 October plus 180 is 30 March, which is still inside the March window. **That row fires in both windows every year.**
+
+The error is identical to the one in the first version of the audit check — measuring from the wrong end of the first window — which is presumably why neither caught the other. It has been replaced everywhere with **months 3 and 6 on a 180-day cooldown**, which genuinely strands June (use 90; a quarterly `3,6,9,12` needs about 80), and the verification checklist in §6 now points at the audit rather than asking for the arithmetic by hand. Three releases of documentation, two prompts and one audit check all had the same defect because each was written from the last rather than from the behaviour.
+
+**Changed — the authoring and review prompts**
+
+Both prompts in `Review.gs` and the timing prompt now ask for season order, with the wrap-around case spelled out, so a reviewer proposing `1,2,11,12` for a winter window is refused with the right answer in the message. The authoring prompt's `Frequency_Days` rule (ii) now notes that the audit sweeps the whole matrix for the two-window fault, so a row breaking it will be reported rather than merely discouraged. The timing prompt gains an explicit out-of-scope item for month ordering, which the audit polices and the reviewer should never report.
+
+**Not changed**
+
+- `Publish.gs`, `Code.gs`, `InteractionReview.gs` — untouched.
+- The published data. Ordering cannot reach the database in any form that matters: `select_tasks` tests the season with `v_month = any (t.valid_months)`, `string_to_array` preserves whatever it is given and nothing sorts it, and `task_valid_months_shape` checks only cardinality, nullness and range.
+
+### Documentation
+
+`DATABASE_WORKFLOW.md` to v2.13: the season-order convention with its shape table (§9), the corrected `Valid_Months` authoring rule (§5), the two rewritten cooldown checks and the retired ascending check (§7a), the `Window_Opens` column in the timing packet (§7g), and the corrected worked example in §5, §6 and §9. The superseded rules are recorded rather than deleted — a convention that a large minority of the data quietly disobeys is worth reading about before it is worth re-deriving. `SPEC.md`: `Normalise.gs` added to the content-pipeline component list, with the argument for why a third writer to the task matrix is a deliberate exception rather than an erosion of the "apply nothing automatically" rule; Phase 4.3's claim about the ascending check annotated rather than rewritten; and a new completed roadmap phase (4.7).
+
+### Known gaps and deferred work
+
+Unchanged from [2.12], with two additions:
+
+- **Two real cooldown faults are outstanding as data**, not code. `TASK_0472` is quarterly (March, June, September, December) on a 180-day cooldown, which is double what it can be — about 80 works. `TASK_0036` declares January–February and October–November, which is an otherwise-continuous October-to-February run **with December missing**; adding `12` makes it one window and the finding clears without touching the cooldown. `TASK_0030` carries exactly the same months on a 365-day cooldown and looks like the same authoring slip. Two rows sharing an unusual shape is usually one habit rather than two accidents.
+- **The twenty-four "choice of window" rows are a horticultural question, not a defect.** Where the two windows are equally good advice, nothing needs doing. Where one is better, the users locked into the other are quietly getting the worse of it every year, and the row should either say so in its instruction or drop the weaker window. Good material for a timing review pass.
+
+---
+## [2.12.1] — 2026-08-17
+
+### Fixed: the app shrank to fit its own header
+
+Reported from an installed iPhone PWA within hours of 2.12 going out. The bottom bar no longer looked pinned; the My Garden cards were narrower than before and the screen could be nudged sideways; Today was off-centre. Quitting and reopening fixed Today but left My Garden narrow.
+
+One fault, not four. Measured at a 375px viewport, where `.app-container` should be 343px wide:
+
+| | Today | My Garden |
+|---|---|---|
+| 2.11 | 343px | 343px |
+| 2.12 | **183px** | **297px** |
+| 2.12, after switching to a longer-named garden | **343px** | 297px |
+| 2.12.1 | 343px | 343px |
+
+That third row is the reported symptom exactly. Reopening appeared to fix Today because the garden it reopened into had a longer name; My Garden was unmoved because its width came from its own content rather than the header.
+
+**The cause was a strut that had been holding the layout open by accident.** `body` is a column flex container with `align-items: center`. That centres its children — and it also means they are **not** stretched across the cross axis: each is sized to fit its own contents unless it declares a width. `.fullscreen-view` declares `width: 100%`, which is why the splash, sign-in and garden-form screens were never affected. `#app-root` never did, so the app has been shrink-to-fit since the day it was written. It looked correct for a year only because the header carried the fixed string "🌱 What Gardening Today?", which is wide enough to prop the container open to full width on any phone.
+
+2.12 replaced that title with the current garden's name. "Home" is short, the prop went, and the app began sizing itself to whatever its widest content happened to be — different on each tab, and different again after every switch or rename. The nav bar was not a second bug but the same one seen from below: it is `position: fixed; width: 100%` and stayed precisely where it had always been, while everything above it shrank and drifted off-centre.
+
+**Fixed** by giving `#app-root` the `width: 100%` that `.fullscreen-view` has always had, plus `margin: 0 auto` on `.app-container` so it still centres once a screen is wider than 440px. Two declarations, and a comment at the point of the fix spelling out the trap — the next person to change that header would otherwise fall into it the same way, and the failure is silent.
+
+Only `style.css` and `sw.js` change. `CACHE_NAME` bumped `gardening-v10` → `gardening-v11`.
+
+### Why the tests did not catch it
+
+Worth recording, because the gap is more instructive than the fix. 2.12 shipped with 64 database checks and 35 headless frontend checks, every one of them passing. Every frontend check asked *is the right thing on screen* — the right garden name, the right buttons, the right wording, the right recovery from a 403 — and **not one asked whether it was the right size**. A layout can be perfectly correct in content and structure while being half the width it should be, and a suite assembled entirely from behavioural assertions will wave it through.
+
+The suite now asserts geometry as well as behaviour: that `.app-container` is exactly the viewport less its margins (to a maximum of 440px), that it is centred, and that the document never grows wider than the viewport — on both tabs, at 320, 375, 390, 430 and 1200px. The check fails against the 2.12 files and passes against these, which is the only reason to believe it is testing anything.
+
+---
 ## [2.12] — 2026-08-17
 
 ### Multiple gardens per user
@@ -327,8 +448,8 @@ Whether correcting the order could ever change behaviour was an open question, c
 
 Unchanged from [2.8], with two additions:
 
-- The whole-matrix version of the cooldown-versus-own-months check remains open. The applier warns when a *staged* change would create the fault; nothing yet sweeps every existing row the way the new ascending-order check does, and would make a good second WARNING addition to `Audit.gs` at the same severity.
-- The 19 rows identified as non-ascending during design of this release are a data cleanup, not a code change, and are unaffected by anything in this release — they display and match correctly today and will continue to.
+- The whole-matrix version of the cooldown-versus-own-months check remains open. The applier warns when a *staged* change would create the fault; nothing yet sweeps every existing row the way the new ascending-order check does, and would make a good second WARNING addition to `Audit.gs` at the same severity. *(Closed in [2.13] — and the first attempt at it was wrong twice, which is recorded there.)*
+- The 19 rows identified as non-ascending during design of this release are a data cleanup, not a code change, and are unaffected by anything in this release — they display and match correctly today and will continue to. *(Superseded by [2.13]: the ascending rule itself was wrong. Most of those rows were correct as written, and the count was in any case incomplete — the ascending check could not see a wrap-around window typed in ascending order, which turned out to be the larger group.)*
 ---
 ## [2.8] — 2026-08-03
 
