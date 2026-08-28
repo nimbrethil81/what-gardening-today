@@ -104,6 +104,14 @@ let editingGardenId = null;
 // Which way out of a garden the confirmation panel is asking about
 let gardenDangerMode = "delete";   // "delete" | "leave"
 
+// May this person start another garden? The database owns this rule
+// (may_create_garden, db/14) and is the only thing that enforces it — app.js
+// and config.js are public files served with a published key, so this copy is
+// PRESENTATION, deciding what the button does rather than whether it may.
+// Defaults to true so that a failed read offers the button and lets the server
+// refuse: fail open in the browser, closed in the database.
+let mayCreateGarden = true;
+
 // Set while recovering from a garden the server says we can no longer see, so
 // a persistent 403 cannot spin route() and loadToday() against each other.
 let missingGardenRecovery = false;
@@ -193,15 +201,22 @@ function forgetLastGardenId(userId) {
  * ========================================================================== */
 
 async function loadGardens() {
-  const [gardenRes, memberRes] = await Promise.all([
+  const [gardenRes, memberRes, gateRes] = await Promise.all([
     sb.from("garden")
       .select("id, name, latitude, longitude, timezone, created_at")
       .order("created_at", { ascending: true }),
-    sb.from("garden_member").select("garden_id, user_id, role")
+    sb.from("garden_member").select("garden_id, user_id, role"),
+    sb.rpc("may_create_garden")
   ]);
 
   if (gardenRes.error) throw gardenRes.error;
   if (memberRes.error) throw memberRes.error;
+
+  // Third in the same round trip, so the switcher never has to wait on it and
+  // the answer is refreshed by every path that reloads the list — creating,
+  // deleting and leaving all come back through here. NOT thrown on: an error
+  // or a null leaves the button offered, and the database refuses if it must.
+  mayCreateGarden = gateRes.error ? true : gateRes.data !== false;
 
   const membership = {};
   (memberRes.data || []).forEach(row => {
@@ -472,9 +487,18 @@ function closeGardenModal() {
   if (btn) btn.setAttribute("aria-expanded", "false");
 }
 
+/* THE EXPLANATION IS PUT AWAY EVERY TIME THE SHEET OPENS, so somebody who met
+ * it once, deleted a garden and came back doesn't find yesterday's "no" still
+ * sitting there under a button that would now work. */
+function resetGardenGateNote() {
+  const note = document.getElementById("garden-gate-note");
+  if (note) note.classList.add("hidden");
+}
+
 function renderGardenList() {
   const listEl = document.getElementById("garden-list");
   listEl.innerHTML = "";
+  resetGardenGateNote();
 
   if (gardens.length === 0) {
     listEl.innerHTML = '<div class="loading-spinner-box">You haven\'t set up a garden yet.</div>';
@@ -504,6 +528,29 @@ function renderGardenList() {
 
     listEl.appendChild(row);
   });
+}
+
+/* WHAT HAPPENS WHEN YOU CANNOT ADD ANOTHER GARDEN.
+ *
+ * The button stays exactly where it was, looking exactly as it did, and stays
+ * tappable. A control that vanishes at the limit — or greys out — is a dead end
+ * a novice cannot diagnose: it reads as the app being broken rather than as an
+ * answer. So tapping it answers, in place, in the sheet already on screen.
+ *
+ * Nothing is lost by tapping, because the form never opened and there was
+ * nothing typed. There is no upgrade button, because there is nothing to
+ * upgrade to yet, and the wording says so rather than implying a shop.
+ *
+ * Everything else in this sheet still works: the gardens are still listed and
+ * still switch. Entitlement grants the right to ADD, never the right to SEE. */
+function handleAddGardenClick() {
+  if (!mayCreateGarden) {
+    const note = document.getElementById("garden-gate-note");
+    if (note) note.classList.remove("hidden");
+    return;
+  }
+  closeGardenModal();
+  showGardenForm("add");
 }
 
 function handleGardenListClick(event) {
@@ -779,6 +826,23 @@ function validateSetup() {
 function gardenSaveErrorMessage(err) {
   const code = err && err.code ? String(err.code) : "";
   const msg = String((err && err.message) || "");
+  const hint = String((err && err.hint) || "");
+
+  // THE PAYWALL, ARRIVING FROM THE SERVER. This is reached when the browser's
+  // copy of the rule is stale, or somebody drove the API directly. Saying
+  // "check your connection" here would be a lie, and the kind of lie that has
+  // somebody turning their wi-fi off and on for ten minutes.
+  //
+  // Matched on the HINT, not the message: one branch meaning "this needs
+  // something you don't have", rather than one branch per paid feature.
+  //
+  // The message is a BACKSTOP, not the rule — if a future PostgREST ever
+  // stopped passing hints through, the alternative here is telling somebody at
+  // a paywall to check their connection, which is worth one redundant string.
+  if (hint.indexOf("entitlement:") === 0 || msg.indexOf("paid version") !== -1) {
+    return "Keeping more than one garden will be part of a paid version later on. " +
+           "It isn't something you can buy yet.";
+  }
 
   if (code === "54000" || msg.indexOf("maximum of") !== -1) {
     return "You've reached the maximum number of gardens. Delete one you no longer tend, then try again.";
@@ -1259,15 +1323,21 @@ function renderTaskCards(tasks) {
   tasks.forEach(task => {
     const wrapper = document.createElement("div");
     wrapper.className = "task-card-wrapper";
+    // Curated tasks are trusted, but a manual task's name/category/instruction
+    // is user-written (task_insert_manual_mine lets any garden member create
+    // one), so all three are escaped before going into innerHTML. escapeHtml
+    // also turns a null/undefined value into "" rather than the literal word
+    // "null", which a category-less or instruction-less task would otherwise
+    // show on screen.
     wrapper.innerHTML = `
       <div class="task-hide-action">
         <button class="hide-task-btn" data-task-id="${task.task_id}">Hide</button>
       </div>
       <div class="task-card">
         <div class="task-info">
-          <h3>${task.name}</h3>
+          <h3>${escapeHtml(task.name)}</h3>
           <div class="task-description-wrap">
-            <p class="task-instruction">${task.category} • ${task.instruction}</p>
+            <p class="task-instruction">${escapeHtml(task.category)} • ${escapeHtml(task.instruction)}</p>
             <span class="task-fade" aria-hidden="true"></span>
           </div>
           <button class="task-expand-toggle" type="button" aria-expanded="false" aria-label="Show more">▾</button>
@@ -1412,12 +1482,17 @@ function renderGroupedInventory() {
         ? item.friendly_name
         : null;
 
+      // displayName and customRef are user-supplied (blueprint name is curated
+      // and safe, but friendly_name is typed by whoever added the item), so
+      // both are escaped before going into innerHTML — same rule as garden
+      // names. data-friendly-name was dropped: nothing in the app ever reads
+      // it, so it was a second unescaped copy doing no work.
       cardDiv.innerHTML = `
         <div>
-          <strong>${displayName}</strong>
-          ${customRef ? `<div class="inventory-item-meta">📌 ${customRef}</div>` : ""}
+          <strong>${escapeHtml(displayName)}</strong>
+          ${customRef ? `<div class="inventory-item-meta">📌 ${escapeHtml(customRef)}</div>` : ""}
         </div>
-        <button class="remove-asset-btn" data-item-id="${item.item_id}" data-friendly-name="${displayName}">✕</button>
+        <button class="remove-asset-btn" data-item-id="${item.item_id}">✕</button>
       `;
       groupDiv.appendChild(cardDiv);
     });
@@ -2045,10 +2120,12 @@ function renderHiddenTasksList(hiddenTasks) {
   hiddenTasks.forEach(task => {
     const card = document.createElement("div");
     card.className = "hidden-task-card";
+    // Same reasoning as renderTaskCards: a manual task's name/category is
+    // user-written, so both are escaped before going into innerHTML.
     card.innerHTML = `
       <div class="hidden-task-info">
-        <h4>${task.task_name}</h4>
-        <p>${task.category}</p>
+        <h4>${escapeHtml(task.task_name)}</h4>
+        <p>${escapeHtml(task.category)}</p>
       </div>
       <button class="restore-task-btn" data-task-id="${task.task_id}">Restore</button>
     `;
@@ -2205,7 +2282,7 @@ document.addEventListener("DOMContentLoaded", () => {
   if (gardenList) gardenList.addEventListener("click", handleGardenListClick);
   const addGardenBtn = document.getElementById("add-garden-btn");
   if (addGardenBtn) {
-    addGardenBtn.addEventListener("click", () => { closeGardenModal(); showGardenForm("add"); });
+    addGardenBtn.addEventListener("click", handleAddGardenClick);
   }
 
   // --- Today view: completion, hide, swipe ---

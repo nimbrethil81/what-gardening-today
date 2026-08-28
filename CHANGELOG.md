@@ -4,8 +4,204 @@ All notable changes to "What Gardening Today?" will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning follows a simplified semantic scheme:
 
-- **MAJOR** (e.g. 1.0 → 2.0) — architectural phase transitions per SPEC.md §6 (e.g. backend migration, native rewrite).
-- **MINOR** (e.g. 1.0 → 1.1) — user-facing features, UI changes, and bug fixes within the current phase.
+- **MAJOR** (e.g. 1.0 → 2.0) — a change of backend or delivery architecture, such as the Google Sheets → Supabase migration at 2.0.
+- **MINOR** (e.g. 1.0 → 1.1) — user-facing features, UI changes, content-pipeline work, and bug fixes.
+
+Entries are the record of what changed and when. Reasoning that is still true of the system belongs in `SPEC.md`, which describes it as built; planned work is tracked as issues. From **2.16** entries are kept short — a one-line summary and bullets naming what changed and where. Earlier entries are longer, and are left as written.
+
+Entries before 2.16 refer to numbered development phases ("Phase 4") and to `SPEC.md` §6, the roadmap section that recorded them. **That section was removed in 2.16**; those references are historical and are deliberately not rewritten.
+
+---
+## [2.17] — 2026-08-28
+
+### Creating a second garden is now gated, and everybody already holds the key
+
+The enforcement path for a paid feature exists, has been run against real data, and is invisible: every account that existed holds a perpetual founder grant, so nobody can currently reach the refusal. Nothing is for sale and no billing exists. This went in now because the cost of making something paid rises with the number of people already holding it for free, and that number is currently small.
+
+- **Added `db/14_garden_gate.sql`** — `garden.created_by` (nullable, `ON DELETE SET NULL`) with a backfill; `feature_is_gated()`, `may_create_garden()` and `grant_founder_entitlements()`; a third and authoritative `create_garden()` that records the creator and refuses with `42501` plus the hint `entitlement:FEATURE_MULTI_GARDEN`. Ships dormant — §9 holds the two hand-run activation steps.
+- **Added `db/14_garden_gate_test.sql`** — pass/fail grid, leading on the case that must never break: a brand-new user with no gardens can create their first one.
+- **Fixed — a table-wide `UPDATE` grant on `public.garden`.** RLS is row-level and says nothing about columns, so any owner could write `timezone` (which drives every date calculation the garden has ever made, and which `docs/CONFIG_ITEMS.md` #8 already recorded as "not editable") or `created_at` (which orders the switcher) straight through the Data API. Now granted per column: `name`, `latitude`, `longitude`. Not a live incident; a no-op for the app, which writes exactly those three.
+- **The limit counts gardens you created and are still in** — not membership (a garden you were invited to must never cost you) and not ownership (`leave_garden` and `delete_my_account` promote a new owner, so ownership arrives by someone else's act). Live, not high-water: deleting or leaving one gives the slot back.
+- **Retiring the product opens the gate rather than closing it**, matching the pack rule in `can_add_blueprint()` — so withdrawing a product can never lock the userbase out, and one `UPDATE` is a kill switch needing no deploy and no cache bump.
+- **Changed `app.js`, `index.html`, `style.css`** — `may_create_garden()` folded into `loadGardens()`' existing round trip; "＋ Add another garden" is never hidden or greyed out, and answers in place when blocked; `gardenSaveErrorMessage()` branches on the entitlement hint rather than telling somebody at a paywall to check their connection.
+- **Changed `sw.js`** — `CACHE_NAME` `gardening-v11` → `v12`.
+- **Changed `SPEC.md`** — §3 gains `created_by` and the column grant, and "Entitlement (dormant)" becomes "Entitlement"; §4 gains the three functions and separates `create_garden`'s two limits; §5A records the add-not-see rule reaching a second entity.
+- **Changed `docs/CONFIG_ITEMS.md`** — new #28 (free garden limit) and #29 (the gate's kill switch); #8, #18 and #24 amended.
+
+- **`grant_founder_entitlements()` returns a table**, not a count — one row per user/product pair, each `granted` or `already held`. Requires a `drop function` on re-run, which the file now does.
+- **Added `grant_gift(p_email, p_code, p_reason)`** — one person, one live product, `source = 'gift'`, reason required and blank refused. Exists so a late arrival never gets a founder grant, which would put them in the cohort the next gate grants to.
+- **The backfill of `created_by` is now guarded** to run only once. Unguarded, a later re-run would have reassigned gardens whose creator had deleted their account to whoever holds them now.
+- **Added `docs/OPERATIONS.md`** — the runbook for what is done by hand in Supabase: applying a `db/` file, adding a person, entitlements and the kill switch. `CLAUDE.md` now lists it as authoritative and requires it to be reviewed alongside `SPEC.md` and `CHANGELOG.md`.
+
+**Deliberately left open:** a handed-over garden counts against nobody, so two free users could in principle swap gardens and hold two each. It needs an invite flow that does not exist, and closing it would mean charging somebody for another person's decision.
+
+---
+## [2.16] — 2026-08-27
+
+### Documentation boundaries: SPEC describes, CHANGELOG records, issues plan
+
+No code, content or database changes. Nothing looks or behaves differently. `SPEC.md` had accumulated a roadmap section that restated its own body, duplicated `WGT_STRATEGY.md`, and had in practice been abandoned — 2.14 and 2.15 both shipped without updating it.
+
+**Removed — `SPEC.md` §6, DEVELOPMENT ROADMAP**
+
+Every completed phase it listed is already recorded here in more detail, verified entry by entry: Phases 1–3 in [1.0], 3.1 in [1.5], 4 in [2.0], 4.1 in [2.4], 4.2 in [2.5]–[2.6], 4.3 in [2.9], 4.4 in [2.10], 4.5 in [2.11], 4.6 in [2.12], 4.7 in [2.13]. Its forward-looking material moved out rather than being deleted (below), and the "Opening the doors" sequence went entirely, because `WGT_STRATEGY.md` §3, §4 and §8 own it and were already more current — SPEC's copy omitted the pre-launch entitlement gate and would have led to the wrong build order.
+
+**Added — `SPEC.md` §1, "How it got here"**
+
+A short paragraph carrying the arc the phase list conveyed: Sheets and Apps Script, the Supabase cutover on 2026-07-17, then content-pipeline work and groundwork for opening up. It also holds the decision `WGT_STRATEGY.md` cited §6 Phase 4 for — that a native rewrite was considered and is not being pursued.
+
+**Changed — `SPEC.md` §5E gains the weather-reveal limitation**
+
+The `Reveal_If_Wind_Above` entry was a known limitation wearing a roadmap hat: every weather column suppresses a task and none reveals one, which is why `Requires_Wind_Above` carries a misleading name. It is now a Carried-forward limitation, so `docs/DATABASE_WORKFLOW.md` §9 keeps a target — a cross-reference [2.9] repaired and this change would otherwise have broken again.
+
+**Fixed — a dangling `See §6.` in `SPEC.md` §5E**
+
+The multi-user limitation pointed at "On the horizon" for what invite support needs. It now says so in place: custom email, an invite flow, the member list, the email-based lookup and the re-add path.
+
+**Changed — this file's header**
+
+MAJOR versions were defined as "architectural phase transitions per SPEC.md §6", which would have cited a section that no longer exists.
+
+**Moved to issues**
+
+Custom email; the invite flow; surfacing `estimated_minutes` in the UI; the hide-swipe placement and direction improvement; the reveal-above weather threshold; and the two operational tidies open since [2.0] — confirming the OpenWeather key was never committed publicly (current files *and* git history; rotate only if found) and retiring the unused Apps Script *runtime* Web App deployment.
+
+**Not changed**
+
+Dated entries above. A changelog is a record of what was true at the time, so their phase references stand.
+
+**Known gap, pre-existing**
+
+There is no `[1.3]` entry, though [1.4] refers to "the same category-tier fault fixed in 1.3". Unrelated to this change and recorded so it is not rediscovered.
+
+---
+## [2.15] — 2026-08-24
+
+### The pipeline reviewed, and four ways it could have lost your content
+
+A code review of the six Apps Script pipeline files, and the three remediation passes that followed. No feature changes and nothing looks different. What changed is that four separate paths to silent, total content loss are now closed, and a fifth — a class of workbook edit nothing could previously detect — is caught.
+
+Nothing here was a live incident. Every one of them was reachable, and the common shape is worth naming: **each failure produced no error anywhere.** A clean audit, a clean gate, and an app that had quietly stopped showing things.
+
+**Fixed — the junction reconcilers deleted before they inserted**
+
+`reconcileById_` removed a task's old targeting rows and then inserted their replacements. `CHANGELOG` v2.2 records this as a fault that once left seven tasks untargeted when an insert failed, and it was believed closed — but what v2.2 added was a *refusal* thirty lines upstream, catching one cause. The ordering itself was never reversed, so any other failure inside the insert loop reproduced the original outcome: live tasks reaching nobody, invisible to every user, with nothing at runtime reporting it. There are no retries in that file and every non-2xx throws, so one transient 5xx, one fetch timeout, or the six-minute execution limit landing in the wrong place was sufficient. Every retarget produces a delete and an insert, so it fired on ordinary editorial work rather than on anything exotic.
+
+Both reconcilers now **insert first**. The two sets are disjoint by construction — one is the rows the workbook wants that are absent, the other is the rows present that it no longer wants — so inserting first cannot collide with a unique constraint. The intermediate state becomes a *superset* of the old and new rather than their intersection: a task briefly reaches one blueprint too many, never nothing at all. That is the safe direction to fail in.
+
+**Fixed — nothing stopped a publish that retired the entire catalogue**
+
+The publish gate was workbook-only and counted nothing. It never asked whether the workbook resembled the one published last time. An emptied or truncated `Master_Task_Matrix` therefore produced *zero* blockers — with no rows there is nothing to have a bad target or a bad category — and the push then retired every live task, because anything absent from the workbook is retired. Five people would have opened the app to a blank list, with nobody told.
+
+Three guards now stand in the way, deliberately different in kind: a **hard refusal at zero** rows, judged from the workbook alone; a **hard refusal** above half the live catalogue, with a floor of ten rows so a small catalogue cannot trip it on arithmetic; and a **confirmation** naming what is going for anything else. Withdrawals are rare after the first publish, so that dialogue is not one you will learn to click through.
+
+A task deliberately marked `Retired` in column L is not a withdrawal — it is visible in the workbook and it was a decision. It is counted separately and gates nothing.
+
+**Changed — the dry run reports what a publish would withdraw**
+
+"Check before publish" now reads the live catalogue, where it previously touched the database not at all. A deliberate trade: the withdrawal count is the single most important number about a publish, and it was the one number invisible until you had already committed. The same read feeds the forecast and the push, so what you confirm is exactly what gets applied rather than a second read moments later that might disagree.
+
+It still writes nothing under any circumstances, and with Supabase unconfigured it performs every workbook check as before and says plainly that the figure is unavailable — rather than implying there is nothing to withdraw.
+
+**Fixed — an empty content tab read as an empty answer**
+
+`readDictionary` and `readTasks` returned an empty list rather than a failure when their tab held no rows. Every caller tests the result with `if (!dict || !tasks)`, which reads exactly like a guard against this — and in JavaScript an empty array is truthy, so it passed every time. This was the near end of the mass-retirement chain above; both ends are now guarded independently.
+
+**Fixed — the review stamps marked a set recomputed after the apply had changed it**
+
+Each review programme rebuilt its row set *after* the writes, and every programme's filter is built on a field that programme is allowed to write. So an accepted change could move a row out of the set about to be stamped, in the very run that reviewed it.
+
+The cadence review was the sharpest case, because its filter is `Frequency_Days` at or below 30 and *raising that number is the fix the programme exists to make*. Accepting a finding that took a cooldown from 20 days to 45 moved the row out of its own slice before the stamp ran: the row was reviewed, the fix was applied, and column P said it had never been looked at. Every successful cadence fix erased its own record of itself. The same shape affected all four programmes in one direction or the other.
+
+Each mode now declares `gatherStampRows_`, and the set is captured before anything is written.
+
+**Fixed — a crash between the write and the log destroyed the only record of the before values**
+
+Staging always completed before the first write, so a refusal could never half-apply a run. The period *after* staging was not covered. Writes were one call per cell and the read-back another, so a sixty-change run made about a hundred and twenty round trips before `Review_Log` — written last — was touched. A timeout anywhere in that stretch left cells changed with no log entry at all, and `Review_Log` is the only place a *before* value exists anywhere in this system.
+
+The log is now written **first**, carrying the before values and the status `APPLYING`; the successful path returns and amends those rows to `APPLIED` with what actually landed. The writes are also batched, one call per column touched rather than one per cell — around four calls for that same run. Rows left reading `APPLYING` are the intended outcome of an interrupted run, not a bug: they say what was attempted and what the cells held.
+
+**Added — the header row is validated before any tab is read**
+
+The whole pipeline addresses columns by *position*: `MTM_INSTRUCTION` is index 4, `DICT_PREFIX_COL` is index 2. Nothing anywhere compared row 1 against anything. Renaming a heading was harmless, but **inserting or moving a column shifted every index past it — silently, in six files simultaneously.** Inserting before `Instruction` would have the pipeline read instructions out of the `Valid_Months` cell, which is short enough to fail the 80-character rule and block the publish; that is the *lucky* outcome. Two adjacent columns of compatible shape would have passed the audit, passed the gate, and reached the live database with nothing to say so. With no version history on the workbook and no second reader to disagree, nothing else in the system could have caught it.
+
+Every reader now validates row 1 against an expected header table. Required columns must match in position; optional ones may be absent but nothing else may occupy their place; anything to the right of the known set is ignored, so working columns can still be added freely. That optional tier is not a loophole — it is how `Browse_Group`, `Botanical_Name`, `Review_Pass` and the four review-marker columns were each added by hand — and it still catches a column of your own sitting where `Reviewed` should be. Headings are trimmed before comparison, so a trailing space cannot fail a workbook that is otherwise correct. `ERROR` severity, so the audit still runs to completion while the publish gate refuses.
+
+The header table was transcribed from the live workbook rather than inferred from the code, which mattered: `Item_Dictionary` columns B and C are `Suggested_Name` and `Default_Asset_ID_Prefix`, where the constants are only `DICT_NAME_COL` and `DICT_PREFIX_COL`. A list written from the code would have been wrong on both and would have failed the workbook on its first run.
+
+**Fixed — the audit counted a bare-category task as coverage**
+
+"Item receives no tasks" also tested the bare top-level prefix, so a blueprint whose only reach was a task targeting `LAWN` was reported as covered. It is not: bare-category targeting was abolished in v2.0, the publish gate refuses that target, and `Coverage_Grid` returns a flat zero for the same item. Three implementations answered one question, two said zero, and the one giving the comfortable answer was the one in the report. The suggested fix was wrong for the same reason — it recommended creating a category-tier task, which is a row the publish step then blocks.
+
+**Fixed — the interaction review prompt asked for a format the applier refuses**
+
+It still requested `Valid_Months` as an "ASCENDING list". The validator has required season order since v2.13. A reviewer following the prompt correctly would have had the row refused, with a message contradicting the instructions they were given. The editorial and timing prompts were updated at the time; this one was missed.
+
+**Fixed — a dead guard silently disabled two audit checks**
+
+`auditReviewPasses` opened with `if (typeof reviewGatherPass_ !== "function") return;`, above two findings that no longer call that helper — a dependency that had become stale. Renaming or removing an unrelated function in `Review.gs` would have deleted two audit checks with no error and nothing in the report to say they had gone. The guard that is load-bearing, on `readReviewPasses_`, remains.
+
+**Changed — two formatting loops became two calls**
+
+The coverage grid shaded empty months one cell at a time — up to three thousand round trips on a 250-blueprint catalogue — and the audit report coloured one finding at a time. Both now build in memory and write once. This was comfortably the most likely first cause of the audit hitting the execution limit as the catalogue grows.
+
+**Changed — a missing tab gives a message rather than a programming error**
+
+`readWorkbookForPublish_` dereferenced `Item_Dictionary` and `Master_Task_Matrix` with no null check and ran three lines *before* the audit result was tested, so a renamed tab produced `Cannot read properties of null` instead of "Publish blocked". Both handlers now check the audit first, and the reader names the tab it could not find. `Browse_Groups` and `Collections` had always been guarded, which made the other two look like an oversight rather than a decision. It was.
+
+**Changed — every pipeline file now carries a version stamp**
+
+`InteractionReview.gs` had none, and `Publish.gs` had none. All six now open with the filename and a version line. This is a small thing that cost real time during the review: the `.gs` files are not in the repository, so version stamps are the only evidence of which copy is which, and two files without one meant two files that could not be placed.
+
+**Not changed — the Supabase `service_role` key**
+
+Reviewed and found correct. It lives in Script Properties, never in code or the repository, and no error path or report echoes it. Worth recording precisely, since the review asked: Script Properties belong to the Apps Script project rather than to any cell, so a **viewer** of the workbook cannot reach them, but anyone with **edit** access can via the script editor. That boundary is the same set of people who could alter the content anyway. The key bypasses Row Level Security entirely, so it grants full read and write on every user's garden data, not just the catalogue — treat the workbook's editor list as the list of people you would hand the database to.
+
+**Known gaps**
+
+- The pipeline `.gs` files are now in the repository under `apps-script/`, but they are a **snapshot** of the script editor rather than a live mirror. An edit made in the editor and not copied out leaves the repository stale — visibly, at least, since every file carries a version header. `clasp` is what would make that automatic.
+**Removed — `Normalise.gs`**
+
+Deleted from the workbook once its job was done. It rewrote `Valid_Months` into season order across the whole matrix in v2.13, and was the only thing in this project that ever wrote to `Master_Task_Matrix` without a human ticking each row. It held that licence on a narrow argument — reordering a set is not a judgement, and matching treats `valid_months` as a set, so what a task does provably could not change — and its own header always said to remove it afterwards.
+
+The reason to actually do so, rather than leave a working utility in place: a tool that outlives its task stops being an exception anyone remembers agreeing to and becomes a second writer to the matrix. A hand edit that reintroduces a badly-ordered row is caught by the audit on the next run, and the finding names the corrected value, so the capability is not missed. **`Master_Task_Matrix` now has exactly one writer again**, the review applier.
+
+**Documentation**
+
+`docs/DATABASE_WORKFLOW.md` §2 gains two new conventions — never insert or move a column, and an empty content tab is a fault. §7a gains the two new audit checks and a correction to the coverage check. §7e is updated to four programmes, gains the cadence floor as a refusal, and gains a subsection on what happens if an apply crashes half way. §10 becomes four movements rather than three. `SPEC.md` §2 and §5 record the header check, the reconcile ordering, the withdrawal guard and the fourth review programme.
+
+---
+## [2.14] — 2026-08-20
+
+### Escaping the text other people typed
+
+A security release, and the first finding acted on from the overnight review programme. No feature changes and nothing looks different — but five places where user-written text was being put into the page unescaped now escape it.
+
+**Fixed — user-supplied text reached `innerHTML` unescaped in three renderers**
+
+`renderTaskCards`, `renderGroupedInventory` and `renderHiddenTasksList` each built their markup with a template literal and interpolated values straight in. Between them that exposed a task's `name`, `instruction` and `category`, and a garden item's `friendly_name`.
+
+The reason this matters more than it looks is **shared gardens**. It would be a cosmetic bug if the only text at risk were your own — you would be attacking yourself. It is not. `task_insert_manual_mine` in `db/02_rls.sql` permits any member of a garden to insert a task into that garden, and `config.js` ships a published key, so the write is reachable through the API whether or not the interface offers it. One member of a shared garden could therefore store markup that renders in another member's browser, in their session. That is stored cross-user script injection, and it is the highest-severity class the app can currently produce.
+
+The item name is the same shape: `blueprint.name` is curated and safe, but `friendly_name` is typed by whoever added the item, and every member of the garden sees it.
+
+All five values now go through `escapeHtml()`, which was already present and already used for garden names. It maps null and undefined to an empty string as well as escaping, so the change also fixes a smaller latent bug: a task with no category or no instruction would previously have rendered the literal word "null" on the card.
+
+**Removed — a second, unescaped copy of the item name**
+
+`renderGroupedInventory` also wrote `data-friendly-name="${displayName}"` onto the remove button. Nothing in the app has ever read that attribute. Rather than escape a value doing no work, the attribute is gone — the smaller change and one less thing to keep correct.
+
+**Not changed — `task_id` and `item_id` are still interpolated bare**
+
+They are the only remaining un-escaped interpolations in `app.js`, and they are safe: both are generated by Postgres, and no user-supplied value ever reaches them. Recorded here so the next review does not spend a finding rediscovering it.
+
+**Changed — `sw.js`**
+
+`CACHE_NAME` bumped `gardening-v10` → `gardening-v11`, so installed PWAs pick the fix up rather than serving the cached old `app.js`.
+
+**Documentation**
+
+`SPEC.md` §3 said `garden_id` and `garden_item_id` were reserved "for future manual tasks". The RLS policies that permit a manual task have been live since the v2 migration, which is precisely why this finding existed — so the schema note now says so, and §5C gains the escaping rule alongside the existing service-worker versioning rule.
 
 ---
 ## [2.13] — 2026-08-20

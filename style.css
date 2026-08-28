@@ -786,6 +786,32 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
 
 .garden-add-row .secondary-action-btn { margin-top: 0; }
 
+/* --- "ONE GARDEN FOR NOW" --- */
+/* Deliberately quiet: no badge, no lock, no crown, no colour that says
+   "upgrade". It is an explanation, not an advertisement, because there is
+   nothing to sell yet. Sits under the button rather than replacing it, so the
+   control it explains is still visible next to the explanation. */
+.garden-gate-note {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background-color: var(--bg-app);
+}
+
+.garden-gate-title {
+  margin: 0 0 4px 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.garden-gate-body {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
 /* --- SETTINGS GROUPS --- */
 /* Settings holds two different kinds of thing now: this garden, and the
    account. Naming the garden is what makes "Hidden tasks" and "Delete this
