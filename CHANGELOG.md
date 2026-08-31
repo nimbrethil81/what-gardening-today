@@ -7,9 +7,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **MAJOR** (e.g. 1.0 → 2.0) — a change of backend or delivery architecture, such as the Google Sheets → Supabase migration at 2.0.
 - **MINOR** (e.g. 1.0 → 1.1) — user-facing features, UI changes, content-pipeline work, and bug fixes.
 
-Entries are the record of what changed and when. Reasoning that is still true of the system belongs in `SPEC.md`, which describes it as built; planned work is tracked as issues. From **2.16** entries are kept short — a one-line summary and bullets naming what changed and where. Earlier entries are longer, and are left as written.
+Entries are the record of what changed and when. Reasoning that is still true of the system belongs in `SPEC.md`, which describes it as built; planned work belongs in `docs/ROADMAP.md` and nowhere else. From **2.16** entries are kept short — a one-line summary and bullets naming what changed and where. Earlier entries are longer, and are left as written.
 
-Entries before 2.16 refer to numbered development phases ("Phase 4") and to `SPEC.md` §6, the roadmap section that recorded them. **That section was removed in 2.16**; those references are historical and are deliberately not rewritten.
+Entries before 2.16 refer to numbered development phases ("Phase 4") and to `SPEC.md` §6, the roadmap section that recorded them. **That section was removed in 2.16**; those references are historical and are deliberately not rewritten. [2.16] also speaks of moving items to GitHub Issues, which was never adopted — see [2.18].
+
+---
+## [2.19] — 2026-08-28
+
+### The garden gate is live, and the founder circle is closed
+
+No code, schema or content changes — comments in `db/14_garden_gate.sql` only. The gate was activated by hand: `FEATURE_MULTI_GARDEN` created, `grant_founder_entitlements()` run, and the §8 readout confirming **gate on, three founder grants, none missing**. Nobody can currently reach the refusal, which is the success condition.
+
+- **Fixed — §6 and §9 gave opposite instructions for the same situation.** §6 said to re-run the founder grant after adding somebody to the guest list; §6a and §9 said that must never happen and a late arrival is `grant_gift()`'s job. Both were live, in one file, about the act that decides who receives every *future* paid feature.
+- **Decided — a late arrival gets a gift, not a founder grant.** Founder status exists to avoid taking something away; somebody added tomorrow never held a second garden for free, so nothing was withdrawn from them. Generosity there is a gift, and is recorded as one with a reason.
+- **The founder cohort is therefore closed at the three accounts of 2026-08-28**, and `grant_founder_entitlements()` is spent. Re-running it would grant every live feature to every row in `auth.users` — so once one gifted non-founder exists, picking up a second gated feature that way would mark them `source = 'founder'` too, with no way afterwards to tell the rows apart.
+- **Every feature after the first uses §9's successor query**, which grants only to accounts already holding a founder row. Correct whether or not sign-up has opened, and it needs nobody to remember which.
+- **Fixed — a second stale comment in §6** still described the function as returning a count of new grants. It has returned a table since 2.17.
+
+**Still open:** the refusal has never been drawn in a browser, because every account holds the unlock. Recorded in the roadmap.
+
+---
+## [2.18] — 2026-08-28
+
+### The roadmap gets a home: `docs/ROADMAP.md`
+
+No code, content or database changes. [2.16] removed `SPEC.md` §6 and said the work it held was going to GitHub Issues. With one person on the project, Issues was never adopted, so those items had no home for a day. They now have one, and it is the only one.
+
+- **Added `docs/ROADMAP.md`** — the sole record of work that is planned, agreed, blocked or considered. In `docs/`, which the live deploy excludes, because it names unbuilt paid features and monetisation sequencing. 46 items across Now, Ready, Blocked, Considered, Content, Operational and Documentation.
+- **Its rules are the point of it.** One line per item, in table cells too narrow to hold an argument. **Never explain, only address** — name a blocking condition as a label ("paying-user floor"), never as a value that can go stale. And **nothing is ever marked done**: a shipped item is deleted, and its record becomes a changelog entry. A "Completed" section there would be a second changelog, which is what §6 became.
+- **The garden gate is the first item deleted under that rule.** It was the top of the list yesterday; [2.17] shipped it, so it is gone rather than ticked, and this entry is now its only record.
+- **Changed `SPEC.md`** — §1 now says it must not acquire a roadmap and names `docs/ROADMAP.md` as the sole record; §5E's weather-reveal limitation cites it rather than "an issue".
+- **Changed this file's header**, and annotated [2.16]'s "Moved to issues" rather than rewriting it, following the Phase 4.3 precedent.
+
+**Repo now private, and the sensitive documents moved into it**
+
+`WGT_STRATEGY.md` and `WGT_TIERS.html` were held outside version control because the repository was public. It is now private, with the dev preview served through Cloudflare and `docs/` excluded from the live deploy, so they live in `docs/` and **the repository is their master copy** — replacing the 2026-08-19 decision that put it in the Claude Project sources. Both need edits recorded in the roadmap: `WGT_STRATEGY.md`'s opening section still describes the old arrangement, and `WGT_TIERS.html` still carries Built / Backlog / Idea tags that are now a second copy of the roadmap's status column.
+
+**Also recorded from [2.17]:** the gate ships dormant, so creating its product row and running `grant_founder_entitlements()` is a live operational step that must happen **before** public sign-up opens — after that, every grant is a withdrawal. It is the first item in the roadmap's Now list for that reason.
 
 ---
 ## [2.17] — 2026-08-28
@@ -62,7 +96,7 @@ The multi-user limitation pointed at "On the horizon" for what invite support ne
 
 MAJOR versions were defined as "architectural phase transitions per SPEC.md §6", which would have cited a section that no longer exists.
 
-**Moved to issues**
+**Moved to issues** *(superseded by [2.18] — GitHub Issues was never adopted, and these went to `docs/ROADMAP.md` instead. Annotated rather than rewritten, following the Phase 4.3 precedent.)*
 
 Custom email; the invite flow; surfacing `estimated_minutes` in the UI; the hide-swipe placement and direction improvement; the reveal-above weather threshold; and the two operational tidies open since [2.0] — confirming the OpenWeather key was never committed publicly (current files *and* git history; rotate only if found) and retiring the unused Apps Script *runtime* Web App deployment.
 

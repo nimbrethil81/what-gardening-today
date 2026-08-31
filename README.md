@@ -39,16 +39,3 @@ The horticultural content (the item catalogue and the task rules) is still autho
 The full authoring workflow, prompts, and a verification checklist are in [`docs/DATABASE_WORKFLOW.md`](./docs/DATABASE_WORKFLOW.md).
 
 Adding a new person's access (rather than new content) is a separate, simpler step done directly in the Supabase dashboard — see `SPEC.md` §2 for how sign-in and access control work.
-
----
-
-## 🗺️ Engineering Roadmap
-
-- [x] **Phase 1:** Zero-cost Jamstack engine & PWA delivery.
-- [x] **Phase 2:** Interactivity & stateful memory (persistent task-completion logging).
-- [x] **Phase 2.1:** Item inventory ("My Garden").
-- [x] **Phase 3:** Environmental integration (weather-filtered tasks via a secure proxy).
-- [x] **Phase 3.1:** Task dismissal (swipe-to-hide, with undo and a restore screen).
-- [x] **Phase 4:** Migration to Supabase (PostgreSQL) — schema, Row-Level Security, email authentication, and the live cutover (2026-07-17).
-
-The next items under consideration — custom email so friends can be invited, a garden switcher for genuine multi-user use, and surfacing task time estimates in the UI — are tracked in `SPEC.md` §6.

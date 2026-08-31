@@ -1,8 +1,8 @@
 {
   "name": "What Gardening Today",
   "short_name": "Gardening Today",
-  "start_url": "/what-gardening-today/",
-  "scope": "/what-gardening-today/",
+  "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#F9F9F9",
   "theme_color": "#2E7D32",
