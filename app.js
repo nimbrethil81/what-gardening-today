@@ -44,6 +44,12 @@ const configLooksValid =
 const { createClient } = window.supabase;
 const sb = configLooksValid ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
+/* Sent with every piece of feedback, so a bug report says which build it came
+ * from. It must match CACHE_NAME in sw.js, and both must be bumped in the same
+ * commit — a report labelled with a version that was never deployed is worse
+ * than no label at all. */
+const APP_VERSION = "gardening-v15";
+
 /* ---- Small helpers ------------------------------------------------------- */
 
 // Makes a user-supplied string safe to drop into innerHTML. A garden called
@@ -65,6 +71,15 @@ function plural(n, one, many) {
   return n + " " + (n === 1 ? one : many);
 }
 
+// The UK, generously boxed: Shetland at the top, Northern Ireland at the left,
+// East Anglia at the right.
+//
+// THIS IS A PRE-FILTER, NOT THE TEST. See checkUkLocation() for why a rectangle
+// on its own is not good enough. Used alone it would accept Dublin.
+function isInUK(lat, lon) {
+  return lat >= 49.8 && lat <= 60.9 && lon >= -8.7 && lon <= 1.8;
+}
+
 
 /* ---- App state ---------------------------------------------------------- */
 let currentGardenId = null;
@@ -72,7 +87,6 @@ let currentUserId = null;
 let gardens = [];                  // [{id, name, latitude, longitude, timezone,
                                    //   created_at, role, otherMembers}] oldest first
 let routedUserId = undefined;      // guards against redundant re-routing on focus
-let pendingSigninEmail = null;
 
 // Picker catalogue. One entry per (blueprint, category) pair, so a blueprint
 // listed under two tiles appears twice — which is correct: the tile it is added
@@ -152,6 +166,23 @@ let undoToastTaskId = null;
  * ========================================================================== */
 
 const LAST_GARDEN_KEY = "wgt.lastGarden";
+const REMEMBER_GARDEN_KEY = "wgt.rememberGarden";
+
+// Default ON, which is the behaviour that already existed. Wrapped like every
+// other storage access, because localStorage throws in some private modes —
+// and a preference that can break the app is not one.
+function rememberGardenEnabled() {
+  try { return window.localStorage.getItem(REMEMBER_GARDEN_KEY) !== "0"; }
+  catch (e) { return true; }
+}
+
+function setRememberGarden(on) {
+  try {
+    window.localStorage.setItem(REMEMBER_GARDEN_KEY, on ? "1" : "0");
+    if (!on) window.localStorage.removeItem(LAST_GARDEN_KEY);
+    else if (currentUserId && currentGardenId) writeLastGardenId(currentUserId, currentGardenId);
+  } catch (e) { /* preference simply won't stick */ }
+}
 
 function readLastGardenMap() {
   try {
@@ -169,6 +200,7 @@ function readLastGardenId(userId) {
 }
 
 function writeLastGardenId(userId, gardenId) {
+  if (!rememberGardenEnabled()) return;
   if (!userId || !gardenId) return;
   try {
     const map = readLastGardenMap();
@@ -321,21 +353,17 @@ function setSplashMessage(text, showRetry) {
 
 
 /* ==========================================================================
- *  SIGN IN  (Google — primary; emailed 6-digit code — kept working as a
- *  fallback, reachable via "Use email instead")
+ *  SIGN IN  (Google, and only Google)
+ *
+ *  The emailed 6-digit code used to sit behind "Use email instead". It is gone:
+ *  one way in is one thing to explain, one thing to test, and one thing that
+ *  can go wrong. The sign-in screen says so in as many words, so nobody hunts
+ *  for a way in that isn't there.
  * ========================================================================== */
 
 function showSigninDefault() {
-  // The screen you land on: Google front and centre, email flow tucked away.
-  document.getElementById("signin-google-step").classList.remove("hidden");
-  document.getElementById("signin-email-flow").classList.add("hidden");
+  // Nothing to reset but the error line — the screen has one control on it.
   document.getElementById("signin-google-error").textContent = "";
-  showSigninEmailStep(); // reset the email flow's internal state for next time
-}
-
-function showEmailFlow() {
-  document.getElementById("signin-google-step").classList.add("hidden");
-  document.getElementById("signin-email-flow").classList.remove("hidden");
 }
 
 async function handleGoogleSignIn() {
@@ -358,85 +386,6 @@ async function handleGoogleSignIn() {
     console.error("Google sign-in failed:", err);
     errEl.textContent = "Couldn't start Google sign-in. Check your connection and try again.";
     btn.disabled = false;
-  }
-}
-
-function showSigninEmailStep() {
-  document.getElementById("signin-email-step").classList.remove("hidden");
-  document.getElementById("signin-code-step").classList.add("hidden");
-  document.getElementById("signin-error").textContent = "";
-  document.getElementById("signin-code-error").textContent = "";
-}
-
-function showSigninCodeStep() {
-  document.getElementById("signin-email-step").classList.add("hidden");
-  document.getElementById("signin-code-step").classList.remove("hidden");
-}
-
-async function handleSendCode() {
-  const email = document.getElementById("signin-email").value.trim();
-  const errEl = document.getElementById("signin-error");
-  errEl.textContent = "";
-
-  if (!email || email.indexOf("@") === -1) {
-    errEl.textContent = "Please enter a valid email address.";
-    return;
-  }
-
-  const btn = document.getElementById("signin-send-btn");
-  const orig = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = "Sending…";
-
-  try {
-    const redirect = window.location.origin + window.location.pathname;
-    const { error } = await sb.auth.signInWithOtp({
-      email,
-      options: { shouldCreateUser: false, emailRedirectTo: redirect }
-    });
-    if (error) throw error;
-
-    pendingSigninEmail = email;
-    document.getElementById("signin-sent-to").textContent = email;
-    document.getElementById("signin-code").value = "";
-    showSigninCodeStep();
-  } catch (err) {
-    console.error("Sign-in send failed:", err);
-    const msg = String(err && err.message ? err.message : "").toLowerCase();
-    if (msg.indexOf("rate") !== -1 || (err && err.status === 429)) {
-      errEl.textContent = "You just asked for a code — check your inbox, or wait a minute before trying again.";
-    } else {
-      // Friendly / specific message (configurable — see docs/CONFIG_ITEMS.md #4)
-      errEl.textContent = "We couldn't send a sign-in code to that address. It may not be on the guest list — ask Dan for an invite.";
-    }
-  } finally {
-    btn.disabled = false;
-    btn.textContent = orig;
-  }
-}
-
-async function handleVerifyCode() {
-  const code = document.getElementById("signin-code").value.trim();
-  const errEl = document.getElementById("signin-code-error");
-  errEl.textContent = "";
-
-  if (!code) { errEl.textContent = "Enter the code from your email."; return; }
-  if (!pendingSigninEmail) { showSigninEmailStep(); return; }
-
-  const btn = document.getElementById("signin-verify-btn");
-  const orig = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = "Signing in…";
-
-  try {
-    const { error } = await sb.auth.verifyOtp({ email: pendingSigninEmail, token: code, type: "email" });
-    if (error) throw error;
-    // onAuthStateChange (SIGNED_IN) will fire and route() us onward.
-  } catch (err) {
-    console.error("Verify failed:", err);
-    errEl.textContent = "That code didn't work. Check it and try again, or request a new one.";
-    btn.disabled = false;
-    btn.textContent = orig;
   }
 }
 
@@ -659,6 +608,7 @@ function showGardenForm(mode, garden) {
 
   document.getElementById("setup-error").textContent = "";
   document.getElementById("setup-postcode").value = "";
+  showUkNote(false);
   saveBtn.disabled = true;
   cancelBtn.disabled = false;
 
@@ -701,15 +651,19 @@ function showGardenForm(mode, garden) {
 async function describeSavedLocation(lat, lon) {
   if (lat === null || lon === null) return;
   const confirmEl = document.getElementById("setup-location-confirm");
-  try {
-    const res = await fetch("https://api.postcodes.io/postcodes?lon=" + lon + "&lat=" + lat);
-    if (!res.ok) return;
-    const j = await res.json();
-    const r = j.result && j.result[0];
-    if (!r) return;
-    const area = [r.admin_ward || r.parish, r.admin_district].filter(Boolean).join(", ");
-    if (area && gardenFormMode === "edit") confirmEl.textContent = "📍 " + area;
-  } catch (e) { /* the neutral wording stands */ }
+
+  // Shares the one lookup, so it gets the 2 km radius and the wide-search
+  // retry instead of the 100 m default. On the default this found nothing for
+  // most gardens and silently left the neutral wording, which is the whole
+  // reason the place was almost never named here.
+  //
+  // It only ever relabels. A garden that already exists is not re-judged on
+  // the way into the edit form, whatever the lookup says about it — that
+  // would be a rule applied to somebody after the fact.
+  const place = await checkUkLocation(lat, lon);
+  if (place.area && gardenFormMode === "edit") {
+    confirmEl.textContent = "📍 " + place.area;
+  }
 }
 
 function handleCancelGardenForm() {
@@ -720,11 +674,89 @@ function handleCancelGardenForm() {
   showView("app");
 }
 
+function showUkNote(show) {
+  const el = document.getElementById("setup-uk-note");
+  if (el) el.classList.toggle("hidden", !show);
+}
+
+/* Refusing is not an error. Nothing went wrong; the answer is simply no. So it
+ * gets the explanation panel rather than the red error line, and it leaves
+ * setupLat/setupLon null, which is what keeps Create greyed out. */
+function refuseNonUkLocation() {
+  setupLat = null;
+  setupLon = null;
+  document.getElementById("setup-location-confirm").classList.add("hidden");
+  showUkNote(true);
+  validateSetup();
+}
+
+/* Is this garden in the UK, and what is this place called? One question, not
+ * two, because the same request answers both.
+ *
+ * DO NOT "SIMPLIFY" THIS BACK TO A BOUNDING BOX. A lat/lon rectangle drawn
+ * around the UK also contains most of the Republic of Ireland and all of the
+ * Isle of Man. Dublin (53.35, -6.26), Cork (51.90, -8.47) and Douglas
+ * (54.15, -4.48) all sit inside the box below. None of them is the UK,
+ * terms.html §2 says the advice will not be right outside the UK, and quietly
+ * accepting an Irish garden is a real failure rather than a cosmetic one.
+ *
+ * What actually tells them apart is that postcodes.io holds UK postcodes and
+ * nothing else. So "is there a UK postcode anywhere near here?" IS the UK
+ * test — and it is the same call that already names the place on screen.
+ *
+ * TWO ATTEMPTS, because neither alone is enough:
+ *   1. radius=2000, the documented maximum, NOT the default. The default is
+ *      about 100 m and misses ordinary suburban gardens — Amersham comes back
+ *      empty on it. Starting wide enough is what keeps the second call rare.
+ *   2. wideSearch=true, roughly 20 km, only when the first finds nothing. This
+ *      is what covers Foula and Fair Isle, which are UK and are a long way
+ *      from anything.
+ *
+ * Note that radius is CLAMPED to its maximum in silence, so asking for a
+ * bigger one is not a substitute for wideSearch: radius=20000 finds nothing in
+ * the Cairngorms, where wideSearch finds PH22. Both were checked against the
+ * live API rather than assumed.
+ *
+ * A miss is `result: null`, not an empty array.
+ *
+ * A FAILED REQUEST IS NOT A REFUSAL. If postcodes.io is unreachable or returns
+ * an error we fall back to the bounding box and accept, because somebody
+ * else's outage must never lock a real UK gardener out of their own garden. */
+async function checkUkLocation(lat, lon) {
+  // Free, offline, and catches Paris without a single request.
+  if (!isInUK(lat, lon)) return { inUK: false, area: null };
+
+  const base = "https://api.postcodes.io/postcodes?lon=" + encodeURIComponent(lon) +
+               "&lat=" + encodeURIComponent(lat) + "&limit=1";
+
+  try {
+    let nearest = await nearestPostcode(base + "&radius=2000");
+    if (!nearest) nearest = await nearestPostcode(base + "&wideSearch=true");
+    if (!nearest) return { inUK: false, area: null };
+
+    const area = [nearest.admin_ward || nearest.parish, nearest.admin_district]
+      .filter(Boolean).join(", ");
+    return { inUK: true, area: area || null };
+
+  } catch (err) {
+    console.warn("postcodes.io lookup failed — falling back to the bounding box:", err);
+    return { inUK: true, area: null };
+  }
+}
+
+async function nearestPostcode(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("postcodes.io returned " + res.status);
+  const json = await res.json();
+  return (json.result && json.result[0]) || null;   // a miss is null, not []
+}
+
 async function handleFindPostcode() {
   const pc = document.getElementById("setup-postcode").value.trim();
   const errEl = document.getElementById("setup-error");
   const confirmEl = document.getElementById("setup-location-confirm");
   errEl.textContent = "";
+  showUkNote(false);
 
   if (!pc) { errEl.textContent = "Enter a postcode."; return; }
 
@@ -738,8 +770,15 @@ async function handleFindPostcode() {
     if (!res.ok) throw new Error("not found");
     const json = await res.json();
     const r = json.result;
+
+    // Belt and braces. postcodes.io only resolves UK postcodes, so this cannot
+    // fire — which is exactly why it is worth keeping: it costs one comparison
+    // and it says out loud what the rule on this screen is.
+    if (!isInUK(r.latitude, r.longitude)) { refuseNonUkLocation(); return; }
+
     setupLat = r.latitude;
     setupLon = r.longitude;
+    showUkNote(false);
     const area = [r.admin_ward || r.parish, r.admin_district].filter(Boolean).join(", ");
     confirmEl.textContent = "📍 " + (area || "Location found");
     confirmEl.classList.remove("hidden");
@@ -758,6 +797,7 @@ function handleUseLocation() {
   const errEl = document.getElementById("setup-error");
   const confirmEl = document.getElementById("setup-location-confirm");
   errEl.textContent = "";
+  showUkNote(false);
 
   if (!navigator.geolocation) {
     errEl.textContent = "Your device can't share its location — enter a postcode instead.";
@@ -770,25 +810,24 @@ function handleUseLocation() {
   btn.textContent = "Locating…";
 
   navigator.geolocation.getCurrentPosition(async (pos) => {
-    setupLat = pos.coords.latitude;
-    setupLon = pos.coords.longitude;
+    const lat = pos.coords.latitude;
+    const lon = pos.coords.longitude;
 
-    let area = "Current location";
-    try {
-      const res = await fetch(`https://api.postcodes.io/postcodes?lon=${setupLon}&lat=${setupLat}`);
-      if (res.ok) {
-        const j = await res.json();
-        if (j.result && j.result[0]) {
-          const r = j.result[0];
-          area = [r.admin_ward || r.parish, r.admin_district].filter(Boolean).join(", ") || area;
-        }
-      }
-    } catch (e) { /* keep the generic label */ }
+    // One lookup answers both questions. The UK test used to be a rectangle
+    // done here, with a separate request purely for the label; the request was
+    // always the better test and was already being made.
+    const place = await checkUkLocation(lat, lon);
 
-    confirmEl.textContent = "📍 " + area;
-    confirmEl.classList.remove("hidden");
     btn.disabled = false;
     btn.textContent = orig;
+
+    if (!place.inUK) { refuseNonUkLocation(); return; }
+
+    setupLat = lat;
+    setupLon = lon;
+    showUkNote(false);
+    confirmEl.textContent = "📍 " + (place.area || "Current location");
+    confirmEl.classList.remove("hidden");
     validateSetup();
   }, (err) => {
     console.warn("Geolocation blocked:", err);
@@ -1199,6 +1238,129 @@ async function handleConfirmDeleteAccount() {
     btn.disabled = false;
     cancelBtn.disabled = false;
     btn.textContent = orig;
+  }
+}
+
+
+/* ==========================================================================
+ *  SEND FEEDBACK
+ *
+ *  A row in `feedback` (db/15), not a mailto. The published email address is
+ *  still there and still required — somebody who cannot sign in must be able to
+ *  reach a human — but a row arrives already attached to a user and a version,
+ *  which is the round-trip an email costs.
+ *
+ *  THREE COLUMNS, and only three. user_id has no INSERT grant at all: it
+ *  defaults to auth.uid(), so it cannot be supplied and cannot be forged.
+ *  Sending it would not be helpful; it would be a 42501.
+ * ========================================================================== */
+
+function openFeedbackModal() {
+  const form = document.getElementById("feedback-form");
+  const thanks = document.getElementById("feedback-thanks");
+  const body = document.getElementById("feedback-body");
+  const bug = document.querySelector('input[name="feedback-kind"][value="bug"]');
+  const errEl = document.getElementById("feedback-error");
+
+  // A fresh box every time it opens. The one case where the previous message
+  // is deliberately kept is a failed send — and that leaves the modal open.
+  if (form) form.classList.remove("hidden");
+  if (thanks) thanks.classList.add("hidden");
+  if (body) body.value = "";
+  if (bug) bug.checked = true;
+  if (errEl) errEl.textContent = "";
+
+  document.getElementById("feedback-modal").classList.remove("hidden");
+}
+
+function closeFeedbackModal() {
+  document.getElementById("feedback-modal").classList.add("hidden");
+}
+
+async function handleSendFeedback() {
+  const errEl = document.getElementById("feedback-error");
+  const bodyEl = document.getElementById("feedback-body");
+  const btn = document.getElementById("feedback-send-btn");
+  const orig = btn.textContent;
+
+  errEl.textContent = "";
+
+  const checked = document.querySelector('input[name="feedback-kind"]:checked');
+  const kind = checked ? checked.value : "other";
+  const body = bodyEl.value.trim();
+
+  if (!body) { errEl.textContent = "Write something first."; return; }
+
+  // What screen they were on when they hit Send. Capped hard by the column
+  // check (2,000 characters of jsonb) — this is a label, never free prose.
+  const active = document.querySelector(".view-section.active-view");
+  const context = {
+    v: APP_VERSION,
+    view: active ? active.id.replace(/^view-/, "") : "unknown"
+  };
+
+  btn.disabled = true;
+  btn.textContent = "Sending…";
+
+  let httpStatus = 0;
+
+  try {
+    const res = await sb.from("feedback").insert({ kind, body, context });
+    httpStatus = res.status || 0;
+    if (res.error) throw res.error;
+
+    document.getElementById("feedback-form").classList.add("hidden");
+    document.getElementById("feedback-thanks").classList.remove("hidden");
+    bodyEl.value = "";
+    const bug = document.querySelector('input[name="feedback-kind"][value="bug"]');
+    if (bug) bug.checked = true;
+
+  } catch (err) {
+    console.error("Send feedback failed:", err);
+
+    // Branch on the HINT, never on the English: the wording of a database
+    // exception is not an interface, and 54000 alone does not distinguish this
+    // from the 200-item ceiling.
+    if (err && err.hint === "feedback:daily-limit") {
+      errEl.textContent = "You've reached today's feedback limit. Thanks for everything you've " +
+        "sent — you can send more tomorrow. If something's urgent, email me at " +
+        "whatgardeningtoday@gmail.com.";
+
+    } else if (await sessionHasGone(err, httpStatus)) {
+      // Signed out or expired while the modal was open. "Check your connection"
+      // would be a lie, and retrying would fail exactly the same way, so send
+      // them where the problem actually is.
+      closeFeedbackModal();
+      route();
+      return;
+
+    } else {
+      errEl.textContent = "Couldn't send that — check your connection and try again. " +
+        "Your message is still here.";
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
+}
+
+/* A 401, or PostgREST's own "JWT expired" code, is the cheap tell. Asking
+ * supabase-js whether there is still a session is the reliable one, and it is
+ * the only one that works offline — a send that never reached the server was
+ * never refused by it. Both are asked, in that order.
+ *
+ * Note that being offline is NOT this: getSession() reads the stored session
+ * locally and does not go to the network, so it still answers "yes, signed in"
+ * with the wi-fi off. That is what keeps the offline case on the ordinary
+ * "check your connection" branch where it belongs. */
+async function sessionHasGone(err, httpStatus) {
+  if (httpStatus === 401) return true;
+  if (err && String(err.code || "").indexOf("PGRST301") !== -1) return true;
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    return !session;
+  } catch (e) {
+    return false;   // couldn't tell — treat it as the ordinary failure
   }
 }
 
@@ -2066,6 +2228,11 @@ function openSettingsModal() {
   const deleteBtn = document.getElementById("delete-garden-btn");
   if (deleteBtn) deleteBtn.classList.toggle("hidden", !isOwner);
 
+  // Read from storage every time it opens: the preference lives in this device,
+  // not in this session, so another tab may have changed it.
+  const rememberToggle = document.getElementById("remember-garden-toggle");
+  if (rememberToggle) rememberToggle.checked = rememberGardenEnabled();
+
   document.getElementById("settings-modal").classList.remove("hidden");
   fetchHiddenTasks();
 }
@@ -2079,6 +2246,7 @@ function closeAllModals() {
   closeGardenModal();
   closeGardenDangerModal();
   closeDeleteAccountModal();
+  closeFeedbackModal();
 }
 
 async function fetchHiddenTasks() {
@@ -2235,21 +2403,6 @@ document.addEventListener("DOMContentLoaded", () => {
   // --- Sign-in screen ---
   const googleBtn = document.getElementById("signin-google-btn");
   if (googleBtn) googleBtn.addEventListener("click", handleGoogleSignIn);
-  const useEmailBtn = document.getElementById("signin-use-email-btn");
-  if (useEmailBtn) useEmailBtn.addEventListener("click", showEmailFlow);
-  const useGoogleBtn = document.getElementById("signin-use-google-btn");
-  if (useGoogleBtn) useGoogleBtn.addEventListener("click", showSigninDefault);
-
-  const sendBtn = document.getElementById("signin-send-btn");
-  if (sendBtn) sendBtn.addEventListener("click", handleSendCode);
-  const verifyBtn = document.getElementById("signin-verify-btn");
-  if (verifyBtn) verifyBtn.addEventListener("click", handleVerifyCode);
-  const backBtn = document.getElementById("signin-back-btn");
-  if (backBtn) backBtn.addEventListener("click", showSigninEmailStep);
-  const emailInput = document.getElementById("signin-email");
-  if (emailInput) emailInput.addEventListener("keydown", e => { if (e.key === "Enter") handleSendCode(); });
-  const codeInput = document.getElementById("signin-code");
-  if (codeInput) codeInput.addEventListener("keydown", e => { if (e.key === "Enter") handleVerifyCode(); });
 
   // --- Garden form (first run / add another / edit) ---
   const findBtn = document.getElementById("setup-find-btn");
@@ -2326,8 +2479,24 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   const hiddenTasksList = document.getElementById("hidden-tasks-list");
   if (hiddenTasksList) hiddenTasksList.addEventListener("click", handleRestoreTask);
+  const rememberToggle = document.getElementById("remember-garden-toggle");
+  if (rememberToggle) {
+    rememberToggle.addEventListener("change", (e) => setRememberGarden(e.target.checked));
+  }
   const signOutBtn = document.getElementById("signout-btn");
   if (signOutBtn) signOutBtn.addEventListener("click", handleSignOut);
+
+  // --- Send feedback ---
+  const feedbackBtn = document.getElementById("feedback-btn");
+  if (feedbackBtn) feedbackBtn.addEventListener("click", openFeedbackModal);
+  const closeFeedbackBtn = document.getElementById("close-feedback-modal");
+  if (closeFeedbackBtn) closeFeedbackBtn.addEventListener("click", closeFeedbackModal);
+  const feedbackSendBtn = document.getElementById("feedback-send-btn");
+  if (feedbackSendBtn) feedbackSendBtn.addEventListener("click", handleSendFeedback);
+  const feedbackModal = document.getElementById("feedback-modal");
+  if (feedbackModal) {
+    feedbackModal.addEventListener("click", (e) => { if (e.target === feedbackModal) closeFeedbackModal(); });
+  }
 
   // --- This garden: rename / change location, leave, delete ---
   const editGardenBtn = document.getElementById("edit-garden-btn");

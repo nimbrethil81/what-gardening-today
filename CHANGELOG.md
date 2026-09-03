@@ -12,6 +12,28 @@ Entries are the record of what changed and when. Reasoning that is still true of
 Entries before 2.16 refer to numbered development phases ("Phase 4") and to `SPEC.md` §6, the roadmap section that recorded them. **That section was removed in 2.16**; those references are historical and are deliberately not rewritten. [2.16] also speaks of moving items to GitHub Issues, which was never adopted — see [2.18].
 
 ---
+## [2.20] — 2026-09-03
+
+### One way in, UK gardens only, and a way to write back
+
+Seven changes shipped as one release, plus two defects found while testing it. The sign-in screen now says what the app is and that Google is the only way in; the emailed code is gone; a garden outside the UK is refused where it is created; and there is a Send feedback panel, which gives the project its first inbound channel from a user who is not Dan. Public sign-up stays **off**.
+
+- **Removed the emailed 6-digit sign-in code** — markup, six functions, one module variable, eight listeners and a CSS rule. Dormant since built and untestable (built-in email only reliably reaches the owner's own address), and a second way in is a second thing to explain, test and break. The screen states that Google is the only option, because one that offers no alternative and does not say so reads as a fault. Changed `SPEC.md` §2, §4 and §5E, and `docs/CONFIG_ITEMS.md` #3, #3a and #4, all of which described the removed path as live.
+- **Added the sign-in fine print** — what the app is, Terms, Privacy Notice and a contact address. Links are **relative**: the app serves from a subpath, where `/terms.html` would 404.
+- **Added `feedback` to the UI** (`db/15`, applied earlier). Three columns are inserted and only three — `user_id` has no INSERT grant and supplying it turns a working write into a `42501`. Three failure branches in a fixed order: the daily limit matched on the **hint** (`54000` alone no longer identifies which guard fired, now that two do), a session that has gone, and everything else, which keeps the typed message. An offline send lands on the third deliberately — `getSession()` reads locally and still answers "signed in" with the network down.
+- **Added a "remember which garden I was last in" switch** — device-level, default on, one key. `writeLastGardenId()` gained one line; `route()` already fell back to the oldest garden. Turning it off clears the stored map rather than ignoring it, landing on the same path as blocked storage, which already worked. The help line naming what is stored and where is the "clear information" half of the PECR exception and is not trimmable copy.
+- **Reworded the one-garden gate** to say what it means for the garden you already have. No logic change.
+- **Fixed — the UK check accepted Dublin.** The bounding box shipped in the first commit also contains most of the Republic of Ireland and all of the Isle of Man; Dublin, Cork and Douglas all passed it, and `terms.html` §2 says the advice will not be right outside the UK. postcodes.io holds UK postcodes and nothing else, so "is there a UK postcode near here?" is the test — and it is the same call that already named the place. The box survives as a free offline pre-filter. **Verified against the live API rather than assumed**, which corrected two things: `radius` is clamped to its 2 km maximum in silence, so a larger radius is not a substitute for `wideSearch` (`radius=20000` finds nothing in the Cairngorms where `wideSearch` finds PH22); and the *default* radius is ~100 m and misses ordinary gardens. **Fails open** — an unreachable postcodes.io accepts on the box alone, because somebody else's outage must not lock a UK gardener out of their own garden.
+- **Fixed — the location label had been quietly broken.** Both reverse lookups used that ~100 m default, so "📍 ward, district" fell back to the neutral wording for most gardens and nothing said so. Both now share one lookup, so there is a single place that turns coordinates into a place name.
+- **Changed `sw.js` to `gardening-v15`**, with `APP_VERSION` in `app.js` matching. The version is sent with every piece of feedback, so the two drifting would label reports with a build that was never deployed.
+
+**Two allow-lists, and only one of them is loud.** Testing was diagnosed against the wrong build for a full cycle because signing in on the dev preview landed on the *live* site: Supabase ignores a redirect address that is not on its allow-list, silently, and falls back to the Site URL. That is a different list from the Edge Function's `ALLOWED_ORIGINS`, and neither failure resembles the other. Now written down in `docs/OPERATIONS.md` §4, `docs/CONFIG_ITEMS.md` #3b, and `SPEC.md` §4.
+
+- **Added `docs/OPERATIONS.md` §4 and §5** — registering a surface's return address, and what to do when the `Unread feedback` action goes red. That job had never fired, because until now nothing could write to the table; a red tick there means somebody wrote to you, not that the build is broken.
+- **Added `feedback` to `SPEC.md` §3**, which it had never had, and `docs/CONFIG_ITEMS.md` #30 and #31 for the daily limit and the UK check. The limit's own SQL claimed to be recorded there and was not.
+- **Fixed — `docs/CONFIG_ITEMS.md` #12 was stale.** It listed the Edge Function's allowed origins as GitHub Pages plus localhost, long after the move to Cloudflare and the custom domain. Five origins are live. Unrelated to this work; found by reading the file.
+
+---
 ## [2.19] — 2026-08-28
 
 ### The garden gate is live, and the founder circle is closed

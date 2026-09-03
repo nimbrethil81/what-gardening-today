@@ -786,26 +786,32 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
 
 .garden-add-row .secondary-action-btn { margin-top: 0; }
 
-/* --- "ONE GARDEN FOR NOW" --- */
+/* --- QUIET EXPLANATION PANELS (the garden gate, and "UK gardens only") --- */
 /* Deliberately quiet: no badge, no lock, no crown, no colour that says
    "upgrade". It is an explanation, not an advertisement, because there is
    nothing to sell yet. Sits under the button rather than replacing it, so the
-   control it explains is still visible next to the explanation. */
-.garden-gate-note {
+   control it explains is still visible next to the explanation. The
+   UK-only note on the garden form is the same thing for the same reason, so it
+   shares these rules rather than copying them — two panels that say "this is
+   not a fault, it is the answer" should not drift apart. */
+.garden-gate-note,
+.setup-note {
   margin-top: 12px;
   padding: 12px 14px;
   border-radius: 10px;
   background-color: var(--bg-app);
 }
 
-.garden-gate-title {
+.garden-gate-title,
+.setup-note-title {
   margin: 0 0 4px 0;
   font-size: 15px;
   font-weight: 700;
   color: var(--text-main);
 }
 
-.garden-gate-body {
+.garden-gate-body,
+.setup-note-body {
   margin: 0;
   font-size: 14px;
   line-height: 1.45;
@@ -992,7 +998,6 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
 .auth-brand { font-size: 44px; text-align: center; line-height: 1; }
 .auth-title { font-size: 22px; text-align: center; margin: 10px 0 6px; }
 .auth-subtitle { font-size: 14px; color: var(--text-muted); text-align: center; margin: 0 0 18px; line-height: 1.45; }
-.auth-sent { font-size: 14px; color: var(--text-main); margin: 4px 0 6px; line-height: 1.45; }
 .auth-error { color: var(--accent-red); font-size: 13px; margin: 10px 2px 0; min-height: 1em; line-height: 1.4; }
 
 .text-btn {
@@ -1080,3 +1085,145 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
 /* Cancel sits under the primary action and is deliberately unemphatic: on the
    first run it is not shown at all, because there is nowhere to go back to. */
 #setup-cancel-btn { margin-top: 2px; }
+
+
+/* --- THE THREE QUIET LINES UNDER THE GOOGLE BUTTON --- */
+/* One class for all three, so "Google is the only way in", the agreement line
+   and the contact link read as one block of small print rather than three
+   unrelated afterthoughts. */
+.auth-fineprint {
+  font-size: 13px;
+  color: var(--text-muted);
+  text-align: center;
+  line-height: 1.45;
+  margin: 10px 0 0;
+}
+
+.auth-fineprint a {
+  color: var(--brand-green);
+  font-weight: 600;
+}
+
+
+/* --- SETTINGS: A PREFERENCE ROW --- */
+/* Label left, control right. The checkbox is the browser's own: it is already
+   keyboard-reachable, already announced correctly by a screen reader, and
+   already looks like a switch on a phone. A div pretending to be one would be
+   none of those things. */
+.settings-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--bg-card);
+  border-radius: 12px;
+  padding: 14px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);
+}
+
+.settings-toggle-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-main);
+  line-height: 1.35;
+  cursor: pointer;
+}
+
+.settings-toggle {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  accent-color: var(--brand-green);
+  cursor: pointer;
+}
+
+/* Not decoration. Saying what is stored and where is the half of the exception
+   that lets this be kept without asking permission first — see the note in
+   index.html. It must not be trimmed for tidiness. */
+.settings-toggle-help {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.45;
+  margin: 8px 2px 14px;
+}
+
+.settings-contact-line {
+  font-size: 13px;
+  color: var(--text-muted);
+  text-align: center;
+  line-height: 1.45;
+  margin: 10px 0 0;
+}
+
+.settings-contact-line a {
+  color: var(--brand-green);
+  font-weight: 600;
+}
+
+
+/* --- SEND FEEDBACK --- */
+.feedback-lede {
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--text-main);
+  margin: 0 0 4px;
+}
+
+.feedback-kind-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.feedback-kind-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg-card);
+  border-radius: 10px;
+  padding: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-main);
+  cursor: pointer;
+}
+
+.feedback-kind-row input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--brand-green);
+  cursor: pointer;
+}
+
+.feedback-textarea {
+  width: 100%;
+  min-height: 120px;
+  box-sizing: border-box;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--text-main);
+  background: var(--bg-card);
+  border: 1.5px solid var(--border-color);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.feedback-textarea:focus { border-color: var(--brand-green); outline: none; }
+
+.feedback-note {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.45;
+  margin: 12px 0 0;
+}
+
+/* Replaces the form rather than sitting above it: a filled-in box next to
+   "that's arrived" reads as "it didn't send — try again". */
+.feedback-thanks {
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--text-main);
+  margin: 4px 0 8px;
+}

@@ -31,7 +31,7 @@
     <div class="auth-card">
       <div class="auth-brand">🌱</div>
       <h1 class="auth-title">What Gardening Today?</h1>
-      <p class="auth-subtitle">Sign in to see today's jobs in your garden.</p>
+      <p class="auth-subtitle">Tells you what's worth doing in your garden today — for the plants you actually have, in the weather you've actually got. Made for gardens in the UK.</p>
 
       <!-- Primary: Google -->
       <div id="signin-google-step">
@@ -45,35 +45,18 @@
           Continue with Google
         </button>
         <p id="signin-google-error" class="auth-error"></p>
-        <button id="signin-use-email-btn" class="text-btn">Use email instead</button>
-      </div>
 
-      <!-- Email flow (kept working, off by default — see signin-use-email-btn above) -->
-      <div id="signin-email-flow" class="hidden">
-
-        <!-- Step 1: email -->
-        <div id="signin-email-step">
-          <p class="form-instruction">Your email</p>
-          <div class="modern-input-wrapper">
-            <input type="email" id="signin-email" placeholder="you@example.com" autocomplete="email" inputmode="email">
-          </div>
-          <button id="signin-send-btn" class="primary-action-btn">Email me a sign-in code</button>
-          <p id="signin-error" class="auth-error"></p>
-          <button id="signin-use-google-btn" class="text-btn">Use Google instead</button>
-        </div>
-
-        <!-- Step 2: code -->
-        <div id="signin-code-step" class="hidden">
-          <p class="auth-sent">We've emailed <strong id="signin-sent-to"></strong>. Enter the 6-digit code below, or tap the link in the email.</p>
-          <p class="form-instruction">Code from your email</p>
-          <div class="modern-input-wrapper">
-            <input type="text" id="signin-code" placeholder="123456" inputmode="numeric" autocomplete="one-time-code" maxlength="6">
-          </div>
-          <button id="signin-verify-btn" class="primary-action-btn">Sign in</button>
-          <button id="signin-back-btn" class="text-btn">Use a different email</button>
-          <p id="signin-code-error" class="auth-error"></p>
-        </div>
-
+        <!-- The three quiet lines below the button. The hrefs are RELATIVE on
+             purpose: the app is served from a subpath on github.io, where an
+             absolute /terms.html would 404. -->
+        <p class="auth-fineprint">Google is the only way to sign in at the moment.</p>
+        <p class="auth-fineprint">
+          By continuing you agree to the <a href="terms.html">Terms</a> and the
+          <a href="privacy.html">Privacy Notice</a>.
+        </p>
+        <p class="auth-fineprint">
+          <a href="mailto:whatgardeningtoday@gmail.com">Get in touch</a>
+        </p>
       </div>
     </div>
   </div>
@@ -113,6 +96,18 @@
       <button id="setup-locate-btn" class="secondary-action-btn">📍 Use my current location</button>
 
       <p id="setup-location-confirm" class="setup-location-confirm hidden"></p>
+
+      <!-- Shown in place of a confirmed location when the coordinates land
+           outside the UK. An explanation, not an error: nothing has gone
+           wrong, the answer is simply no. -->
+      <div id="setup-uk-note" class="setup-note hidden">
+        <p class="setup-note-title">I can only help with UK gardens</p>
+        <p class="setup-note-body">
+          Everything here is built around the UK growing year and UK weather. The advice
+          wouldn't be right for a garden somewhere else, and I'd rather say so than guess.
+        </p>
+      </div>
+
       <p id="setup-error" class="auth-error"></p>
 
       <button id="setup-create-btn" class="primary-action-btn" disabled>Create my garden</button>
@@ -272,10 +267,11 @@
              out: both read as breakage rather than as an answer. No upgrade
              button, because there is nothing yet to upgrade to. -->
         <div id="garden-gate-note" class="garden-gate-note hidden">
-          <p class="garden-gate-title">One garden for now</p>
+          <p class="garden-gate-title">You can keep one garden</p>
           <p class="garden-gate-body">
-            Keeping more than one garden will be part of a paid version later on.
-            It isn't something you can buy yet.
+            The option to add more gardens may be a paid feature in future.
+            There's nothing to buy now, and the garden you've set up stays yours
+            either way.
           </p>
         </div>
       </div>
@@ -314,6 +310,26 @@
         </div>
 
         <p class="settings-group-title settings-group-title--account">Account</p>
+
+        <!-- Device-level, not account-level: it is a convenience stored in this
+             browser's localStorage and nowhere else. The help line underneath
+             is the "clear information" half of the PECR exception that lets it
+             be stored without a consent prompt — it is not decoration and must
+             not be dropped for tidiness. -->
+        <div class="settings-toggle-row">
+          <label class="settings-toggle-label" for="remember-garden-toggle">
+            Remember which garden I was last in
+          </label>
+          <input type="checkbox" id="remember-garden-toggle" class="settings-toggle">
+        </div>
+        <p class="settings-toggle-help">
+          Stored on this device only. Turn it off and the app always opens your oldest garden.
+        </p>
+
+        <button id="feedback-btn" class="settings-row-btn">Send feedback</button>
+        <p class="settings-contact-line">
+          <a href="mailto:whatgardeningtoday@gmail.com">Get in touch</a>
+        </p>
 
         <div class="signout-row">
           <button id="signout-btn" class="signout-btn">Sign out</button>
@@ -374,6 +390,64 @@
           <button id="delete-cancel-btn" class="primary-action-btn">Keep my account</button>
           <button id="delete-confirm-btn" class="signout-btn">Yes, delete everything</button>
         </div>
+      </div>
+    </div>
+
+    <!-- ============================================================= -->
+    <!--  SEND FEEDBACK                                                -->
+    <!--                                                               -->
+    <!--  The same bottom sheet as everything else, so there is no new  -->
+    <!--  interaction to learn. The thank-you replaces the form rather  -->
+    <!--  than sitting above it: leaving a filled-in box on screen next -->
+    <!--  to "that's arrived" reads as "it didn't send, try again".     -->
+    <!-- ============================================================= -->
+    <div id="feedback-modal" class="modal-overlay hidden" role="dialog" aria-label="Send feedback">
+      <div class="modal-panel">
+        <div class="modal-header">
+          <h2 class="section-title">Send feedback</h2>
+          <button id="close-feedback-modal" class="modal-close-btn" aria-label="Close">✕</button>
+        </div>
+
+        <div id="feedback-form">
+          <p class="feedback-lede">
+            Found something that isn't working, or thought of something the app
+            could do? Your message goes straight to the person who built it.
+          </p>
+
+          <p class="form-instruction">What's this about?</p>
+          <div class="feedback-kind-list" role="radiogroup" aria-label="What's this about?">
+            <label class="feedback-kind-row">
+              <input type="radio" name="feedback-kind" value="bug" checked>
+              <span>Something's broken</span>
+            </label>
+            <label class="feedback-kind-row">
+              <input type="radio" name="feedback-kind" value="idea">
+              <span>An idea</span>
+            </label>
+            <label class="feedback-kind-row">
+              <input type="radio" name="feedback-kind" value="other">
+              <span>Something else</span>
+            </label>
+          </div>
+
+          <p class="form-instruction">Your message</p>
+          <textarea id="feedback-body" class="feedback-textarea" maxlength="4000"
+                    placeholder="What happened, or what you'd like to see."></textarea>
+
+          <p class="feedback-note">
+            Your email address and the version of the app you're using will be sent
+            with your message. Your email lets me reply, and the app version helps
+            me track down problems.
+          </p>
+
+          <p id="feedback-error" class="auth-error"></p>
+
+          <button id="feedback-send-btn" class="primary-action-btn">Send</button>
+        </div>
+
+        <p id="feedback-thanks" class="feedback-thanks hidden">
+          Thanks — that's arrived. I read everything, though replies can take a while.
+        </p>
       </div>
     </div>
 
