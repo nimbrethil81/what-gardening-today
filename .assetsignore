@@ -1,0 +1,13 @@
+*
+!index.html
+!app.js
+!style.css
+!config.js
+!manifest.json
+!sw.js
+!privacy.html
+!terms.html
+!README.md
+!CHANGELOG.md
+!assets/
+!assets/**
