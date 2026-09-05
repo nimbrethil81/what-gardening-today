@@ -31,7 +31,7 @@
 <body>
 
 <h1>Privacy Notice</h1>
-<p class="meta">What Gardening Today? · Last updated 31 August 2026</p>
+<p class="meta">What Gardening Today? · Last updated 4 September 2026</p>
 
 <p class="lead">What the app holds about you, why it holds it, who else is involved, and what you
 can ask me to do about it.</p>
@@ -109,8 +109,8 @@ decision about you, and it is not used for anything beyond the purposes describe
 <ul>
   <li><strong>To provide the service you asked for</strong> — your account, your garden and its
       location and contents, the jobs you complete or hide, and everything needed to work out what
-      to suggest. It also covers sending your postcode to postcodes.io when you ask the app to look
-      one up, and sending an approximate location to OpenWeather to get the weather.
+      to suggest. It also covers sending a postcode or coordinates to postcodes.io to find or
+      check a garden's location, and sending an approximate location to OpenWeather to get the weather.
       <em>(Performance of a contract.)</em></li>
   <li><strong>To keep the app secure and working</strong> — sign-in times, and the limited
       technical information involved in serving the website and running the database. My interest
@@ -143,8 +143,8 @@ the tally I would expect to simply stop.</p>
 <ul>
   <li><strong>Your sign-in</strong>, so you stay signed in between visits. The app cannot work
       signed-in without it.</li>
-  <li><strong>A copy of the app itself</strong>, so it opens quickly and still works when your
-      connection is poor — which, in a garden, it often is.</li>
+  <li><strong>A copy of the app itself</strong>, to help its screens load on a poor connection.
+      Your garden data and today's suggestions still need a connection.</li>
   <li><strong>Which garden you last looked at</strong>, so it opens where you left off. This
       affects only how the app appears on that device, and <strong>you can turn it off in
       Settings</strong>.</li>
@@ -177,16 +177,33 @@ on your device.</p>
         address in order to deliver the pages to you.</td>
   </tr>
   <tr>
+    <td><strong>GitHub</strong></td>
+    <td>Runs and stores access-restricted database backups, including garden records and in-app
+        feedback, for up to seven days. These do not include the sign-in system's account records.
+        GitHub also serves the older GitHub Pages address, processing technical information such
+        as your IP address when you use that address.</td>
+  </tr>
+  <tr>
+    <td><strong>jsDelivr</strong></td>
+    <td>Delivers a software library the app loads in your browser. Like a web host, it receives
+        your IP address and the technical information needed to deliver that file.</td>
+  </tr>
+  <tr>
     <td><strong>OpenWeather</strong></td>
-    <td>Provides the weather. They receive <strong>only a rounded, approximate location</strong> —
-        deliberately coarse, and shared between all nearby gardens. No account, name, email or
-        identifier of any kind is sent, and they cannot tell one user from another.</td>
+    <td>Provides the weather. For the weather lookup, the server sends a
+        <strong>rounded, approximate location</strong>, not your name, email address, account ID
+        or garden ID. Nearby gardens in the same rounded area share a cached reading.
+        Weather icons load separately <strong>from your browser</strong>, so OpenWeather also
+        receives your IP address and ordinary technical request information when an icon loads.</td>
   </tr>
   <tr>
     <td><strong>postcodes.io</strong></td>
-    <td>Turns a postcode into a location when you set up a garden. This lookup happens
-        <strong>from your own browser</strong>, so your postcode and your IP address reach them
-        directly. A free UK service run by Ideal Postcodes.</td>
+    <td>Looks up a postcode you enter, and uses coordinates to check that a garden is in the UK
+        and find its area. Those coordinates may come from your device's location or a postcode
+        lookup. These requests happen <strong>from your own browser</strong>, so the postcode or
+        coordinates used for the lookup, and your IP address, reach them directly. Coordinates
+        sent for this check are not rounded to the coarse weather location. A free UK service
+        run by Ideal Postcodes.</td>
   </tr>
 </table>
 
@@ -206,15 +223,21 @@ would like more detail about a particular transfer or the safeguards behind it.<
 
 <h2>How long it is kept</h2>
 
-<p><strong>Your account and everything in it: for as long as your account exists.</strong></p>
+<p><strong>Your account: for as long as it exists. Garden records: for as long as the garden
+exists.</strong></p>
 
-<p>You can delete your account yourself, from Settings inside the app. Doing so removes it from
-the live app straight away and cannot be undone — your gardens, everything in them, your history,
-your activity record and any feedback you sent through the app. There is no waiting period and
-nothing is kept back for you to restore, so please be sure before you confirm.</p>
+<p>You can delete your account yourself, from Settings inside the app. A successful deletion
+removes your account, your garden memberships and any feedback you sent through the app from
+the live database straight away. It cannot be undone through the app.</p>
+
+<p>A garden where you are the only member is deleted too, including its contents, job history,
+hidden jobs and daily activity records. <strong>If other members remain, the garden and those
+records stay available to them</strong>, including things you added or recorded. If you were
+its only owner, ownership passes to the longest-standing remaining member. Please check what
+will happen before you confirm.</p>
 
 <p>Deleted information may survive for a short time in access-restricted backups of the database,
-for up to <strong>seven days</strong>, until those backups are overwritten in the ordinary course.
+for up to <strong>seven days</strong>, until those backups expire in the ordinary course.
 They exist to recover from a disaster, not to keep a copy of you, and they are not searched or
 used for anything else.</p>
 
@@ -254,8 +277,8 @@ you have contacted me first: <a href="https://ico.org.uk/make-a-complaint/">ico.
 <h2>Security</h2>
 
 <p>The app stores no passwords — signing in is handled entirely by Google. Access rules are
-enforced in the database itself as well as in the app, and are designed so that one person cannot
-reach another person's garden. Connections are encrypted.</p>
+enforced in the database itself as well as in the app, and are designed so that you can reach
+only gardens you are a member of. Connections are encrypted.</p>
 
 <p>No system is perfectly secure, and this one is run by one person as a hobby. So a practical
 suggestion rather than a legal one: please don't put anything sensitive into garden names, plant
@@ -268,19 +291,22 @@ somebody under 18 has created one, I will remove the account and its information
 
 <h2>Changes to this notice</h2>
 
-<p>If this notice changes in a way that matters, the date at the top will change and I will say so
-in the app. Small corrections happen without ceremony.</p>
+<p>If this notice changes in a way that matters, the date at the top will change and I will let
+existing users know, either directly or in the app. Small corrections happen without ceremony.</p>
 
 <div class="box">
   <p><strong>In one paragraph.</strong> The app knows your email address, your Google display name,
   where your garden is, what you grow, what you have done in it, and a daily count of times you
   opened it. It uses that to tell you what to do in the garden today, to keep the service working,
   and to judge whether people come back. It shows no adverts, sells nothing, and carries no
-  cross-site tracking. Delete your account and the live copy of all of it goes with it.</p>
+  cross-site tracking. Deleting your account removes it and gardens where you are the only
+  member; gardens with other members and their records remain for those members. Deleted data
+  may remain in backups for up to seven days, and direct correspondence is kept separately as
+  described above.</p>
 </div>
 
 <footer>
-What Gardening Today? · <a href="/terms.html">Terms of Use</a> ·
+What Gardening Today? · <a href="terms.html">Terms of Use</a> ·
 <a href="mailto:whatgardeningtoday@gmail.com">whatgardeningtoday@gmail.com</a>
 </footer>
 

@@ -6,7 +6,7 @@
 // APP_VERSION in app.js MUST be the same string. It is what gets sent with a
 // piece of feedback, so if the two drift, every bug report is labelled with a
 // build that was never deployed.
-const CACHE_NAME = 'gardening-v15';
+const CACHE_NAME = 'gardening-v17';
 
 // Scope-relative paths (no leading slash) so they resolve correctly whether the
 // app is served from /what-gardening-today/ or /what-gardening-today-dev/.

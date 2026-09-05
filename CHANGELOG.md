@@ -1,136 +1,127 @@
 # Changelog
 
-All notable changes to "What Gardening Today?" will be documented in this file.
+All notable changes to "What Gardening Today?" are recorded here, newest first.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning follows a simplified semantic scheme:
 
 - **MAJOR** (e.g. 1.0 → 2.0) — a change of backend or delivery architecture, such as the Google Sheets → Supabase migration at 2.0.
 - **MINOR** (e.g. 1.0 → 1.1) — user-facing features, UI changes, content-pipeline work, and bug fixes.
 
-Entries are the record of what changed and when. Reasoning that is still true of the system belongs in `SPEC.md`, which describes it as built; planned work belongs in `docs/ROADMAP.md` and nowhere else. From **2.16** entries are kept short — a one-line summary and bullets naming what changed and where. Earlier entries are longer, and are left as written.
+Use one concise line per change. Current-system behaviour belongs in `SPEC.md`; planned work belongs in `docs/ROADMAP.md`.
 
-Entries before 2.16 refer to numbered development phases ("Phase 4") and to `SPEC.md` §6, the roadmap section that recorded them. **That section was removed in 2.16**; those references are historical and are deliberately not rewritten. [2.16] also speaks of moving items to GitHub Issues, which was never adopted — see [2.18].
+Releases 2.15 and earlier are preserved unchanged in the [Archive — legacy format](#archive--legacy-format) section below. They are historical provenance, not current-system authority or examples for new entries.
 
 ---
+
+## [Unreleased]
+
+- Retired the shipped garden-gate design and settled Phase G copy from `docs/temp/` after preserving their rationale and provenance with immutable historical links; no runtime or live changes.
+- R7: condensed recent entries and preserved pre-2.16 history unchanged in a labelled legacy section of this file; allow-lists, runtime, deployment and external state are unchanged.
+- R6 follow-up: corrected the hosting owner in `AGENTS.md` and removed the completed Claude Project-copy action from the roadmap; no runtime or external changes.
+- R6: reconciled public-sign-up, hosting and weather history, recorded the reported `.git` remediation, aligned strategy and tier ownership, and retired the obsolete sign-up design; no runtime or external changes.
+- R5: corrected the six-file snapshot contract, preserved manual checks and dated sync rationale, and retired the obsolete proposal; no runtime or live changes.
+- R4: corrected authoring headers, review layouts, paste grammar, prompt/backlog routing and the voice example; preserved safety wording and recorded unresolved authority, with no live changes.
+- R3: reconciled roadmap and dated review decisions, and corrected review baselines, scope, evidence and delivery rules; no external routines or runtime changes.
+- R2: corrected public access/navigation, offline and weather-failure limits, feedback grants, and configuration evidence/rationale in DEV documentation; no runtime or deployed settings changed.
+- R1: reconciled verified backend state and privacy publication checks, approved direct notice without a banner, recorded R2–R8, and prepared gardening-v17; publication and notification remain unconfirmed.
+- Corrected privacy disclosures and public-notice links; prepared gardening-v16, with notice publication checks still pending.
+- Clarified document ownership/update triggers and corrected SQL, origin, feedback and Apps Script runbooks; no runtime or external changes.
+
+---
+
+## Backend correction — 2026-09-04
+
+- Fixed weather-request coordinate rounding with ten isolated regression tests; deployed `today` v6 was reverified read-only, separately from unreleased frontend and privacy changes.
+
+---
+
+## [2.21] — 2026-09-03
+
+- Opened public Google sign-up through Supabase settings after confirming the existing accounts' Google identities; no frontend files were changed or published for this step.
+- Verified that an unentitled stranger was refused a second garden and could then receive one through `grant_gift()`.
+- Applied `db/15` and `db/16`, replacing `grant_founder_entitlements()` with the founder-cohort helper and adding optional gift expiry.
+- Enabled the nightly seven-day public-schema backup and daily unread-feedback workflows in DEV, keeping database secrets and backup artifacts out of the public repository.
+- Fixed the successful backup's `zcat | grep -q`/`pipefail` false failure by checking a decompressed dump for four named tables.
+- Escalated the missing per-user `today` rate limit to the roadmap when public sign-up opened.
+- Updated the current documentation for public access, feedback, backups and entitlements, and recorded the ICO self-assessment.
+
+---
+
 ## [2.20] — 2026-09-03
 
-### One way in, UK gardens only, and a way to write back
+- Removed emailed-code sign-in and made Google-only access explicit.
+- Added sign-in context, relative Terms and Privacy links, and the contact address.
+- Added the feedback UI against the already-applied `db/15`, with distinct rate-limit, expired-session and retry-preserving failure paths.
+- Added a device-level, default-on switch for remembering the last garden, clearing its stored map when disabled.
+- Reworded the one-garden refusal without changing its logic.
+- Fixed the UK garden check by combining its offline box with a fail-open postcodes.io UK-postcode test.
+- Fixed garden location labels by sharing the corrected wide reverse lookup.
+- Matched `CACHE_NAME` and `APP_VERSION` at `gardening-v15`.
+- Documented both required origin allow-lists and the unread-feedback response procedure.
+- Added the feedback contract and its dials to the current owners, and corrected the recorded Edge Function origins.
 
-Seven changes shipped as one release, plus two defects found while testing it. The sign-in screen now says what the app is and that Google is the only way in; the emailed code is gone; a garden outside the UK is refused where it is created; and there is a Send feedback panel, which gives the project its first inbound channel from a user who is not Dan. Public sign-up stays **off**.
-
-- **Removed the emailed 6-digit sign-in code** — markup, six functions, one module variable, eight listeners and a CSS rule. Dormant since built and untestable (built-in email only reliably reaches the owner's own address), and a second way in is a second thing to explain, test and break. The screen states that Google is the only option, because one that offers no alternative and does not say so reads as a fault. Changed `SPEC.md` §2, §4 and §5E, and `docs/CONFIG_ITEMS.md` #3, #3a and #4, all of which described the removed path as live.
-- **Added the sign-in fine print** — what the app is, Terms, Privacy Notice and a contact address. Links are **relative**: the app serves from a subpath, where `/terms.html` would 404.
-- **Added `feedback` to the UI** (`db/15`, applied earlier). Three columns are inserted and only three — `user_id` has no INSERT grant and supplying it turns a working write into a `42501`. Three failure branches in a fixed order: the daily limit matched on the **hint** (`54000` alone no longer identifies which guard fired, now that two do), a session that has gone, and everything else, which keeps the typed message. An offline send lands on the third deliberately — `getSession()` reads locally and still answers "signed in" with the network down.
-- **Added a "remember which garden I was last in" switch** — device-level, default on, one key. `writeLastGardenId()` gained one line; `route()` already fell back to the oldest garden. Turning it off clears the stored map rather than ignoring it, landing on the same path as blocked storage, which already worked. The help line naming what is stored and where is the "clear information" half of the PECR exception and is not trimmable copy.
-- **Reworded the one-garden gate** to say what it means for the garden you already have. No logic change.
-- **Fixed — the UK check accepted Dublin.** The bounding box shipped in the first commit also contains most of the Republic of Ireland and all of the Isle of Man; Dublin, Cork and Douglas all passed it, and `terms.html` §2 says the advice will not be right outside the UK. postcodes.io holds UK postcodes and nothing else, so "is there a UK postcode near here?" is the test — and it is the same call that already named the place. The box survives as a free offline pre-filter. **Verified against the live API rather than assumed**, which corrected two things: `radius` is clamped to its 2 km maximum in silence, so a larger radius is not a substitute for `wideSearch` (`radius=20000` finds nothing in the Cairngorms where `wideSearch` finds PH22); and the *default* radius is ~100 m and misses ordinary gardens. **Fails open** — an unreachable postcodes.io accepts on the box alone, because somebody else's outage must not lock a UK gardener out of their own garden.
-- **Fixed — the location label had been quietly broken.** Both reverse lookups used that ~100 m default, so "📍 ward, district" fell back to the neutral wording for most gardens and nothing said so. Both now share one lookup, so there is a single place that turns coordinates into a place name.
-- **Changed `sw.js` to `gardening-v15`**, with `APP_VERSION` in `app.js` matching. The version is sent with every piece of feedback, so the two drifting would label reports with a build that was never deployed.
-
-**Two allow-lists, and only one of them is loud.** Testing was diagnosed against the wrong build for a full cycle because signing in on the dev preview landed on the *live* site: Supabase ignores a redirect address that is not on its allow-list, silently, and falls back to the Site URL. That is a different list from the Edge Function's `ALLOWED_ORIGINS`, and neither failure resembles the other. Now written down in `docs/OPERATIONS.md` §4, `docs/CONFIG_ITEMS.md` #3b, and `SPEC.md` §4.
-
-- **Added `docs/OPERATIONS.md` §4 and §5** — registering a surface's return address, and what to do when the `Unread feedback` action goes red. That job had never fired, because until now nothing could write to the table; a red tick there means somebody wrote to you, not that the build is broken.
-- **Added `feedback` to `SPEC.md` §3**, which it had never had, and `docs/CONFIG_ITEMS.md` #30 and #31 for the daily limit and the UK check. The limit's own SQL claimed to be recorded there and was not.
-- **Fixed — `docs/CONFIG_ITEMS.md` #12 was stale.** It listed the Edge Function's allowed origins as GitHub Pages plus localhost, long after the move to Cloudflare and the custom domain. Five origins are live. Unrelated to this work; found by reading the file.
+_Full contemporaneous record: [public release entry](https://github.com/nimbrethil81/what-gardening-today/blob/a296c47f7fab207385f1befedabce3982ac5c0ba/CHANGELOG.md?plain=1#L15-L36)._
 
 ---
+
 ## [2.19] — 2026-08-28
 
-### The garden gate is live, and the founder circle is closed
+- Activated the multi-garden gate by hand and recorded the three-account founder cohort; no runtime files, schema or content changed.
+- Corrected `db/14` so late arrivals receive recorded gifts rather than founder status.
+- Closed the founder cohort and documented the existing-founder-only grant path for later features.
+- Corrected the documented founder-grant return shape.
 
-No code, schema or content changes — comments in `db/14_garden_gate.sql` only. The gate was activated by hand: `FEATURE_MULTI_GARDEN` created, `grant_founder_entitlements()` run, and the §8 readout confirming **gate on, three founder grants, none missing**. Nobody can currently reach the refusal, which is the success condition.
-
-- **Fixed — §6 and §9 gave opposite instructions for the same situation.** §6 said to re-run the founder grant after adding somebody to the guest list; §6a and §9 said that must never happen and a late arrival is `grant_gift()`'s job. Both were live, in one file, about the act that decides who receives every *future* paid feature.
-- **Decided — a late arrival gets a gift, not a founder grant.** Founder status exists to avoid taking something away; somebody added tomorrow never held a second garden for free, so nothing was withdrawn from them. Generosity there is a gift, and is recorded as one with a reason.
-- **The founder cohort is therefore closed at the three accounts of 2026-08-28**, and `grant_founder_entitlements()` is spent. Re-running it would grant every live feature to every row in `auth.users` — so once one gifted non-founder exists, picking up a second gated feature that way would mark them `source = 'founder'` too, with no way afterwards to tell the rows apart.
-- **Every feature after the first uses §9's successor query**, which grants only to accounts already holding a founder row. Correct whether or not sign-up has opened, and it needs nobody to remember which.
-- **Fixed — a second stale comment in §6** still described the function as returning a count of new grants. It has returned a table since 2.17.
-
-**Still open:** the refusal has never been drawn in a browser, because every account holds the unlock. Recorded in the roadmap.
+_Full contemporaneous record: [public release entry](https://github.com/nimbrethil81/what-gardening-today/blob/a296c47f7fab207385f1befedabce3982ac5c0ba/CHANGELOG.md?plain=1#L37-L51)._
 
 ---
+
 ## [2.18] — 2026-08-28
 
-### The roadmap gets a home: `docs/ROADMAP.md`
+- Added `docs/ROADMAP.md` as the sole future-work status list, with shipped items removed rather than marked complete.
+- Updated `SPEC.md` and this changelog to route future work to the roadmap instead of the unadopted GitHub Issues proposal.
+- Recorded the shipped garden gate by removing its roadmap item.
+- Moved strategy and tier sources into the now-private DEV repository while keeping `docs/` outside live publication.
+- Recorded the gate-activation ordering needed before public sign-up.
 
-No code, content or database changes. [2.16] removed `SPEC.md` §6 and said the work it held was going to GitHub Issues. With one person on the project, Issues was never adopted, so those items had no home for a day. They now have one, and it is the only one.
-
-- **Added `docs/ROADMAP.md`** — the sole record of work that is planned, agreed, blocked or considered. In `docs/`, which the live deploy excludes, because it names unbuilt paid features and monetisation sequencing. 46 items across Now, Ready, Blocked, Considered, Content, Operational and Documentation.
-- **Its rules are the point of it.** One line per item, in table cells too narrow to hold an argument. **Never explain, only address** — name a blocking condition as a label ("paying-user floor"), never as a value that can go stale. And **nothing is ever marked done**: a shipped item is deleted, and its record becomes a changelog entry. A "Completed" section there would be a second changelog, which is what §6 became.
-- **The garden gate is the first item deleted under that rule.** It was the top of the list yesterday; [2.17] shipped it, so it is gone rather than ticked, and this entry is now its only record.
-- **Changed `SPEC.md`** — §1 now says it must not acquire a roadmap and names `docs/ROADMAP.md` as the sole record; §5E's weather-reveal limitation cites it rather than "an issue".
-- **Changed this file's header**, and annotated [2.16]'s "Moved to issues" rather than rewriting it, following the Phase 4.3 precedent.
-
-**Repo now private, and the sensitive documents moved into it**
-
-`WGT_STRATEGY.md` and `WGT_TIERS.html` were held outside version control because the repository was public. It is now private, with the dev preview served through Cloudflare and `docs/` excluded from the live deploy, so they live in `docs/` and **the repository is their master copy** — replacing the 2026-08-19 decision that put it in the Claude Project sources. Both need edits recorded in the roadmap: `WGT_STRATEGY.md`'s opening section still describes the old arrangement, and `WGT_TIERS.html` still carries Built / Backlog / Idea tags that are now a second copy of the roadmap's status column.
-
-**Also recorded from [2.17]:** the gate ships dormant, so creating its product row and running `grant_founder_entitlements()` is a live operational step that must happen **before** public sign-up opens — after that, every grant is a withdrawal. It is the first item in the roadmap's Now list for that reason.
+_Full contemporaneous record: [public release entry](https://github.com/nimbrethil81/what-gardening-today/blob/a296c47f7fab207385f1befedabce3982ac5c0ba/CHANGELOG.md?plain=1#L52-L70)._
 
 ---
+
 ## [2.17] — 2026-08-28
 
-### Creating a second garden is now gated, and everybody already holds the key
+- Added and applied `db/14_garden_gate.sql`, introducing creator-based garden limits, entitlement helpers and the authoritative gated `create_garden()`.
+- Added the `db/14` pass/fail test grid, including first-garden creation.
+- Restricted garden updates to `name`, `latitude` and `longitude`.
+- Counted only gardens a user created and still belongs to, with capacity restored after leaving or deletion.
+- Made product retirement open the gate as its no-deploy kill switch.
+- Added the in-place second-garden refusal UI and entitlement-specific save error.
+- Matched the frontend cache and application version at `gardening-v12`.
+- Corrected founder-grant results to return per-user/product rows and guarded the creator backfill against reruns.
+- Added reason-required `grant_gift()` for non-founder access.
+- Added the manual Supabase runbook and updated current system/configuration documentation.
 
-The enforcement path for a paid feature exists, has been run against real data, and is invisible: every account that existed holds a perpetual founder grant, so nobody can currently reach the refusal. Nothing is for sale and no billing exists. This went in now because the cost of making something paid rises with the number of people already holding it for free, and that number is currently small.
-
-- **Added `db/14_garden_gate.sql`** — `garden.created_by` (nullable, `ON DELETE SET NULL`) with a backfill; `feature_is_gated()`, `may_create_garden()` and `grant_founder_entitlements()`; a third and authoritative `create_garden()` that records the creator and refuses with `42501` plus the hint `entitlement:FEATURE_MULTI_GARDEN`. Ships dormant — §9 holds the two hand-run activation steps.
-- **Added `db/14_garden_gate_test.sql`** — pass/fail grid, leading on the case that must never break: a brand-new user with no gardens can create their first one.
-- **Fixed — a table-wide `UPDATE` grant on `public.garden`.** RLS is row-level and says nothing about columns, so any owner could write `timezone` (which drives every date calculation the garden has ever made, and which `docs/CONFIG_ITEMS.md` #8 already recorded as "not editable") or `created_at` (which orders the switcher) straight through the Data API. Now granted per column: `name`, `latitude`, `longitude`. Not a live incident; a no-op for the app, which writes exactly those three.
-- **The limit counts gardens you created and are still in** — not membership (a garden you were invited to must never cost you) and not ownership (`leave_garden` and `delete_my_account` promote a new owner, so ownership arrives by someone else's act). Live, not high-water: deleting or leaving one gives the slot back.
-- **Retiring the product opens the gate rather than closing it**, matching the pack rule in `can_add_blueprint()` — so withdrawing a product can never lock the userbase out, and one `UPDATE` is a kill switch needing no deploy and no cache bump.
-- **Changed `app.js`, `index.html`, `style.css`** — `may_create_garden()` folded into `loadGardens()`' existing round trip; "＋ Add another garden" is never hidden or greyed out, and answers in place when blocked; `gardenSaveErrorMessage()` branches on the entitlement hint rather than telling somebody at a paywall to check their connection.
-- **Changed `sw.js`** — `CACHE_NAME` `gardening-v11` → `v12`.
-- **Changed `SPEC.md`** — §3 gains `created_by` and the column grant, and "Entitlement (dormant)" becomes "Entitlement"; §4 gains the three functions and separates `create_garden`'s two limits; §5A records the add-not-see rule reaching a second entity.
-- **Changed `docs/CONFIG_ITEMS.md`** — new #28 (free garden limit) and #29 (the gate's kill switch); #8, #18 and #24 amended.
-
-- **`grant_founder_entitlements()` returns a table**, not a count — one row per user/product pair, each `granted` or `already held`. Requires a `drop function` on re-run, which the file now does.
-- **Added `grant_gift(p_email, p_code, p_reason)`** — one person, one live product, `source = 'gift'`, reason required and blank refused. Exists so a late arrival never gets a founder grant, which would put them in the cohort the next gate grants to.
-- **The backfill of `created_by` is now guarded** to run only once. Unguarded, a later re-run would have reassigned gardens whose creator had deleted their account to whoever holds them now.
-- **Added `docs/OPERATIONS.md`** — the runbook for what is done by hand in Supabase: applying a `db/` file, adding a person, entitlements and the kill switch. `CLAUDE.md` now lists it as authoritative and requires it to be reviewed alongside `SPEC.md` and `CHANGELOG.md`.
-
-**Deliberately left open:** a handed-over garden counts against nobody, so two free users could in principle swap gardens and hold two each. It needs an invite flow that does not exist, and closing it would mean charging somebody for another person's decision.
+_Full contemporaneous record: [public release entry](https://github.com/nimbrethil81/what-gardening-today/blob/a296c47f7fab207385f1befedabce3982ac5c0ba/CHANGELOG.md?plain=1#L71-L94)._
 
 ---
+
 ## [2.16] — 2026-08-27
 
-### Documentation boundaries: SPEC describes, CHANGELOG records, issues plan
+- Removed the abandoned roadmap from `SPEC.md` while retaining its verified system history and native-rewrite decision.
+- Moved the weather-reveal limitation and multi-user requirements into current owners and fixed the dangling §6 reference.
+- Updated this changelog's versioning and document-routing header.
+- Preserved the unadopted move-to-Issues proposal as history; `docs/ROADMAP.md` later became the sole future-work owner.
+- Recorded the pre-existing absence of a 1.3 entry without inventing its content or date.
 
-No code, content or database changes. Nothing looks or behaves differently. `SPEC.md` had accumulated a roadmap section that restated its own body, duplicated `WGT_STRATEGY.md`, and had in practice been abandoned — 2.14 and 2.15 both shipped without updating it.
-
-**Removed — `SPEC.md` §6, DEVELOPMENT ROADMAP**
-
-Every completed phase it listed is already recorded here in more detail, verified entry by entry: Phases 1–3 in [1.0], 3.1 in [1.5], 4 in [2.0], 4.1 in [2.4], 4.2 in [2.5]–[2.6], 4.3 in [2.9], 4.4 in [2.10], 4.5 in [2.11], 4.6 in [2.12], 4.7 in [2.13]. Its forward-looking material moved out rather than being deleted (below), and the "Opening the doors" sequence went entirely, because `WGT_STRATEGY.md` §3, §4 and §8 own it and were already more current — SPEC's copy omitted the pre-launch entitlement gate and would have led to the wrong build order.
-
-**Added — `SPEC.md` §1, "How it got here"**
-
-A short paragraph carrying the arc the phase list conveyed: Sheets and Apps Script, the Supabase cutover on 2026-07-17, then content-pipeline work and groundwork for opening up. It also holds the decision `WGT_STRATEGY.md` cited §6 Phase 4 for — that a native rewrite was considered and is not being pursued.
-
-**Changed — `SPEC.md` §5E gains the weather-reveal limitation**
-
-The `Reveal_If_Wind_Above` entry was a known limitation wearing a roadmap hat: every weather column suppresses a task and none reveals one, which is why `Requires_Wind_Above` carries a misleading name. It is now a Carried-forward limitation, so `docs/DATABASE_WORKFLOW.md` §9 keeps a target — a cross-reference [2.9] repaired and this change would otherwise have broken again.
-
-**Fixed — a dangling `See §6.` in `SPEC.md` §5E**
-
-The multi-user limitation pointed at "On the horizon" for what invite support needs. It now says so in place: custom email, an invite flow, the member list, the email-based lookup and the re-add path.
-
-**Changed — this file's header**
-
-MAJOR versions were defined as "architectural phase transitions per SPEC.md §6", which would have cited a section that no longer exists.
-
-**Moved to issues** *(superseded by [2.18] — GitHub Issues was never adopted, and these went to `docs/ROADMAP.md` instead. Annotated rather than rewritten, following the Phase 4.3 precedent.)*
-
-Custom email; the invite flow; surfacing `estimated_minutes` in the UI; the hide-swipe placement and direction improvement; the reveal-above weather threshold; and the two operational tidies open since [2.0] — confirming the OpenWeather key was never committed publicly (current files *and* git history; rotate only if found) and retiring the unused Apps Script *runtime* Web App deployment.
-
-**Not changed**
-
-Dated entries above. A changelog is a record of what was true at the time, so their phase references stand.
-
-**Known gap, pre-existing**
-
-There is no `[1.3]` entry, though [1.4] refers to "the same category-tier fault fixed in 1.3". Unrelated to this change and recorded so it is not rediscovered.
+_Full contemporaneous record: [public release entry](https://github.com/nimbrethil81/what-gardening-today/blob/a296c47f7fab207385f1befedabce3982ac5c0ba/CHANGELOG.md?plain=1#L95-L133)._
 
 ---
+
+## Archive — legacy format
+
+**Warning:** Entries in this section predate the streamlined format and must not be used as models for new entries. The active rule is one concise line per change, newest releases first.
+
+The release body from 2.15 and earlier is preserved unchanged for historical provenance. It is not authority for the current system.
+
 ## [2.15] — 2026-08-24
 
 ### The pipeline reviewed, and four ways it could have lost your content
