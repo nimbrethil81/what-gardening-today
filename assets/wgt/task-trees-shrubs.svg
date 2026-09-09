@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 120" role="img" aria-label="Trees and shrubs task vignette: rounded tree and secateurs">
+  <path fill="#075E4B" d="M28 72 C12 65 16 44 31 42 C25 25 45 16 56 28 C66 9 93 18 91 36 C111 31 123 51 111 65 C118 80 98 91 85 82 H42 C34 83 28 79 28 72Z"/>
+  <path fill="#B9642C" d="M64 91 V55 L51 45 L56 41 L67 50 V31 H74 V57 L87 45 L91 50 L73 66 V91Z"/>
+  <path fill="#188040" d="M37 99 C39 86 48 80 59 79 C56 91 50 98 37 99Z M77 99 C81 87 91 81 104 82 C98 94 90 99 77 99Z"/>
+  <g transform="translate(102 68) rotate(-18)"><path d="M2 23 C14 13 21 8 32 3 L39 10 C28 18 20 23 7 29Z" fill="#073F35"/><circle cx="33" cy="8" r="4" fill="#E55F58"/><path d="M32 12 L44 34" stroke="#E55F58" stroke-width="7" stroke-linecap="round"/><path d="M27 13 L20 38" stroke="#E55F58" stroke-width="7" stroke-linecap="round"/></g>
+</svg>

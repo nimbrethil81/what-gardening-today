@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 200" role="img" aria-label="A quiet garden with an empty deckchair and robin">
+  <path fill="#6CAF55" d="M16 171 C55 145 93 158 126 166 C172 145 220 154 256 166 C292 151 327 158 346 171Z"/>
+  <g fill="#D5E5FB"><path d="M242 92 L252 80 L262 92 V164 H242Z M267 92 L277 80 L287 92 V164 H267Z M292 92 L302 80 L312 92 V164 H292Z"/><rect x="235" y="110" width="85" height="8"/><rect x="235" y="139" width="85" height="8"/></g>
+  <g fill="#075E4B"><path d="M42 166 C41 139 30 122 20 114 C39 118 51 137 54 165Z"/><path d="M53 164 C50 128 49 105 42 92 C62 103 69 133 66 164Z"/><path d="M65 164 C63 120 72 89 83 75 C82 110 82 137 79 164Z"/><path d="M77 164 C82 127 94 102 108 91 C101 119 98 142 91 165Z"/><path d="M89 166 C100 138 116 121 133 114 C118 132 110 148 103 167Z"/></g>
+  <g stroke="#B9642C" stroke-width="10" stroke-linecap="round" fill="none"><path d="M130 70 L178 171"/><path d="M217 73 L180 171"/><path d="M132 69 L217 73"/><path d="M144 131 L207 131"/><path d="M146 132 L126 170"/><path d="M203 131 L223 170"/></g>
+  <path fill="#075E4B" d="M137 73 H211 L203 125 H151Z"/><path fill="#075E4B" d="M151 130 H205 L201 144 H155Z"/>
+  <g fill="#188040"><ellipse cx="109" cy="139" rx="15" ry="7" transform="rotate(35 109 139)"/><ellipse cx="128" cy="145" rx="16" ry="7" transform="rotate(-35 128 145)"/><ellipse cx="296" cy="144" rx="15" ry="7" transform="rotate(35 296 144)"/><ellipse cx="319" cy="140" rx="15" ry="7" transform="rotate(-35 319 140)"/></g>
+  <path fill="#E55F58" d="M286 111 C296 93 318 93 326 111 C320 126 310 135 306 138 C299 132 290 125 286 111Z"/><circle cx="306" cy="107" r="6" fill="#E59A18"/>
+  <path fill="#A72A7C" d="M102 112 L111 123 L121 115 V132 C121 143 113 149 102 149 C91 149 83 143 83 132 V115 L93 123Z"/>
+  <g transform="translate(142 45)"><ellipse cx="0" cy="0" rx="14" ry="9" fill="#C56B2C"/><ellipse cx="6" cy="-1" rx="9" ry="8" fill="#E97432"/><circle cx="10" cy="-3" r="1.5" fill="#073F35"/><path d="M18 -2 L25 1 L18 4Z" fill="#073F35"/><path d="M-8 5 L-15 12" stroke="#073F35" stroke-width="2"/><path d="M1 6 L-2 14" stroke="#073F35" stroke-width="2"/></g>
+</svg>

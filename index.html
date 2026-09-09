@@ -8,8 +8,11 @@
   <link rel="icon" href="assets/icons/favicon.ico" sizes="any">
   <link rel="icon" href="assets/icons/favicon-32.png" type="image/png" sizes="32x32">
   <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
-  <meta name="theme-color" content="#2E7D32">
-  <link rel="stylesheet" href="style.css">
+  <meta name="theme-color" content="#073F35">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700&amp;family=Source+Sans+3:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=gardening-v37-production-closeout">
 </head>
 <body>
 
@@ -18,9 +21,9 @@
   <!-- ============================================================= -->
   <div id="view-splash" class="fullscreen-view">
     <div class="auth-card" style="text-align:center;">
-      <div class="auth-brand">🌱</div>
-      <p id="splash-message" class="auth-subtitle" style="margin-top:12px;">Loading…</p>
-      <button id="splash-retry" class="secondary-action-btn hidden">Retry</button>
+      <img class="auth-brand" src="assets/wgt/logo.svg" alt="">
+      <p id="splash-message" class="auth-subtitle" style="margin-top:12px;" role="status" aria-live="polite">Loading…</p>
+      <button id="splash-retry" class="secondary-action-btn hidden" type="button">Retry</button>
     </div>
   </div>
 
@@ -29,13 +32,14 @@
   <!-- ============================================================= -->
   <div id="view-signin" class="fullscreen-view hidden">
     <div class="auth-card">
-      <div class="auth-brand">🌱</div>
-      <h1 class="auth-title">What Gardening Today?</h1>
-      <p class="auth-subtitle">Tells you what's worth doing in your garden today — for the plants you actually have, in the weather you've actually got. Made for gardens in the UK.</p>
+      <img class="auth-brand" src="assets/wgt/logo.svg" alt="">
+      <h1 class="auth-title" id="signin-title" tabindex="-1">What Gardening Today?</h1>
+      <p class="auth-promise">Know what’s worth doing in your garden today.</p>
+      <p class="auth-subtitle">We pick the jobs that make sense for your garden, the season and today’s weather.</p>
 
       <!-- Primary: Google -->
       <div id="signin-google-step">
-        <button id="signin-google-btn" class="google-signin-btn">
+        <button id="signin-google-btn" class="google-signin-btn" type="button">
           <svg class="google-signin-icon" viewBox="0 0 18 18" aria-hidden="true">
             <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/>
             <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.81.54-1.85.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z"/>
@@ -44,7 +48,7 @@
           </svg>
           Continue with Google
         </button>
-        <p id="signin-google-error" class="auth-error"></p>
+        <p id="signin-google-error" class="auth-error" role="alert"></p>
 
         <!-- The three quiet lines below the button. The hrefs are RELATIVE on
              purpose: the app is served from a subpath on github.io, where an
@@ -74,28 +78,31 @@
   <!-- ============================================================= -->
   <div id="view-setup" class="fullscreen-view hidden">
     <div class="auth-card">
-      <div class="auth-brand">🌱</div>
-      <h1 class="auth-title" id="setup-title">Set up your garden</h1>
+      <img class="auth-brand" src="assets/wgt/logo.svg" alt="">
+      <h1 class="auth-title" id="setup-title" tabindex="-1">Set up your garden</h1>
       <p class="auth-subtitle" id="setup-subtitle">Just a name and a location, and you're ready to go.</p>
 
-      <p class="form-instruction">Garden name</p>
+      <label class="form-instruction" for="setup-name">Garden name</label>
       <div class="modern-input-wrapper">
-        <input type="text" id="setup-name" placeholder="e.g. Home, The allotment" maxlength="40">
+        <input type="text" id="setup-name" placeholder="e.g. Home, The allotment" maxlength="40" aria-describedby="setup-name-note setup-error">
       </div>
       <!-- Shown only when the name matches another of your gardens. A warning,
            not a rule: two gardens may legitimately share a name for a while. -->
       <p id="setup-name-note" class="setup-name-note hidden"></p>
 
-      <p class="form-instruction">Location</p>
+      <label class="form-instruction" for="setup-postcode">Location</label>
       <div class="modern-input-wrapper">
-        <input type="text" id="setup-postcode" placeholder="Postcode, e.g. HP7 0AA" autocomplete="postal-code">
+        <input type="text" id="setup-postcode" placeholder="Postcode, e.g. HP7 0AA" autocomplete="postal-code" aria-describedby="setup-location-confirm setup-uk-note setup-error">
       </div>
-      <button id="setup-find-btn" class="secondary-action-btn">Find postcode</button>
+      <button id="setup-find-btn" class="secondary-action-btn" type="button">Find postcode</button>
 
       <div class="setup-or">or</div>
-      <button id="setup-locate-btn" class="secondary-action-btn">📍 Use my current location</button>
+      <button id="setup-locate-btn" class="secondary-action-btn setup-locate-btn" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s6-5.5 6-11a6 6 0 1 0-12 0c0 5.5 6 11 6 11Z"/><circle cx="12" cy="10" r="2.25"/></svg>
+        <span id="setup-locate-label">Use my current location</span>
+      </button>
 
-      <p id="setup-location-confirm" class="setup-location-confirm hidden"></p>
+      <p id="setup-location-confirm" class="setup-location-confirm hidden" role="status" aria-live="polite"></p>
 
       <!-- Shown in place of a confirmed location when the coordinates land
            outside the UK. An explanation, not an error: nothing has gone
@@ -108,10 +115,10 @@
         </p>
       </div>
 
-      <p id="setup-error" class="auth-error"></p>
+      <p id="setup-error" class="auth-error" role="alert"></p>
 
-      <button id="setup-create-btn" class="primary-action-btn" disabled>Create my garden</button>
-      <button id="setup-cancel-btn" class="text-btn hidden">Cancel</button>
+      <button id="setup-create-btn" class="primary-action-btn" type="button" disabled>Create my garden</button>
+      <button id="setup-cancel-btn" class="text-btn hidden" type="button">Cancel</button>
     </div>
   </div>
 
@@ -122,121 +129,153 @@
 
     <div class="app-container">
 
-      <!-- The header's most valuable line used to say the name of the app you
-           had just opened. It now says WHICH GARDEN you are looking at, which
-           is a question you can actually have — and it doubles as the switcher,
-           so switching costs no vertical space above the task list. -->
-      <div class="app-header">
+      <header class="app-header">
+        <img class="app-logo" src="assets/wgt/logo.svg" alt="">
         <button id="garden-switch-btn" class="garden-switch-btn" aria-haspopup="dialog" aria-expanded="false">
-          <span class="garden-switch-emoji" aria-hidden="true">🌱</span>
           <span id="garden-switch-name" class="garden-switch-name">Your garden</span>
-          <span class="garden-switch-chevron" aria-hidden="true">▾</span>
+          <svg class="garden-switch-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 7.5 4.5 4.5 4.5-4.5"/></svg>
         </button>
-        <button id="settings-btn" class="settings-icon-btn" aria-label="Settings">⚙️</button>
-      </div>
+        <button id="settings-btn" class="icon-btn settings-icon-btn" aria-label="Settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="6.25"/>
+            <circle cx="12" cy="12" r="2.5"/>
+            <path d="M12 2.5v3.25M12 18.25v3.25M2.5 12h3.25M18.25 12h3.25M5.28 5.28l2.3 2.3M16.42 16.42l2.3 2.3M18.72 5.28l-2.3 2.3M7.58 16.42l-2.3 2.3"/>
+          </svg>
+        </button>
+      </header>
 
       <main id="main-content">
 
         <section id="view-today" class="view-section active-view">
-
-          <div class="weather-widget">
-            <div class="weather-main">
-              <img id="weather-icon" class="weather-icon" alt="Weather icon">
-              <h1 id="weather-temp">--°C</h1>
-            </div>
-            <p id="weather-desc">Loading weather...</p>
+          <div class="page-heading">
+            <h1>Today’s Tasks</h1>
+            <span class="page-heading-accent" aria-hidden="true"></span>
           </div>
 
-          <div id="task-container">
-            <div class="loading-spinner-box">Loading your garden tasks...</div>
+          <div class="today-controls">
+            <div id="weather-widget" class="weather-widget" aria-live="polite">
+              <img id="weather-icon" class="weather-icon" alt="">
+              <div class="weather-copy">
+                <strong id="weather-temp">—</strong>
+                <span id="weather-desc">Checking weather…</span>
+              </div>
+            </div>
+            <h2 class="today-controls-label">Available time</h2>
+            <div id="time-filter-group" class="time-pills" role="group" aria-label="Available time">
+              <button class="time-pill" type="button" data-minutes="15" aria-pressed="false">15 min</button>
+              <button class="time-pill" type="button" data-minutes="30" aria-pressed="false">30 min</button>
+              <button class="time-pill" type="button" data-minutes="60" aria-pressed="false">1 hour</button>
+              <button class="time-pill" type="button" data-minutes="120" aria-pressed="false">2 hours</button>
+              <button class="time-pill selected" type="button" data-minutes="all" aria-pressed="true">Any</button>
+            </div>
+          </div>
+
+          <div id="task-status" class="status-message hidden" role="status" aria-live="polite"></div>
+          <div id="task-container" aria-busy="true">
+            <div class="loading-state delayed-loading">
+              <strong>Finding today’s best jobs…</strong>
+              <span>Checking your garden and today’s conditions.</span>
+            </div>
           </div>
         </section>
 
         <section id="view-garden" class="view-section">
-
-          <div class="section-header">
-            <div class="section-accent-bar"></div>
-            <h2 class="section-title">Add to My Garden</h2>
+          <div class="page-heading">
+            <h1>My Garden</h1>
+            <span class="page-heading-accent" aria-hidden="true"></span>
           </div>
-          <div class="app-card">
-            <p class="form-instruction">1. Choose a Category</p>
+
+          <section class="garden-add-section" aria-labelledby="garden-add-title">
+            <h2 id="garden-add-title" class="garden-section-title">Add to My Garden</h2>
+            <h3 class="garden-field-title">Choose a category</h3>
 
             <div class="category-tiles-grid">
-              <button class="tile-btn" data-category="Lawn" onclick="selectCategory('Lawn', this)">
-                <span class="tile-icon">🌱</span>
+              <button class="tile-btn" type="button" data-category="Plants &amp; flowers" aria-pressed="false" onclick="selectCategory('Plants &amp; flowers', this)">
+                <img class="tile-icon" src="assets/wgt/category-plants-flowers.svg" alt="">
+                <span class="tile-label">Plants &amp; flowers</span>
+              </button>
+              <button class="tile-btn" type="button" data-category="Veg &amp; herbs" aria-pressed="false" onclick="selectCategory('Veg &amp; herbs', this)">
+                <img class="tile-icon" src="assets/wgt/category-veg-herbs.svg" alt="">
+                <span class="tile-label">Veg &amp; herbs</span>
+              </button>
+              <button class="tile-btn" type="button" data-category="Trees &amp; shrubs" aria-pressed="false" onclick="selectCategory('Trees &amp; shrubs', this)">
+                <img class="tile-icon" src="assets/wgt/category-trees-shrubs.svg" alt="">
+                <span class="tile-label">Trees &amp; shrubs</span>
+              </button>
+              <button class="tile-btn" type="button" data-category="Lawn" aria-pressed="false" onclick="selectCategory('Lawn', this)">
+                <img class="tile-icon" src="assets/wgt/category-lawn.svg" alt="">
                 <span class="tile-label">Lawn</span>
               </button>
-              <button class="tile-btn" data-category="Beds" onclick="selectCategory('Beds', this)">
-                <span class="tile-icon">🪵</span>
+              <button class="tile-btn" type="button" data-category="Beds" aria-pressed="false" onclick="selectCategory('Beds', this)">
+                <img class="tile-icon" src="assets/wgt/category-beds.svg" alt="">
                 <span class="tile-label">Beds</span>
               </button>
-              <button class="tile-btn" data-category="Trees &amp; shrubs" onclick="selectCategory('Trees &amp; shrubs', this)">
-                <span class="tile-icon">🌳</span>
-                <span class="tile-label">Trees & Shrubs</span>
-              </button>
-              <button class="tile-btn" data-category="Veg &amp; herbs" onclick="selectCategory('Veg &amp; herbs', this)">
-                <span class="tile-icon">🥕</span>
-                <span class="tile-label">Veg & Herbs</span>
-              </button>
-              <button class="tile-btn" data-category="Garden structures" onclick="selectCategory('Garden structures', this)">
-                <span class="tile-icon">🏡</span>
+              <button class="tile-btn" type="button" data-category="Garden structures" aria-pressed="false" onclick="selectCategory('Garden structures', this)">
+                <img class="tile-icon" src="assets/wgt/category-structures.svg" alt="">
                 <span class="tile-label">Structures</span>
               </button>
-              <button class="tile-btn" data-category="Tools" onclick="selectCategory('Tools', this)">
-                <span class="tile-icon">🛠️</span>
+              <button class="tile-btn" type="button" data-category="Tools" aria-pressed="false" onclick="selectCategory('Tools', this)">
+                <img class="tile-icon" src="assets/wgt/category-tools.svg" alt="">
                 <span class="tile-label">Tools</span>
-              </button>
-              <button class="tile-btn full-width" data-category="Plants &amp; flowers" onclick="selectCategory('Plants &amp; flowers', this)">
-                <span class="tile-icon">🌸</span>
-                <span class="tile-label">Plants & Flowers</span>
               </button>
             </div>
 
-            <p class="form-instruction">2. Select Item</p>
-
             <!-- Searches the whole catalogue, not just the selected tile, so you
                  don't have to know which category something lives under. -->
+            <label class="garden-field-title garden-search-label" for="pill-search">Search the whole catalogue</label>
             <div class="pill-search-wrapper">
-              <span class="pill-search-icon" aria-hidden="true">🔍</span>
+              <svg class="pill-search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 4 4"/></svg>
               <input type="text" id="pill-search" class="pill-search-input"
                      placeholder="Search all plants, tools and structures"
                      autocomplete="off" autocorrect="off" autocapitalize="off"
                      spellcheck="false" inputmode="search"
                      aria-label="Search the catalogue">
-              <button type="button" id="pill-search-clear" class="pill-search-clear hidden" aria-label="Clear search">✕</button>
+              <button type="button" id="pill-search-clear" class="pill-search-clear hidden" aria-label="Clear search">
+                <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg>
+              </button>
             </div>
 
-            <div id="pill-box" class="pill-cloud">
+            <h3 class="garden-field-title garden-items-title">Items</h3>
+            <div id="catalogue-status" class="garden-local-status hidden" role="status" aria-live="polite"></div>
+            <div id="pill-box" class="pill-cloud" aria-live="polite">
               <div class="pill-placeholder">Select a category above, or search.</div>
             </div>
 
-            <p class="form-instruction">3. My Reference (Optional)</p>
+            <label class="garden-field-title garden-reference-label" for="custom-name">My reference <span>(optional)</span></label>
             <div class="modern-input-wrapper">
-              <input type="text" id="custom-name" placeholder="e.g., Front Yard, Red Planter" oninput="validateForm()">
+              <input type="text" id="custom-name" placeholder="e.g. next to the front door" oninput="validateForm()">
             </div>
 
-            <button id="add-asset-btn" class="primary-action-btn" disabled>Add to My Garden</button>
-          </div>
+            <button id="add-asset-btn" class="primary-action-btn garden-add-btn" disabled>
+              <span id="add-asset-label">Add to My Garden</span>
+              <span class="planting-growth" aria-hidden="true">
+                <img class="planting-seed" src="assets/wgt/planting-seed.svg" alt="">
+                <img class="planting-shoot" src="assets/wgt/planting-shoot.svg" alt="">
+                <img class="planting-flower" src="assets/wgt/planting-flower.svg" alt="">
+              </span>
+            </button>
+            <p id="garden-add-error" class="garden-inline-error hidden" role="alert"></p>
+            <div id="garden-add-status" class="sr-only" role="status" aria-live="polite"></div>
+          </section>
 
-          <div class="section-header">
-            <div class="section-accent-bar"></div>
-            <h2 class="section-title">My Garden</h2>
-          </div>
-          <div id="inventory-list" class="garden-container">
-            <div class="loading-spinner-box">Loading inventory...</div>
-          </div>
+          <section class="garden-inventory-section" aria-labelledby="garden-inventory-title">
+            <h2 id="garden-inventory-title" class="garden-section-title">What’s in My Garden</h2>
+            <div id="inventory-list" class="garden-container">
+              <div class="garden-local-status">Seeing what’s growing…</div>
+            </div>
+          </section>
 
         </section>
 
       </main>
 
       <nav class="app-nav-bar">
-        <button id="nav-today" class="nav-item active" onclick="switchTab('today', this)">
-          <span class="nav-item-icon">📋</span>
-          <span>Today's Tasks</span>
+        <button id="nav-today" class="nav-item active" onclick="switchTab('today', this)" aria-current="page">
+          <svg class="nav-item-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4.5h14v15H5zM8 8h8M8 12h8M8 16h5"/></svg>
+          <span>Today’s Tasks</span>
         </button>
         <button id="nav-profile" class="nav-item" onclick="switchTab('garden', this)">
-          <span class="nav-item-icon">🏡</span>
+          <svg class="nav-item-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m3.5 11 8.5-7 8.5 7v8.5h-6V14h-5v5.5h-5z"/></svg>
           <span>My Garden</span>
         </button>
       </nav>
@@ -251,10 +290,10 @@
     <!--  thumb rather than up at the header it was opened from, and    -->
     <!--  introduces no new interaction to learn.                       -->
     <!-- ============================================================= -->
-    <div id="garden-modal" class="modal-overlay hidden" role="dialog" aria-label="Your gardens">
+    <div id="garden-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="garden-modal-title">
       <div class="modal-panel">
         <div class="modal-header">
-          <h2 class="section-title">Your gardens</h2>
+          <h2 class="section-title" id="garden-modal-title">Your gardens</h2>
           <button id="close-garden-modal" class="modal-close-btn" aria-label="Close">✕</button>
         </div>
         <div id="garden-list" class="garden-switch-list"></div>
@@ -277,6 +316,21 @@
       </div>
     </div>
 
+    <div id="remove-item-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="remove-item-title">
+      <div class="modal-panel remove-item-panel">
+        <div class="modal-header">
+          <h2 class="section-title" id="remove-item-title">Remove item?</h2>
+          <button id="close-remove-item-modal" class="modal-close-btn" aria-label="Close">✕</button>
+        </div>
+        <p id="remove-item-body" class="delete-lede">This will remove it from My Garden.</p>
+        <p id="remove-item-error" class="garden-inline-error hidden" role="alert"></p>
+        <div class="delete-actions">
+          <button id="remove-item-cancel-btn" class="primary-action-btn">Cancel</button>
+          <button id="remove-item-confirm-btn" class="destructive-action-btn">Remove</button>
+        </div>
+      </div>
+    </div>
+
     <!-- ============================================================= -->
     <!--  SETTINGS                                                     -->
     <!--                                                               -->
@@ -285,10 +339,10 @@
     <!--  garden only — including the hidden-task list, which was       -->
     <!--  always per-garden but never said so.                          -->
     <!-- ============================================================= -->
-    <div id="settings-modal" class="modal-overlay hidden" role="dialog" aria-label="Settings">
+    <div id="settings-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title">
       <div class="modal-panel">
         <div class="modal-header">
-          <h2 class="section-title">Settings</h2>
+          <h2 class="section-title" id="settings-modal-title">Settings</h2>
           <button id="close-settings-modal" class="modal-close-btn" aria-label="Close">✕</button>
         </div>
 
@@ -342,7 +396,7 @@
 
     <!-- Step two of two for leaving or deleting ONE garden. Says what is
          actually in it, rather than warning in the abstract. -->
-    <div id="garden-danger-modal" class="modal-overlay hidden" role="dialog" aria-label="Confirm">
+    <div id="garden-danger-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="garden-danger-title">
       <div class="modal-panel">
         <div class="modal-header">
           <h2 class="section-title" id="garden-danger-title">Delete this garden</h2>
@@ -355,21 +409,21 @@
           <div class="loading-spinner-box">Checking this garden…</div>
         </div>
 
-        <p id="garden-danger-error" class="auth-error"></p>
+        <p id="garden-danger-error" class="auth-error" role="alert"></p>
 
         <div class="delete-actions">
-          <button id="garden-danger-cancel-btn" class="primary-action-btn">Keep this garden</button>
-          <button id="garden-danger-confirm-btn" class="signout-btn">Yes, delete everything</button>
+          <button id="garden-danger-cancel-btn" class="primary-action-btn" type="button">Keep this garden</button>
+          <button id="garden-danger-confirm-btn" class="destructive-action-btn" type="button">Yes, delete everything</button>
         </div>
       </div>
     </div>
 
     <!-- Step two of two for deleting the whole ACCOUNT. Opens over the settings
          panel and says, in plain words, what happens to each garden. -->
-    <div id="delete-account-modal" class="modal-overlay hidden" role="dialog" aria-label="Delete my account">
+    <div id="delete-account-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="delete-account-title">
       <div class="modal-panel">
         <div class="modal-header">
-          <h2 class="section-title">Delete my account</h2>
+          <h2 class="section-title" id="delete-account-title">Delete my account</h2>
           <button id="close-delete-modal" class="modal-close-btn" aria-label="Close">✕</button>
         </div>
 
@@ -384,11 +438,11 @@
           be starting from scratch, with an empty garden.
         </p>
 
-        <p id="delete-error" class="auth-error"></p>
+        <p id="delete-error" class="auth-error" role="alert"></p>
 
         <div class="delete-actions">
-          <button id="delete-cancel-btn" class="primary-action-btn">Keep my account</button>
-          <button id="delete-confirm-btn" class="signout-btn">Yes, delete everything</button>
+          <button id="delete-cancel-btn" class="primary-action-btn" type="button">Keep my account</button>
+          <button id="delete-confirm-btn" class="destructive-action-btn" type="button">Yes, delete everything</button>
         </div>
       </div>
     </div>
@@ -401,10 +455,10 @@
     <!--  than sitting above it: leaving a filled-in box on screen next -->
     <!--  to "that's arrived" reads as "it didn't send, try again".     -->
     <!-- ============================================================= -->
-    <div id="feedback-modal" class="modal-overlay hidden" role="dialog" aria-label="Send feedback">
+    <div id="feedback-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="feedback-modal-title">
       <div class="modal-panel">
         <div class="modal-header">
-          <h2 class="section-title">Send feedback</h2>
+          <h2 class="section-title" id="feedback-modal-title">Send feedback</h2>
           <button id="close-feedback-modal" class="modal-close-btn" aria-label="Close">✕</button>
         </div>
 
@@ -430,22 +484,22 @@
             </label>
           </div>
 
-          <p class="form-instruction">Your message</p>
+          <label class="form-instruction" for="feedback-body">Your message</label>
           <textarea id="feedback-body" class="feedback-textarea" maxlength="4000"
-                    placeholder="What happened, or what you'd like to see."></textarea>
+                    placeholder="What happened, or what you'd like to see." aria-describedby="feedback-note feedback-error"></textarea>
 
-          <p class="feedback-note">
+          <p class="feedback-note" id="feedback-note">
             Your email address and the version of the app you're using will be sent
             with your message. Your email lets me reply, and the app version helps
             me track down problems.
           </p>
 
-          <p id="feedback-error" class="auth-error"></p>
+          <p id="feedback-error" class="auth-error" role="alert"></p>
 
-          <button id="feedback-send-btn" class="primary-action-btn">Send</button>
+          <button id="feedback-send-btn" class="primary-action-btn" type="button">Send</button>
         </div>
 
-        <p id="feedback-thanks" class="feedback-thanks hidden">
+        <p id="feedback-thanks" class="feedback-thanks hidden" role="status" aria-live="polite" tabindex="-1">
           Thanks — that's arrived. I read everything, though replies can take a while.
         </p>
       </div>
@@ -466,6 +520,6 @@
   <!-- Your Supabase URL + anon key. Create this file from config.example.js. -->
   <script src="config.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js"></script>
+  <script src="app.js?v=gardening-v37-production-closeout"></script>
 </body>
 </html>

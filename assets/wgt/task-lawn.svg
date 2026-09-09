@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 120" role="img" aria-label="Lawn task vignette: five grass blades and two feed granules">
+  <path fill="#188040" d="M12 96 C28 75 52 70 79 73 C108 69 135 78 148 96Z"/>
+  <g fill="#075E4B">
+    <path d="M47 83 C45 65 37 52 27 44 C42 47 54 60 57 82Z"/>
+    <path d="M57 80 C53 55 51 37 45 25 C63 36 69 57 67 80Z"/>
+    <path d="M67 80 C65 48 72 22 83 10 C81 33 82 57 80 80Z"/>
+    <path d="M78 81 C82 54 91 36 103 25 C98 44 97 62 91 82Z"/>
+    <path d="M89 84 C98 63 111 50 126 44 C113 57 107 70 101 86Z"/>
+  </g>
+  <circle cx="126" cy="88" r="4.5" fill="#E55F58"/><circle cx="139" cy="94" r="3.5" fill="#E55F58"/>
+</svg>

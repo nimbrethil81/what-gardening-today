@@ -48,7 +48,7 @@ const sb = configLooksValid ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : nu
  * from. It must match CACHE_NAME in sw.js, and both must be bumped in the same
  * commit — a report labelled with a version that was never deployed is worse
  * than no label at all. */
-const APP_VERSION = "gardening-v17";
+const APP_VERSION = "gardening-v37-production-closeout";
 
 /* ---- Small helpers ------------------------------------------------------- */
 
@@ -87,6 +87,7 @@ let currentUserId = null;
 let gardens = [];                  // [{id, name, latitude, longitude, timezone,
                                    //   created_at, role, otherMembers}] oldest first
 let routedUserId = undefined;      // guards against redundant re-routing on focus
+let sessionRecoveryPromise = null;
 
 // Picker catalogue. One entry per (blueprint, category) pair, so a blueprint
 // listed under two tiles appears twice — which is correct: the tile it is added
@@ -110,6 +111,7 @@ const UNGROUPED_LABEL = "Other";
 // Location captured on the garden form
 let setupLat = null;
 let setupLon = null;
+let setupLocationRequestSerial = 0;
 
 // Which job the garden form is doing: "first-run" | "add" | "edit"
 let gardenFormMode = "first-run";
@@ -137,11 +139,38 @@ const CATEGORY_ORDER = [
 ];
 
 // --- HIDE-THIS-TASK STATE ---
-const HIDE_REVEAL_WIDTH = 76; // px — must match .task-hide-action's width in style.css
+const HIDE_REVEAL_WIDTH = 88; // px — must match .task-hide-action's width in style.css
 let currentlyRevealedWrapper = null;
 let dragState = null;
 let toastTimeout = null;
-let undoToastTaskId = null;
+let undoToastState = null;
+
+// --- TODAY VIEW STATE ---
+// The server remains the sole matching engine. These values control display
+// only: a maximum duration, deterministic hero promotion and stale-response
+// protection for overlapping requests.
+let todayTasks = [];
+let todayLoadedFor = null;
+let selectedTimeMinutes = null; // null = Any
+let todayRequestSerial = 0;
+let todayLoadingTimer = null;
+let expandedTaskId = null;
+let todayHeroTaskId = null;
+
+// The daily hero is presentation state, not a horticultural ranking record.
+// Persist it per user and garden so ordinary re-renders, switching and reloads
+// cannot promote a second "good place to start" on the same device that day.
+const DAILY_HERO_KEY = "wgt.dailyHero";
+const dailyHeroMemory = new Map();
+
+// --- MY GARDEN ASYNC / MODAL STATE ---
+let inventoryRequestSerial = 0;
+let catalogueRequestSerial = 0;
+let hiddenTasksRequestSerial = 0;
+let gardenAddResetTimer = null;
+let removeItemState = null;
+let removeItemReturnFocus = null;
+const modalFocusReturn = new Map();
 
 
 /* ==========================================================================
@@ -220,6 +249,57 @@ function forgetLastGardenId(userId) {
   } catch (e) { /* nothing to forget */ }
 }
 
+function gardenCalendarDay() {
+  const garden = currentGarden();
+  const timeZone = (garden && garden.timezone) || "Europe/London";
+  try {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).formatToParts(new Date());
+    const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+    return values.year + "-" + values.month + "-" + values.day;
+  } catch (error) {
+    return new Date().toISOString().slice(0, 10);
+  }
+}
+
+function dailyHeroStorageSlot() {
+  return currentUserId && currentGardenId
+    ? currentUserId + ":" + currentGardenId
+    : null;
+}
+
+function readDailyHeroRecord(slot) {
+  if (!slot) return null;
+  if (dailyHeroMemory.has(slot)) return dailyHeroMemory.get(slot);
+  try {
+    const raw = window.localStorage.getItem(DAILY_HERO_KEY);
+    const map = raw ? JSON.parse(raw) : {};
+    const record = map && typeof map === "object" ? map[slot] : null;
+    if (record && typeof record === "object") dailyHeroMemory.set(slot, record);
+    return record || null;
+  } catch (error) {
+    return null;
+  }
+}
+
+function writeDailyHeroRecord(slot, record) {
+  if (!slot) return;
+  dailyHeroMemory.set(slot, record);
+  try {
+    const raw = window.localStorage.getItem(DAILY_HERO_KEY);
+    const map = raw ? JSON.parse(raw) : {};
+    const safeMap = map && typeof map === "object" ? map : {};
+    safeMap[slot] = record;
+    window.localStorage.setItem(DAILY_HERO_KEY, JSON.stringify(safeMap));
+  } catch (error) {
+    /* In-memory state still keeps the current session coherent. */
+  }
+}
+
 
 /* ==========================================================================
  *  THE GARDENS YOU BELONG TO
@@ -291,6 +371,83 @@ function showView(which) {
   document.getElementById("app-root").classList.toggle("hidden", which !== "app");
 }
 
+function showAccessibleModal(modalId, initialFocusId, parentModalId = null) {
+  const modal = document.getElementById(modalId);
+  if (!modal) return;
+  if (modal.classList.contains("hidden")) {
+    modalFocusReturn.set(modalId, document.activeElement);
+  }
+  if (parentModalId) {
+    const parent = document.getElementById(parentModalId);
+    if (parent && !parent.classList.contains("hidden")) {
+      parent.setAttribute("aria-hidden", "true");
+      parent.setAttribute("inert", "");
+      modal.dataset.parentModal = parentModalId;
+    }
+  }
+  modal.classList.remove("hidden");
+  requestAnimationFrame(() => {
+    const preferred = initialFocusId ? document.getElementById(initialFocusId) : null;
+    const fallback = modal.querySelector("button:not([disabled]), input:not([disabled]), textarea:not([disabled]), a[href]");
+    const target = preferred && !preferred.disabled ? preferred : fallback;
+    if (target) target.focus();
+  });
+}
+
+function hideAccessibleModal(modalId, restoreFocus = true) {
+  const modal = document.getElementById(modalId);
+  if (!modal) return;
+  const wasOpen = !modal.classList.contains("hidden");
+  modal.classList.add("hidden");
+
+  const parentId = modal.dataset.parentModal;
+  if (parentId) {
+    const parent = document.getElementById(parentId);
+    if (parent) {
+      parent.removeAttribute("aria-hidden");
+      parent.removeAttribute("inert");
+    }
+    delete modal.dataset.parentModal;
+  }
+
+  const returnFocus = modalFocusReturn.get(modalId);
+  modalFocusReturn.delete(modalId);
+  if (wasOpen && restoreFocus && returnFocus && document.contains(returnFocus)) returnFocus.focus();
+}
+
+function closeModalFromKeyboard(modalId) {
+  if (modalId === "garden-modal") closeGardenModal();
+  if (modalId === "settings-modal") closeSettingsModal();
+  if (modalId === "garden-danger-modal") closeGardenDangerModal();
+  if (modalId === "delete-account-modal") closeDeleteAccountModal();
+  if (modalId === "feedback-modal") closeFeedbackModal();
+}
+
+function handleAccessibleModalKeydown(event) {
+  const modal = event.currentTarget;
+  if (!modal || modal.classList.contains("hidden")) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeModalFromKeyboard(modal.id);
+    return;
+  }
+  if (event.key !== "Tab") return;
+
+  const controls = Array.from(modal.querySelectorAll(
+    'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+  )).filter(control => control.offsetParent !== null);
+  if (controls.length === 0) return;
+  const first = controls[0];
+  const last = controls[controls.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
 async function route() {
   showView("splash");
   setSplashMessage("");
@@ -303,6 +460,7 @@ async function route() {
     closeAllModals();
     showSigninDefault();
     showView("signin");
+    requestAnimationFrame(() => document.getElementById("signin-title").focus());
     return;
   }
 
@@ -339,6 +497,10 @@ async function route() {
     loadInventory();
   } catch (err) {
     console.error("Routing failed:", err);
+    if (await sessionHasGone(err, (err && err.status) || 0)) {
+      await recoverFromSessionLoss();
+      return;
+    }
     setSplashMessage("Something went wrong loading your gardens. Check your connection, then tap Retry.", true);
     showView("splash");
   }
@@ -361,9 +523,16 @@ function setSplashMessage(text, showRetry) {
  *  for a way in that isn't there.
  * ========================================================================== */
 
+function resetGoogleSignInControl() {
+  const btn = document.getElementById("signin-google-btn");
+  if (btn) btn.disabled = false;
+}
+
 function showSigninDefault() {
-  // Nothing to reset but the error line — the screen has one control on it.
+  // Reset a pending state restored from the back-forward cache after an OAuth
+  // handoff is cancelled or its external navigation fails.
   document.getElementById("signin-google-error").textContent = "";
+  resetGoogleSignInControl();
 }
 
 async function handleGoogleSignIn() {
@@ -425,13 +594,13 @@ function renderGardenHeader() {
 
 function openGardenModal() {
   renderGardenList();
-  document.getElementById("garden-modal").classList.remove("hidden");
+  showAccessibleModal("garden-modal", "close-garden-modal");
   const btn = document.getElementById("garden-switch-btn");
   if (btn) btn.setAttribute("aria-expanded", "true");
 }
 
-function closeGardenModal() {
-  document.getElementById("garden-modal").classList.add("hidden");
+function closeGardenModal(restoreFocus = true) {
+  hideAccessibleModal("garden-modal", restoreFocus);
   const btn = document.getElementById("garden-switch-btn");
   if (btn) btn.setAttribute("aria-expanded", "false");
 }
@@ -536,21 +705,44 @@ function switchGarden(gardenId) {
 function resetPerGardenUiState() {
   hideToast();
 
+  // Invalidate every outstanding Today response, including an older request
+  // for the same garden that may complete after a later refresh.
+  todayRequestSerial += 1;
+  if (todayLoadingTimer) { clearTimeout(todayLoadingTimer); todayLoadingTimer = null; }
+  todayTasks = [];
+  todayLoadedFor = null;
+  expandedTaskId = null;
+  todayHeroTaskId = null;
+  const taskStatus = document.getElementById("task-status");
+  if (taskStatus) {
+    taskStatus.textContent = "";
+    taskStatus.className = "status-message hidden";
+  }
+
   currentlyRevealedWrapper = null;
   dragState = null;
 
   userInventory = [];
   inventoryLoadedFor = null;
+  inventoryRequestSerial += 1;
+  hiddenTasksRequestSerial += 1;
   const inventoryList = document.getElementById("inventory-list");
   if (inventoryList) {
-    inventoryList.innerHTML = '<div class="loading-spinner-box">Growing garden...</div>';
+    inventoryList.innerHTML = '<div class="garden-local-status">Seeing what’s growing…</div>';
   }
 
   selectedCategoryRef = null;
   selectedSubItemObj = null;
-  document.querySelectorAll(".tile-btn").forEach(tile => tile.classList.remove("selected"));
+  document.querySelectorAll(".tile-btn").forEach(tile => {
+    tile.classList.remove("selected");
+    tile.setAttribute("aria-pressed", "false");
+  });
   const custom = document.getElementById("custom-name");
   if (custom) custom.value = "";
+  if (gardenAddResetTimer) { clearTimeout(gardenAddResetTimer); gardenAddResetTimer = null; }
+  setAddButtonState("idle");
+  setGardenAddError("");
+  closeRemoveItemModal(false);
   clearPillSearch();
 }
 
@@ -596,6 +788,7 @@ async function handleGardenGone() {
  * ========================================================================== */
 
 function showGardenForm(mode, garden) {
+  setupLocationRequestSerial += 1;
   gardenFormMode = mode;
   editingGardenId = (mode === "edit" && garden) ? garden.id : null;
 
@@ -605,12 +798,19 @@ function showGardenForm(mode, garden) {
   const cancelBtn = document.getElementById("setup-cancel-btn");
   const nameInput = document.getElementById("setup-name");
   const confirmEl = document.getElementById("setup-location-confirm");
+  const findBtn = document.getElementById("setup-find-btn");
+  const locateBtn = document.getElementById("setup-locate-btn");
+  const locateLabel = document.getElementById("setup-locate-label");
 
   document.getElementById("setup-error").textContent = "";
   document.getElementById("setup-postcode").value = "";
   showUkNote(false);
   saveBtn.disabled = true;
   cancelBtn.disabled = false;
+  findBtn.disabled = false;
+  findBtn.textContent = "Find postcode";
+  locateBtn.disabled = false;
+  locateLabel.textContent = "Use my current location";
 
   if (mode === "edit" && garden) {
     title.textContent = "Edit garden";
@@ -619,7 +819,7 @@ function showGardenForm(mode, garden) {
     nameInput.value = garden.name || "";
     setupLat = (garden.latitude === null || garden.latitude === undefined) ? null : Number(garden.latitude);
     setupLon = (garden.longitude === null || garden.longitude === undefined) ? null : Number(garden.longitude);
-    confirmEl.textContent = "📍 Using the location saved for this garden";
+    confirmEl.textContent = "Using the location saved for this garden";
     confirmEl.classList.remove("hidden");
     describeSavedLocation(setupLat, setupLon);
   } else if (mode === "add") {
@@ -642,15 +842,17 @@ function showGardenForm(mode, garden) {
 
   validateSetup();
   showView("setup");
+  requestAnimationFrame(() => title.focus());
 }
 
 /* In edit mode we know the coordinates but not what to call the place. Naming
- * it is reassuring ("📍 Amersham, Buckinghamshire" beats a bare promise), but
+ * it is reassuring ("Amersham, Buckinghamshire" beats a bare promise), but
  * it is decoration: if the lookup fails, or the user has already moved on, the
  * neutral wording stands and nothing is blocked. */
 async function describeSavedLocation(lat, lon) {
   if (lat === null || lon === null) return;
   const confirmEl = document.getElementById("setup-location-confirm");
+  const requestSerial = setupLocationRequestSerial;
 
   // Shares the one lookup, so it gets the 2 km radius and the wide-search
   // retry instead of the 100 m default. On the default this found nothing for
@@ -661,8 +863,9 @@ async function describeSavedLocation(lat, lon) {
   // the way into the edit form, whatever the lookup says about it — that
   // would be a rule applied to somebody after the fact.
   const place = await checkUkLocation(lat, lon);
-  if (place.area && gardenFormMode === "edit") {
-    confirmEl.textContent = "📍 " + place.area;
+  if (place.area && gardenFormMode === "edit" &&
+      requestSerial === setupLocationRequestSerial && setupLat === lat && setupLon === lon) {
+    confirmEl.textContent = place.area;
   }
 }
 
@@ -760,9 +963,12 @@ async function handleFindPostcode() {
 
   if (!pc) { errEl.textContent = "Enter a postcode."; return; }
 
+  const requestSerial = ++setupLocationRequestSerial;
   const btn = document.getElementById("setup-find-btn");
+  const locateBtn = document.getElementById("setup-locate-btn");
   const orig = btn.textContent;
   btn.disabled = true;
+  locateBtn.disabled = true;
   btn.textContent = "Finding…";
 
   try {
@@ -770,6 +976,8 @@ async function handleFindPostcode() {
     if (!res.ok) throw new Error("not found");
     const json = await res.json();
     const r = json.result;
+    if (requestSerial !== setupLocationRequestSerial ||
+        document.getElementById("setup-postcode").value.trim() !== pc) return;
 
     // Belt and braces. postcodes.io only resolves UK postcodes, so this cannot
     // fire — which is exactly why it is worth keeping: it costs one comparison
@@ -780,16 +988,20 @@ async function handleFindPostcode() {
     setupLon = r.longitude;
     showUkNote(false);
     const area = [r.admin_ward || r.parish, r.admin_district].filter(Boolean).join(", ");
-    confirmEl.textContent = "📍 " + (area || "Location found");
+    confirmEl.textContent = area || "Location found";
     confirmEl.classList.remove("hidden");
   } catch (err) {
+    if (requestSerial !== setupLocationRequestSerial) return;
     setupLat = null; setupLon = null;
     confirmEl.classList.add("hidden");
     errEl.textContent = "Hmm, we couldn't find that postcode. Check it and try again.";
   } finally {
-    btn.disabled = false;
-    btn.textContent = orig;
-    validateSetup();
+    if (requestSerial === setupLocationRequestSerial) {
+      btn.disabled = false;
+      locateBtn.disabled = false;
+      btn.textContent = orig;
+      validateSetup();
+    }
   }
 }
 
@@ -804,10 +1016,14 @@ function handleUseLocation() {
     return;
   }
 
+  const requestSerial = ++setupLocationRequestSerial;
   const btn = document.getElementById("setup-locate-btn");
-  const orig = btn.textContent;
+  const findBtn = document.getElementById("setup-find-btn");
+  const label = document.getElementById("setup-locate-label");
+  const orig = label.textContent;
   btn.disabled = true;
-  btn.textContent = "Locating…";
+  findBtn.disabled = true;
+  label.textContent = "Locating…";
 
   navigator.geolocation.getCurrentPosition(async (pos) => {
     const lat = pos.coords.latitude;
@@ -817,23 +1033,27 @@ function handleUseLocation() {
     // done here, with a separate request purely for the label; the request was
     // always the better test and was already being made.
     const place = await checkUkLocation(lat, lon);
+    if (requestSerial !== setupLocationRequestSerial) return;
 
     btn.disabled = false;
-    btn.textContent = orig;
+    findBtn.disabled = false;
+    label.textContent = orig;
 
     if (!place.inUK) { refuseNonUkLocation(); return; }
 
     setupLat = lat;
     setupLon = lon;
     showUkNote(false);
-    confirmEl.textContent = "📍 " + (place.area || "Current location");
+    confirmEl.textContent = place.area || "Current location";
     confirmEl.classList.remove("hidden");
     validateSetup();
   }, (err) => {
+    if (requestSerial !== setupLocationRequestSerial) return;
     console.warn("Geolocation blocked:", err);
     errEl.textContent = "Couldn't get your location — enter a postcode instead.";
     btn.disabled = false;
-    btn.textContent = orig;
+    findBtn.disabled = false;
+    label.textContent = orig;
   });
 }
 
@@ -949,6 +1169,7 @@ async function handleSaveGarden() {
     }
   } catch (err) {
     console.error("Save garden failed:", err);
+    if (await sessionHasGone(err, 0)) { await recoverFromSessionLoss(); return; }
     errEl.textContent = gardenSaveErrorMessage(err);
   } finally {
     btn.disabled = false;
@@ -1004,12 +1225,12 @@ function openGardenDangerModal(mode) {
   cancelBtn.textContent = mode === "leave" ? "Stay in this garden" : "Keep this garden";
   cancelBtn.disabled = false;
 
-  document.getElementById("garden-danger-modal").classList.remove("hidden");
+  showAccessibleModal("garden-danger-modal", "garden-danger-cancel-btn", "settings-modal");
   describeGardenImpact(g, mode);
 }
 
-function closeGardenDangerModal() {
-  document.getElementById("garden-danger-modal").classList.add("hidden");
+function closeGardenDangerModal(restoreFocus = true) {
+  hideAccessibleModal("garden-danger-modal", restoreFocus);
 }
 
 /* Say what is actually in this garden, rather than warning in the abstract.
@@ -1058,6 +1279,7 @@ async function describeGardenImpact(garden, mode) {
   } catch (err) {
     // Never let the description block the action. Honest generic wording.
     console.error("Garden impact check failed:", err);
+    if (await sessionHasGone(err, 0)) { await recoverFromSessionLoss(); return; }
     box.innerHTML = mode === "leave"
       ? '<p class="delete-impact-line keep">You\'ll stop seeing <strong>' + name +
         "</strong>. It stays exactly as it is for everyone else.</p>"
@@ -1118,6 +1340,8 @@ async function handleConfirmGardenDanger() {
 
   } catch (err) {
     console.error("Garden " + mode + " failed:", err);
+    if (targetId !== currentGardenId) return;
+    if (await sessionHasGone(err, 0)) { await recoverFromSessionLoss(); return; }
     errEl.textContent = gardenDangerErrorMessage(err, mode);
     btn.disabled = false;
     cancelBtn.disabled = false;
@@ -1145,12 +1369,12 @@ async function handleConfirmGardenDanger() {
 
 function openDeleteAccountModal() {
   document.getElementById("delete-error").textContent = "";
-  document.getElementById("delete-account-modal").classList.remove("hidden");
+  showAccessibleModal("delete-account-modal", "delete-cancel-btn", "settings-modal");
   describeDeletionImpact();
 }
 
-function closeDeleteAccountModal() {
-  document.getElementById("delete-account-modal").classList.add("hidden");
+function closeDeleteAccountModal(restoreFocus = true) {
+  hideAccessibleModal("delete-account-modal", restoreFocus);
 }
 
 /* Say what will actually happen, garden by garden, rather than a vague warning.
@@ -1204,6 +1428,7 @@ async function describeDeletionImpact() {
   } catch (err) {
     // Never let this block the deletion itself: fall back to honest generic wording.
     console.error("Deletion impact check failed:", err);
+    if (await sessionHasGone(err, 0)) { await recoverFromSessionLoss(); return; }
     box.innerHTML = `<p class="delete-impact-line gone">
         Your account and any garden you tend on your own will be deleted, along with
         everything in them. Gardens you share with someone else will stay with them.
@@ -1234,6 +1459,7 @@ async function handleConfirmDeleteAccount() {
 
   } catch (err) {
     console.error("Delete account failed:", err);
+    if (await sessionHasGone(err, 0)) { await recoverFromSessionLoss(); return; }
     errEl.textContent = "Something went wrong and your account has NOT been deleted. Please try again.";
     btn.disabled = false;
     cancelBtn.disabled = false;
@@ -1270,11 +1496,11 @@ function openFeedbackModal() {
   if (bug) bug.checked = true;
   if (errEl) errEl.textContent = "";
 
-  document.getElementById("feedback-modal").classList.remove("hidden");
+  showAccessibleModal("feedback-modal", "close-feedback-modal", "settings-modal");
 }
 
-function closeFeedbackModal() {
-  document.getElementById("feedback-modal").classList.add("hidden");
+function closeFeedbackModal(restoreFocus = true) {
+  hideAccessibleModal("feedback-modal", restoreFocus);
 }
 
 async function handleSendFeedback() {
@@ -1310,7 +1536,9 @@ async function handleSendFeedback() {
     if (res.error) throw res.error;
 
     document.getElementById("feedback-form").classList.add("hidden");
-    document.getElementById("feedback-thanks").classList.remove("hidden");
+    const thanks = document.getElementById("feedback-thanks");
+    thanks.classList.remove("hidden");
+    thanks.focus();
     bodyEl.value = "";
     const bug = document.querySelector('input[name="feedback-kind"][value="bug"]');
     if (bug) bug.checked = true;
@@ -1330,8 +1558,7 @@ async function handleSendFeedback() {
       // Signed out or expired while the modal was open. "Check your connection"
       // would be a lie, and retrying would fail exactly the same way, so send
       // them where the problem actually is.
-      closeFeedbackModal();
-      route();
+      await recoverFromSessionLoss();
       return;
 
     } else {
@@ -1364,14 +1591,45 @@ async function sessionHasGone(err, httpStatus) {
   }
 }
 
+async function recoverFromSessionLoss() {
+  if (sessionRecoveryPromise) return sessionRecoveryPromise;
+  sessionRecoveryPromise = (async () => {
+    // Stand down the auth callback before clearing the stale local token, so a
+    // SIGNED_OUT event cannot start a second route in parallel with recovery.
+    routedUserId = null;
+    try { await sb.auth.signOut({ scope: "local" }); } catch (error) { /* local cleanup continues */ }
+
+    closeAllModals();
+    resetPerGardenUiState();
+    currentGardenId = null;
+    currentUserId = null;
+    gardens = [];
+    missingGardenRecovery = false;
+    showSigninDefault();
+    document.getElementById("signin-google-error").textContent =
+      "Your session ended. Sign in again to continue.";
+    showView("signin");
+    requestAnimationFrame(() => document.getElementById("signin-title").focus());
+  })();
+  try {
+    await sessionRecoveryPromise;
+  } finally {
+    sessionRecoveryPromise = null;
+  }
+}
+
 
 /* ==========================================================================
  *  NAVIGATION
  * ========================================================================== */
 
 function switchTab(viewId, element) {
-  document.querySelectorAll(".nav-item").forEach(btn => btn.classList.remove("active"));
+  document.querySelectorAll(".nav-item").forEach(btn => {
+    btn.classList.remove("active");
+    btn.removeAttribute("aria-current");
+  });
   element.classList.add("active");
+  element.setAttribute("aria-current", "page");
 
   document.querySelectorAll(".view-section").forEach(section => section.classList.remove("active-view"));
   document.getElementById(`view-${viewId}`).classList.add("active-view");
@@ -1395,20 +1653,42 @@ function goToTab(viewId) {
 async function loadToday() {
   if (!currentGardenId) return;
   const taskContainer = document.getElementById("task-container");
-  taskContainer.dataset.empty = "false";
-  taskContainer.innerHTML = '<div class="loading-spinner-box">Gathering seasonal rules...</div>';
-
-  // Which garden this request is FOR. Switching is faster than a round trip, so
-  // a reply can arrive after the user has moved on; painting it over the new
-  // garden would show one garden's tasks under another garden's name.
+  const statusEl = document.getElementById("task-status");
   const gardenAtRequest = currentGardenId;
+  const requestSerial = ++todayRequestSerial;
+  const hasCurrentContent = todayLoadedFor === gardenAtRequest;
+
+  taskContainer.setAttribute("aria-busy", "true");
+  taskContainer.classList.toggle("refreshing", hasCurrentContent);
+  if (!hasCurrentContent) taskContainer.innerHTML = "";
+  if (statusEl) {
+    statusEl.className = "status-message hidden";
+    statusEl.textContent = "";
+  }
+
+  if (todayLoadingTimer) clearTimeout(todayLoadingTimer);
+  todayLoadingTimer = setTimeout(() => {
+    if (requestSerial !== todayRequestSerial || gardenAtRequest !== currentGardenId) return;
+    if (hasCurrentContent) {
+      if (statusEl) {
+        statusEl.textContent = "Refreshing today’s jobs…";
+        statusEl.className = "status-message";
+      }
+    } else {
+      taskContainer.innerHTML = `
+        <div class="loading-state">
+          <strong>Finding today’s best jobs…</strong>
+          <span>Checking your garden and today’s conditions.</span>
+        </div>`;
+    }
+  }, 300);
 
   try {
     const { data, error } = await sb.functions.invoke("today", {
       body: { garden_id: gardenAtRequest }
     });
 
-    if (gardenAtRequest !== currentGardenId) return;   // stale: discard
+    if (requestSerial !== todayRequestSerial || gardenAtRequest !== currentGardenId) return;
 
     if (error) {
       // 403 is the `today` function saying "you are not a member of this
@@ -1417,40 +1697,133 @@ async function loadToday() {
       const status = (error.context && typeof error.context.status === "number")
         ? error.context.status : null;
       if (status === 403 || status === 404) { await handleGardenGone(); return; }
+      if (await sessionHasGone(error, status || 0)) { await recoverFromSessionLoss(); return; }
       throw error;
     }
 
-    renderWeather(data.weather);
-    renderTaskCards(data.tasks || []);
+    renderWeather(data && data.weather);
+    todayTasks = (data && Array.isArray(data.tasks)) ? data.tasks : [];
+    todayHeroTaskId = resolveDailyHeroTaskId(todayTasks);
+    todayLoadedFor = gardenAtRequest;
+    renderCurrentTaskList();
   } catch (err) {
-    if (gardenAtRequest !== currentGardenId) return;   // stale: discard
+    if (requestSerial !== todayRequestSerial || gardenAtRequest !== currentGardenId) return;
     console.error("Today failed:", err);
     renderWeather(null);
     taskContainer.dataset.empty = "false";
-    taskContainer.innerHTML = '<div class="loading-spinner-box">Couldn\'t reach your garden. Check your connection and try again.</div>';
+    taskContainer.innerHTML = `
+      <div class="today-error-state">
+        <h2>We couldn’t show today’s jobs.</h2>
+        <p>Check your connection and try again.</p>
+        <button type="button" class="secondary-action-btn" data-action="retry-today">Try again</button>
+      </div>`;
+  } finally {
+    if (requestSerial === todayRequestSerial) {
+      if (todayLoadingTimer) { clearTimeout(todayLoadingTimer); todayLoadingTimer = null; }
+      taskContainer.classList.remove("refreshing");
+      taskContainer.setAttribute("aria-busy", "false");
+      if (statusEl) statusEl.classList.add("hidden");
+    }
   }
 }
 
 function renderWeather(weather) {
+  const widget = document.getElementById("weather-widget");
   const tempEl = document.getElementById("weather-temp");
   const descEl = document.getElementById("weather-desc");
   const iconEl = document.getElementById("weather-icon");
 
   if (weather && weather.available) {
+    if (widget) widget.classList.remove("unavailable");
     tempEl.textContent = `${weather.temp_c}°C`;
     const d = weather.description || "";
-    descEl.textContent = d ? d.charAt(0).toUpperCase() + d.slice(1) : "";
+    descEl.textContent = d ? d.charAt(0).toUpperCase() + d.slice(1) : "Current weather";
     if (weather.icon) {
       iconEl.src = `https://openweathermap.org/img/wn/${weather.icon}@2x.png`;
-      iconEl.style.display = "";
+      iconEl.alt = "";
     } else {
       iconEl.removeAttribute("src");
     }
   } else {
-    tempEl.textContent = "--°C";
-    descEl.textContent = "Weather unavailable";
+    if (widget) widget.classList.add("unavailable");
+    tempEl.textContent = "Weather";
+    descEl.textContent = "Unavailable";
     iconEl.removeAttribute("src");
   }
+}
+
+function taskMinutes(task) {
+  const minutes = Number(task && task.estimated_minutes);
+  return Number.isFinite(minutes) && minutes > 0 ? minutes : Number.POSITIVE_INFINITY;
+}
+
+function formatTaskDuration(task) {
+  const minutes = taskMinutes(task);
+  if (!Number.isFinite(minutes)) return "Time varies";
+  if (minutes < 60) return minutes + " min";
+  if (minutes % 60 === 0) {
+    const hours = minutes / 60;
+    return hours + (hours === 1 ? " hour" : " hours");
+  }
+  const hours = Math.floor(minutes / 60);
+  return hours + " hr " + (minutes % 60) + " min";
+}
+
+/* The server's category-first order remains authoritative for the normal
+ * list. The one display exception is the hero: choose the shortest eligible
+ * job. Equal durations retain returned order; task_id is the final stable
+ * fallback if future transforms ever introduce duplicate positions. */
+function orderTasksForDisplay(tasks, maximumMinutes, fixedHeroTaskId) {
+  const indexed = (tasks || []).map((task, index) => ({ task, index }));
+  const eligible = maximumMinutes === null
+    ? indexed
+    : indexed.filter(entry => taskMinutes(entry.task) <= maximumMinutes);
+
+  if (eligible.length === 0) return { hero: null, remaining: [], eligible: [] };
+
+  const heroEntry = fixedHeroTaskId === undefined
+    ? eligible.slice().sort((a, b) =>
+        taskMinutes(a.task) - taskMinutes(b.task) ||
+        a.index - b.index ||
+        Number(a.task.task_id || 0) - Number(b.task.task_id || 0)
+      )[0]
+    : eligible.find(entry => Number(entry.task.task_id) === Number(fixedHeroTaskId)) || null;
+
+  return {
+    hero: heroEntry ? heroEntry.task : null,
+    remaining: eligible.filter(entry => entry !== heroEntry).map(entry => entry.task),
+    eligible: eligible.map(entry => entry.task)
+  };
+}
+
+function resolveDailyHeroTaskId(tasks) {
+  const slot = dailyHeroStorageSlot();
+  const day = gardenCalendarDay();
+  const existing = readDailyHeroRecord(slot);
+  if (existing && existing.day === day && Number.isFinite(Number(existing.taskId))) {
+    return Number(existing.taskId);
+  }
+
+  const ordered = orderTasksForDisplay(tasks, null);
+  if (!ordered.hero) return null;
+  const taskId = Number(ordered.hero.task_id);
+  writeDailyHeroRecord(slot, { day, taskId });
+  return taskId;
+}
+
+const TASK_ART = {
+  "Lawn": "task-lawn.svg",
+  "Beds": "task-beds.svg",
+  "Trees & shrubs": "task-trees-shrubs.svg",
+  "Veg & herbs": "task-veg-herbs.svg",
+  "Garden structures": "task-structures.svg",
+  "Structures": "task-structures.svg",
+  "Tools": "task-tools.svg",
+  "Plants & flowers": "task-plants-flowers.svg"
+};
+
+function taskArtPath(category) {
+  return "assets/wgt/" + (TASK_ART[category] || "task-plants-flowers.svg");
 }
 
 /* "Nothing due" and "you haven't told us what's in it yet" are completely
@@ -1466,63 +1839,126 @@ function renderTodayEmptyState() {
   c.dataset.empty = "true";
   const inventoryKnown = inventoryLoadedFor === currentGardenId;
   c.innerHTML = (inventoryKnown && userInventory.length === 0)
-    ? '<div class="loading-spinner-box">Nothing here yet — add your first plants, tools and structures in My Garden.</div>'
-    : '<div class="loading-spinner-box">✨ Your garden is up to date!</div>';
+    ? `<div class="today-empty-state">
+         <div><h2>Let’s set up your garden</h2><p>Add the plants, tools and structures you have, and we’ll find the jobs that fit.</p><button type="button" class="secondary-action-btn" data-action="open-garden">Add to My Garden</button></div>
+       </div>`
+    : `<div class="today-empty-state">
+         <div><h2>Nothing much to do today</h2><p>Your garden’s in a good place. Enjoy it.</p></div>
+         <img src="assets/wgt/nothing-much-today.svg" alt="">
+       </div>`;
 }
 
-function renderTaskCards(tasks) {
+function renderNoTimeFitState() {
   const taskContainer = document.getElementById("task-container");
+  const label = selectedTimeMinutes === 60 ? "1 hour" :
+    selectedTimeMinutes === 120 ? "2 hours" : selectedTimeMinutes + " minutes";
+  taskContainer.dataset.empty = "false";
+  taskContainer.innerHTML = `
+    <div class="today-error-state">
+      <h2>No jobs fit ${escapeHtml(label)} today</h2>
+      <p>There may still be worthwhile jobs if you have longer.</p>
+      <button type="button" class="secondary-action-btn" data-action="show-all-times">Show jobs for any time</button>
+    </div>`;
+}
+
+function taskCardMarkup(task, hero) {
+  const taskId = Number(task.task_id);
+  const title = escapeHtml(task.name);
+  const category = escapeHtml(task.category || "Garden task");
+  const guidance = escapeHtml(task.instruction || "No instructions are available for this job yet.");
+  const titleId = "task-title-" + taskId;
+  const guidanceId = "task-guidance-" + taskId;
+  const expanded = expandedTaskId === taskId;
+  const priority = hero ? '<p class="task-priority-label">A good place to start</p>' : "";
+  const summary = hero ? '<p class="task-summary">The shortest job in today’s list — a straightforward way to get going.</p>' : "";
+
+  return `
+    <div class="task-hide-action">
+      <button class="hide-task-btn" type="button" data-task-id="${taskId}" aria-label="Hide ${title}">Hide</button>
+    </div>
+    <article class="task-card${hero ? " hero" : ""}${expanded ? " expanded" : ""}" aria-labelledby="${titleId}">
+      <button class="task-disclosure" type="button" data-task-id="${taskId}" aria-expanded="${expanded}" aria-controls="${guidanceId}" aria-label="${expanded ? "Hide" : "Show"} instructions for ${title}, ${category}">
+        <span class="sr-only">${expanded ? "Hide" : "Show"} instructions</span>
+      </button>
+      <div class="task-disclosure-visual">
+        <img class="task-art" src="${taskArtPath(task.category)}" alt="">
+        <span class="task-info">
+          ${priority}
+          <h3 id="${titleId}">${title}<svg class="task-title-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3.5 4.5 4.5L6 12.5"/></svg></h3>
+          ${summary}
+          <span class="task-meta"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M10 5.8v4.5l3 1.8"/></svg>${escapeHtml(formatTaskDuration(task))}</span>
+        </span>
+      </div>
+      <button class="task-action-btn task-check" type="button" data-task-id="${taskId}" aria-label="Mark ${title}, ${category}, as done">
+        <svg viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="14.5"/><path class="task-tick" d="m11.5 18.3 4.2 4.2 8.8-9"/></svg>
+      </button>
+      <div id="${guidanceId}" class="task-guidance" ${expanded ? "" : "hidden"}>
+        <h4>What to do</h4>
+        <p>${guidance}</p>
+        <div class="task-guidance-actions"><button class="task-hide-explicit hide-task-btn" type="button" data-task-id="${taskId}">Hide this job</button></div>
+      </div>
+    </article>`;
+}
+
+/* Completion and Hide are local operations, so their visible result must also
+ * live in the local task model. Removing only the card element lets any later
+ * render (for example, expanding the next card) resurrect stale content. */
+function removeTodayTaskFromClient(taskId) {
+  const index = todayTasks.findIndex(task => Number(task.task_id) === Number(taskId));
+  if (index < 0) return { task: null, index: -1 };
+  const [task] = todayTasks.splice(index, 1);
+  if (expandedTaskId === Number(taskId)) expandedTaskId = null;
+  return { task, index };
+}
+
+function restoreTodayTaskToClient(task, index) {
+  if (!task || todayTasks.some(item => Number(item.task_id) === Number(task.task_id))) return;
+  const insertionIndex = Number.isInteger(index)
+    ? Math.max(0, Math.min(index, todayTasks.length))
+    : todayTasks.length;
+  todayTasks.splice(insertionIndex, 0, task);
+}
+
+function invalidateTodayRequestForLocalMutation() {
+  todayRequestSerial += 1;
+  if (todayLoadingTimer) { clearTimeout(todayLoadingTimer); todayLoadingTimer = null; }
+  const taskContainer = document.getElementById("task-container");
+  if (taskContainer) {
+    taskContainer.classList.remove("refreshing");
+    taskContainer.setAttribute("aria-busy", "false");
+  }
+}
+
+function renderCurrentTaskList(options) {
+  const taskContainer = document.getElementById("task-container");
+  const preservePosition = !!(options && options.preservePosition);
+  const oldY = preservePosition ? window.scrollY : null;
   taskContainer.innerHTML = "";
   currentlyRevealedWrapper = null;
   missingGardenRecovery = false;   // a successful load clears the recovery latch
 
-  if (tasks.length === 0) {
+  if (todayTasks.length === 0) {
     renderTodayEmptyState();
     return;
   }
+
+  const ordered = orderTasksForDisplay(todayTasks, selectedTimeMinutes, todayHeroTaskId);
+  if (ordered.eligible.length === 0) {
+    renderNoTimeFitState();
+    return;
+  }
+
   taskContainer.dataset.empty = "false";
 
-  tasks.forEach(task => {
+  (ordered.hero ? [ordered.hero] : []).concat(ordered.remaining).forEach(task => {
+    const isHero = !!ordered.hero && Number(task.task_id) === Number(ordered.hero.task_id);
     const wrapper = document.createElement("div");
-    wrapper.className = "task-card-wrapper";
-    // Curated tasks are trusted, but a manual task's name/category/instruction
-    // is user-written (task_insert_manual_mine lets any garden member create
-    // one), so all three are escaped before going into innerHTML. escapeHtml
-    // also turns a null/undefined value into "" rather than the literal word
-    // "null", which a category-less or instruction-less task would otherwise
-    // show on screen.
-    wrapper.innerHTML = `
-      <div class="task-hide-action">
-        <button class="hide-task-btn" data-task-id="${task.task_id}">Hide</button>
-      </div>
-      <div class="task-card">
-        <div class="task-info">
-          <h3>${escapeHtml(task.name)}</h3>
-          <div class="task-description-wrap">
-            <p class="task-instruction">${escapeHtml(task.category)} • ${escapeHtml(task.instruction)}</p>
-            <span class="task-fade" aria-hidden="true"></span>
-          </div>
-          <button class="task-expand-toggle" type="button" aria-expanded="false" aria-label="Show more">▾</button>
-        </div>
-        <button class="task-action-btn task-check" data-task-id="${task.task_id}">✓</button>
-      </div>
-    `;
+    wrapper.className = "task-card-wrapper" + (isHero ? " hero-wrapper" : "");
+    wrapper.dataset.taskId = String(task.task_id);
+    wrapper.innerHTML = taskCardMarkup(task, isHero);
     taskContainer.appendChild(wrapper);
   });
-
-  // Every card is rendered at the same collapsed (3-line-clamped) height, but
-  // the chevron/fade hint should only appear on the ones actually cut off.
-  // That can't be known until the text is laid out in the DOM, so this runs
-  // one frame after the cards are inserted and compares each description's
-  // full height (scrollHeight) against its clamped height (clientHeight).
-  requestAnimationFrame(() => {
-    taskContainer.querySelectorAll(".task-card").forEach(card => {
-      const description = card.querySelector(".task-instruction");
-      if (description && description.scrollHeight > description.clientHeight + 1) {
-        card.classList.add("has-more");
-      }
-    });
-  });
+  if (oldY !== null) requestAnimationFrame(() => window.scrollTo(0, oldY));
 }
 
 /* --- Tap-to-expand a task card's description ------------------------------
@@ -1546,18 +1982,41 @@ function handleTaskCardExpand(event) {
     return;
   }
 
-  if (event.target.closest(".task-action-btn")) return; // the tick — handled elsewhere
-  if (event.target.closest(".hide-task-btn")) return;    // the Hide button behind the card
-
-  const card = wrapper.querySelector(".task-card");
-  if (!card.classList.contains("has-more")) return; // nothing to expand
-
-  const expanded = card.classList.toggle("expanded");
-  const toggle = card.querySelector(".task-expand-toggle");
-  if (toggle) {
-    toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
-    toggle.setAttribute("aria-label", expanded ? "Show less" : "Show more");
+  const disclosure = event.target.closest(".task-disclosure");
+  if (!disclosure) return;
+  const taskId = Number(disclosure.dataset.taskId);
+  expandedTaskId = expandedTaskId === taskId ? null : taskId;
+  renderCurrentTaskList({ preservePosition: true });
+  if (expandedTaskId !== null) {
+    const reopened = document.querySelector(`.task-disclosure[data-task-id="${expandedTaskId}"]`);
+    if (reopened) reopened.focus({ preventScroll: true });
   }
+}
+
+function handleTaskContainerAction(event) {
+  const action = event.target.closest("[data-action]");
+  if (!action) return;
+  if (action.dataset.action === "retry-today") loadToday();
+  if (action.dataset.action === "show-all-times") setTimeFilter(null);
+  if (action.dataset.action === "open-garden") goToTab("garden");
+}
+
+function setTimeFilter(minutes) {
+  selectedTimeMinutes = minutes;
+  document.querySelectorAll(".time-pill").forEach(button => {
+    const value = button.dataset.minutes === "all" ? null : Number(button.dataset.minutes);
+    const selected = value === selectedTimeMinutes;
+    button.classList.toggle("selected", selected);
+    button.setAttribute("aria-pressed", selected ? "true" : "false");
+  });
+  expandedTaskId = null;
+  if (todayLoadedFor === currentGardenId) renderCurrentTaskList({ preservePosition: true });
+}
+
+function handleTimeFilter(event) {
+  const button = event.target.closest(".time-pill");
+  if (!button) return;
+  setTimeFilter(button.dataset.minutes === "all" ? null : Number(button.dataset.minutes));
 }
 
 
@@ -1568,8 +2027,14 @@ function handleTaskCardExpand(event) {
 async function loadInventory() {
   if (!currentGardenId) return;
   const gardenAtRequest = currentGardenId;
+  const requestSerial = ++inventoryRequestSerial;
   const inventoryList = document.getElementById("inventory-list");
-  inventoryList.innerHTML = '<div class="loading-spinner-box">Growing garden...</div>';
+  const hasCurrentContent = inventoryLoadedFor === gardenAtRequest;
+  if (!hasCurrentContent) {
+    inventoryList.innerHTML = '<div class="garden-local-status">Seeing what’s growing…</div>';
+  } else {
+    inventoryList.classList.add("refreshing");
+  }
 
   try {
     const { data, error } = await sb
@@ -1579,7 +2044,7 @@ async function loadInventory() {
       .is("removed_at", null)
       .order("id");
 
-    if (gardenAtRequest !== currentGardenId) return;   // stale: discard
+    if (requestSerial !== inventoryRequestSerial || gardenAtRequest !== currentGardenId) return;
     if (error) throw error;
 
     userInventory = (data || []).map(r => ({
@@ -1597,10 +2062,34 @@ async function loadInventory() {
     if (taskContainer && taskContainer.dataset.empty === "true") renderTodayEmptyState();
 
   } catch (err) {
-    if (gardenAtRequest !== currentGardenId) return;   // stale: discard
+    if (requestSerial !== inventoryRequestSerial || gardenAtRequest !== currentGardenId) return;
     console.error("Inventory failed:", err);
-    inventoryList.innerHTML = '<div class="loading-spinner-box">Couldn\'t load your garden. Check your connection.</div>';
+    if (await sessionHasGone(err, 0)) { await recoverFromSessionLoss(); return; }
+    if (!hasCurrentContent) {
+      inventoryList.innerHTML = `
+        <div class="garden-inventory-error">
+          <p>We couldn’t show your garden. Please try again.</p>
+          <button type="button" class="secondary-action-btn" data-action="retry-inventory">Try again</button>
+        </div>`;
+    }
+  } finally {
+    if (requestSerial === inventoryRequestSerial) inventoryList.classList.remove("refreshing");
   }
+}
+
+const CATEGORY_ART = {
+  "Lawn": "category-lawn.svg",
+  "Beds": "category-beds.svg",
+  "Trees & shrubs": "category-trees-shrubs.svg",
+  "Plants & flowers": "category-plants-flowers.svg",
+  "Veg & herbs": "category-veg-herbs.svg",
+  "Garden structures": "category-structures.svg",
+  "Structures": "category-structures.svg",
+  "Tools": "category-tools.svg"
+};
+
+function categoryArtPath(category) {
+  return "assets/wgt/" + (CATEGORY_ART[category] || "category-plants-flowers.svg");
 }
 
 function renderGroupedInventory() {
@@ -1608,7 +2097,11 @@ function renderGroupedInventory() {
   displayArea.innerHTML = "";
 
   if (userInventory.length === 0) {
-    displayArea.innerHTML = '<p class="form-instruction">Your garden is empty.</p>';
+    displayArea.innerHTML = `
+      <div class="garden-inventory-empty">
+        <h3>You haven’t added anything yet.</h3>
+        <p>Choose a category or search above to add something to your garden.</p>
+      </div>`;
     return;
   }
 
@@ -1629,9 +2122,9 @@ function renderGroupedInventory() {
     const groupDiv = document.createElement("div");
     groupDiv.className = "inventory-group";
 
-    const groupTitle = document.createElement("div");
+    const groupTitle = document.createElement("h3");
     groupTitle.className = "inventory-group-title";
-    groupTitle.innerText = categoryName;
+    groupTitle.innerHTML = `<img src="${categoryArtPath(categoryName)}" alt=""><span>${escapeHtml(categoryName === "Garden structures" ? "Structures" : categoryName)}</span>`;
     groupDiv.appendChild(groupTitle);
 
     items.forEach(item => {
@@ -1650,11 +2143,13 @@ function renderGroupedInventory() {
       // names. data-friendly-name was dropped: nothing in the app ever reads
       // it, so it was a second unescaped copy doing no work.
       cardDiv.innerHTML = `
-        <div>
+        <div class="inventory-item-copy">
           <strong>${escapeHtml(displayName)}</strong>
-          ${customRef ? `<div class="inventory-item-meta">📌 ${escapeHtml(customRef)}</div>` : ""}
+          ${customRef ? `<div class="inventory-item-meta">${escapeHtml(customRef)}</div>` : ""}
         </div>
-        <button class="remove-asset-btn" data-item-id="${item.item_id}">✕</button>
+        <button class="remove-asset-btn" type="button" data-item-id="${item.item_id}" data-item-name="${escapeHtml(displayName)}" aria-label="Remove ${escapeHtml(displayName)} from My Garden">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6.5 6.5v9M10 6.5v9M13.5 6.5v9M4.5 5h11M7 5V3.5h6V5M5.5 5l.7 12h7.6l.7-12"/></svg>
+        </button>
       `;
       groupDiv.appendChild(cardDiv);
     });
@@ -1669,6 +2164,12 @@ function renderGroupedInventory() {
  * ========================================================================== */
 
 async function loadCatalogue() {
+  const requestSerial = ++catalogueRequestSerial;
+  const statusEl = document.getElementById("catalogue-status");
+  if (statusEl) {
+    statusEl.textContent = "Finding plants, tools and structures…";
+    statusEl.className = "garden-local-status";
+  }
   try {
     const { data, error } = await sb
       .from("blueprint")
@@ -1680,6 +2181,7 @@ async function loadCatalogue() {
       .is("retired_at", null)
       .order("name");
     if (error) throw error;
+    if (requestSerial !== catalogueRequestSerial) return;
 
     globalDictionary = [];
     (data || []).forEach(bp => {
@@ -1697,8 +2199,20 @@ async function loadCatalogue() {
         });
       });
     });
+    if (statusEl) {
+      statusEl.textContent = "";
+      statusEl.className = "garden-local-status hidden";
+    }
+    refreshPillBox();
   } catch (err) {
+    if (requestSerial !== catalogueRequestSerial) return;
     console.error("Catalogue failed:", err);
+    if (await sessionHasGone(err, 0)) { await recoverFromSessionLoss(); return; }
+    if (statusEl) {
+      statusEl.innerHTML = `We couldn’t load the catalogue. <button type="button" class="text-btn" data-action="retry-catalogue">Try again</button>`;
+      statusEl.className = "garden-local-status error";
+    }
+    setPillPlaceholder("Your saved garden is still available below.");
   }
 }
 
@@ -1712,7 +2226,9 @@ async function loadCatalogue() {
  */
 function createItemPill(item, showSource) {
   const pill = document.createElement("button");
+  pill.type = "button";
   pill.className = "item-pill" + (showSource ? " item-pill--result" : "");
+  pill.setAttribute("aria-pressed", "false");
 
   const nameLine = document.createElement("span");
   nameLine.className = "item-pill-name";
@@ -1735,8 +2251,12 @@ function createItemPill(item, showSource) {
   }
 
   pill.onclick = () => {
-    document.querySelectorAll(".item-pill").forEach(p => p.classList.remove("selected"));
+    document.querySelectorAll(".item-pill").forEach(p => {
+      p.classList.remove("selected");
+      p.setAttribute("aria-pressed", "false");
+    });
     pill.classList.add("selected");
+    pill.setAttribute("aria-pressed", "true");
     selectedSubItemObj = item;
 
     // A search result may belong to a tile other than the one currently lit up.
@@ -1753,7 +2273,9 @@ function createItemPill(item, showSource) {
 
 function highlightCategoryTile(categoryKey) {
   document.querySelectorAll(".tile-btn").forEach(tile => {
-    tile.classList.toggle("selected", tile.dataset.category === categoryKey);
+    const selected = tile.dataset.category === categoryKey;
+    tile.classList.toggle("selected", selected);
+    tile.setAttribute("aria-pressed", selected ? "true" : "false");
   });
 }
 
@@ -1900,8 +2422,12 @@ function clearPillSearch() {
 }
 
 function selectCategory(categoryKey, element) {
-  document.querySelectorAll(".tile-btn").forEach(tile => tile.classList.remove("selected"));
+  document.querySelectorAll(".tile-btn").forEach(tile => {
+    tile.classList.remove("selected");
+    tile.setAttribute("aria-pressed", "false");
+  });
   element.classList.add("selected");
+  element.setAttribute("aria-pressed", "true");
 
   selectedCategoryRef = categoryKey;
   selectedSubItemObj = null;
@@ -1921,105 +2447,190 @@ function selectCategory(categoryKey, element) {
 
 function validateForm() {
   const submitBtn = document.getElementById("add-asset-btn");
-  submitBtn.disabled = !(selectedCategoryRef && selectedSubItemObj);
+  const busy = submitBtn.dataset.state === "planting" || submitBtn.dataset.state === "success";
+  submitBtn.disabled = busy || !(selectedCategoryRef && selectedSubItemObj);
+}
+
+function setAddButtonState(state) {
+  const btn = document.getElementById("add-asset-btn");
+  const label = document.getElementById("add-asset-label");
+  if (!btn || !label) return;
+  btn.dataset.state = state;
+  btn.classList.toggle("planting", state === "planting");
+  btn.classList.toggle("success", state === "success");
+  label.textContent = state === "planting" ? "Planting…" : state === "success" ? "Added!" : "Add to My Garden";
+  validateForm();
+}
+
+function setGardenAddError(message) {
+  const errorEl = document.getElementById("garden-add-error");
+  if (!errorEl) return;
+  errorEl.textContent = message || "";
+  errorEl.classList.toggle("hidden", !message);
 }
 
 async function handleAddAsset() {
   const customName = document.getElementById("custom-name").value.trim();
   const btn = document.getElementById("add-asset-btn");
   if (!selectedCategoryRef || !selectedSubItemObj) return;
+  const gardenAtAdd = currentGardenId;
+  const categoryAtAdd = selectedCategoryRef;
+  const itemAtAdd = selectedSubItemObj;
 
-  btn.disabled = true;
-  btn.textContent = "Planting...";
+  setGardenAddError("");
+  setAddButtonState("planting");
 
   try {
     const { error } = await sb.from("garden_item").insert({
-      garden_id: currentGardenId,
-      blueprint_id: selectedSubItemObj.blueprint_id,
+      garden_id: gardenAtAdd,
+      blueprint_id: itemAtAdd.blueprint_id,
       friendly_name: customName.length > 0 ? customName : null,
-      legacy_category: selectedCategoryRef   // the tile it was added under -> grouping
+      legacy_category: categoryAtAdd   // the tile it was added under -> grouping
     });
     if (error) throw error;
+    if (gardenAtAdd !== currentGardenId) return;
 
-    document.getElementById("custom-name").value = "";
-    selectedSubItemObj = null;
-    // Stand the search down and return to browsing the tile the item came from,
-    // so adding several things from one category doesn't mean retyping.
-    clearPillSearch();
+    // A slow add must not erase a newer choice made while the request was in
+    // flight. When the original choice is still current, keep its category as
+    // approved but clear the item and optional reference for the next add.
+    const originalChoiceStillCurrent = selectedCategoryRef === categoryAtAdd &&
+      selectedSubItemObj && selectedSubItemObj.blueprint_id === itemAtAdd.blueprint_id;
+    if (originalChoiceStillCurrent) {
+      document.getElementById("custom-name").value = "";
+      // Stand the search down and return to browsing the category the item came
+      // from, so adding several things there does not mean retyping.
+      clearPillSearch();
+    }
 
-    btn.textContent = "Added! 🎉";
-    setTimeout(() => { btn.textContent = "Add to My Garden"; }, 2000);
+    setAddButtonState("success");
+    const liveStatus = document.getElementById("garden-add-status");
+    if (liveStatus) liveStatus.textContent = "Added to My Garden";
+    if (gardenAddResetTimer) clearTimeout(gardenAddResetTimer);
+    gardenAddResetTimer = setTimeout(() => {
+      setAddButtonState("idle");
+      if (liveStatus) liveStatus.textContent = "";
+      gardenAddResetTimer = null;
+    }, 850);
 
     loadInventory();
     loadToday();
   } catch (error) {
     console.error("Add item error:", error);
+    if (gardenAtAdd !== currentGardenId) return;
+    if (await sessionHasGone(error, 0)) { await recoverFromSessionLoss(); return; }
     // The per-garden item ceiling (db/11) is the one refusal worth naming: the
     // generic "try again" would send someone round a loop that cannot succeed.
     const full = String((error && error.message) || "").indexOf("maximum of") !== -1;
-    btn.textContent = full ? "This garden is full" : "Couldn't add — try again";
-    btn.style.backgroundColor = "#f44336";
-    setTimeout(() => {
-      btn.textContent = "Add to My Garden";
-      btn.style.backgroundColor = "";
-      btn.disabled = false;
-    }, 3000);
+    setAddButtonState("idle");
+    setGardenAddError(full
+      ? "This garden is full, so another item can’t be added."
+      : "We couldn’t add " + itemAtAdd.Suggested_Name + ". Please try again.");
   }
 }
 
 
 /* ==========================================================================
- *  MY GARDEN — removing an item (two-tap confirm, then soft delete)
+ *  MY GARDEN — removing an item (modal confirm, then soft delete)
  * ========================================================================== */
 
 function handleRemoveAsset(event) {
   const btn = event.target.closest(".remove-asset-btn");
   if (!btn) return;
+  openRemoveItemModal({
+    itemId: Number(btn.dataset.itemId),
+    itemName: btn.dataset.itemName || "this item",
+    gardenId: currentGardenId
+  }, btn);
+}
 
-  if (btn.dataset.confirming === "true") {
-    const itemId = btn.getAttribute("data-item-id");
-    executeRemoveAsset(itemId, btn);
-  } else {
-    btn.dataset.confirming = "true";
-    btn.textContent = "Remove?";
-    btn.classList.add("confirming");
+function handleGardenViewAction(event) {
+  const action = event.target.closest("[data-action]");
+  if (!action) return;
+  if (action.dataset.action === "retry-inventory") loadInventory();
+  if (action.dataset.action === "retry-catalogue") loadCatalogue();
+}
 
-    setTimeout(() => {
-      if (btn.dataset.confirming === "true") {
-        btn.dataset.confirming = "false";
-        btn.textContent = "✕";
-        btn.classList.remove("confirming");
-      }
-    }, 3000);
+function openRemoveItemModal(state, trigger) {
+  removeItemState = state;
+  removeItemReturnFocus = trigger || null;
+  document.getElementById("remove-item-title").textContent = "Remove " + state.itemName + "?";
+  document.getElementById("remove-item-body").textContent = "This will remove it from My Garden.";
+  const errorEl = document.getElementById("remove-item-error");
+  errorEl.textContent = "";
+  errorEl.classList.add("hidden");
+  const confirm = document.getElementById("remove-item-confirm-btn");
+  confirm.disabled = false;
+  confirm.textContent = "Remove";
+  document.getElementById("remove-item-modal").classList.remove("hidden");
+  requestAnimationFrame(() => document.getElementById("remove-item-cancel-btn").focus());
+}
+
+function closeRemoveItemModal(restoreFocus = true) {
+  const modal = document.getElementById("remove-item-modal");
+  if (!modal) return;
+  modal.classList.add("hidden");
+  const returnFocus = removeItemReturnFocus;
+  removeItemState = null;
+  removeItemReturnFocus = null;
+  if (restoreFocus && returnFocus && document.contains(returnFocus)) returnFocus.focus();
+}
+
+function handleRemoveItemModalKeydown(event) {
+  const modal = document.getElementById("remove-item-modal");
+  if (!modal || modal.classList.contains("hidden")) return;
+
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeRemoveItemModal();
+    return;
+  }
+  if (event.key !== "Tab") return;
+
+  const controls = Array.from(modal.querySelectorAll("button:not([disabled])"));
+  if (controls.length === 0) return;
+  const first = controls[0];
+  const last = controls[controls.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
   }
 }
 
-async function executeRemoveAsset(itemId, btn) {
+async function executeRemoveAsset() {
+  if (!removeItemState) return;
+  const state = removeItemState;
+  const btn = document.getElementById("remove-item-confirm-btn");
+  const errorEl = document.getElementById("remove-item-error");
   btn.disabled = true;
-  btn.textContent = "⏳";
+  btn.textContent = "Removing…";
+  errorEl.textContent = "";
+  errorEl.classList.add("hidden");
 
   try {
     const { error } = await sb
       .from("garden_item")
       .update({ removed_at: new Date().toISOString() })
-      .eq("id", itemId)
-      .eq("garden_id", currentGardenId);
+      .eq("id", state.itemId)
+      .eq("garden_id", state.gardenId);
     if (error) throw error;
+    if (state.gardenId !== currentGardenId) return;
 
-    btn.textContent = "✓";
-    btn.classList.remove("confirming");
-    btn.classList.add("removed");
-
-    setTimeout(() => {
-      loadInventory();
-      loadToday();
-    }, 600);
+    userInventory = userInventory.filter(item => Number(item.item_id) !== state.itemId);
+    closeRemoveItemModal(false);
+    renderGroupedInventory();
+    showToast(state.itemName + " removed from My Garden.", false);
+    loadToday();
   } catch (error) {
     console.error("Remove item error:", error);
+    if (state.gardenId !== currentGardenId) return;
+    if (await sessionHasGone(error, 0)) { await recoverFromSessionLoss(); return; }
     btn.disabled = false;
-    btn.textContent = "✕";
-    btn.dataset.confirming = "false";
-    btn.classList.remove("confirming");
+    btn.textContent = "Remove";
+    errorEl.textContent = "We couldn’t remove " + state.itemName + ". Please try again.";
+    errorEl.classList.remove("hidden");
   }
 }
 
@@ -2032,6 +2643,10 @@ function onCardPointerDown(e) {
   const wrapper = e.target.closest(".task-card-wrapper");
   if (!wrapper) return;
   if (wrapper.classList.contains("completed")) return; // completed cards don't swipe
+  // Completion and explicit Hide are ordinary controls, not drag handles.
+  // Ignoring their pointerdown avoids a small sideways finger movement from
+  // priming the swipe state or suppressing the intended click.
+  if (e.target.closest(".task-action-btn, .hide-task-btn")) return;
 
   const card = wrapper.querySelector(".task-card");
   const wasRevealed = wrapper.classList.contains("revealed");
@@ -2130,11 +2745,21 @@ async function handleHideTaskClick(event) {
   const nameEl = wrapper ? wrapper.querySelector(".task-info h3") : null;
   const taskName = nameEl ? nameEl.textContent : "Task";
   const gardenAtHide = currentGardenId;
+  invalidateTodayRequestForLocalMutation();
+  const removed = removeTodayTaskFromClient(taskId);
+  const task = removed.task;
 
   if (currentlyRevealedWrapper === wrapper) currentlyRevealedWrapper = null;
   if (wrapper) wrapper.remove();
 
-  showUndoToast(taskId, taskName);
+  const hideState = {
+    type: "hide",
+    taskId,
+    taskName,
+    task,
+    taskIndex: removed.index,
+    gardenId: gardenAtHide
+  };
 
   try {
     const { error } = await sb.from("hidden_task").insert({
@@ -2142,9 +2767,18 @@ async function handleHideTaskClick(event) {
       task_id: taskId
     });
     // 23505 = already hidden (unique key). That's a success, not a failure.
-    if (error && error.code !== "23505") console.error("Hide task failed:", error);
+    if (error && error.code !== "23505") throw error;
+    if (gardenAtHide !== currentGardenId) return;
+    // Undo must follow the insert: a faster delete would otherwise undo nothing.
+    showUndoToast(hideState);
   } catch (error) {
     console.error("Hide task error:", error);
+    if (gardenAtHide !== currentGardenId) return;
+    if (await sessionHasGone(error, 0)) { await recoverFromSessionLoss(); return; }
+    hideToast();
+    restoreTodayTaskToClient(task, removed.index);
+    renderCurrentTaskList({ preservePosition: true });
+    showTaskStatus("We couldn’t hide “" + taskName + "”. Please try again.", true);
   }
 }
 
@@ -2155,6 +2789,7 @@ async function handleHideTaskClick(event) {
  * garden. */
 function showToast(message, withUndo) {
   if (toastTimeout) { clearTimeout(toastTimeout); toastTimeout = null; }
+  if (!withUndo) undoToastState = null;
 
   const toast = document.getElementById("undo-toast");
   if (!toast) return;
@@ -2167,33 +2802,57 @@ function showToast(message, withUndo) {
 
 function hideToast() {
   if (toastTimeout) { clearTimeout(toastTimeout); toastTimeout = null; }
-  undoToastTaskId = null;
+  undoToastState = null;
   const toast = document.getElementById("undo-toast");
   if (toast) toast.classList.remove("visible");
 }
 
-function showUndoToast(taskId, taskName) {
-  undoToastTaskId = taskId;
-  showToast('"' + taskName + '" hidden.', true);
+function showUndoToast(state) {
+  undoToastState = state;
+  const message = state.type === "completion"
+    ? '“' + state.taskName + '” completed.'
+    : '“' + state.taskName + '” hidden.';
+  showToast(message, true);
 }
 
-async function handleUndoHide() {
-  if (undoToastTaskId === null || undoToastTaskId === undefined) return;
-  const taskId = undoToastTaskId;
+async function handleUndoAction() {
+  if (!undoToastState) return;
+  const state = undoToastState;
   const gardenAtUndo = currentGardenId;
 
   hideToast();
+  if (state.gardenId !== gardenAtUndo) return;
 
   try {
-    const { error } = await sb.from("hidden_task")
-      .delete()
-      .eq("garden_id", gardenAtUndo)
-      .eq("task_id", taskId);
+    const result = state.type === "completion"
+      ? await sb.rpc("undo_task_completion", { p_completion_id: state.completionId })
+      : await sb.from("hidden_task")
+          .delete()
+          .eq("garden_id", gardenAtUndo)
+          .eq("task_id", state.taskId);
+    const error = result.error;
     if (error) throw error;
-    loadToday(); // bring the restored task straight back
+    if (gardenAtUndo !== currentGardenId) return;
+    invalidateTodayRequestForLocalMutation();
+    restoreTodayTaskToClient(state.task, state.taskIndex);
+    renderCurrentTaskList({ preservePosition: true });
+    showTaskStatus(state.type === "completion" ? "Completion undone." : "Job restored.", false);
   } catch (error) {
-    console.error("Undo hide error:", error);
+    console.error("Undo error:", error);
+    if (gardenAtUndo !== currentGardenId) return;
+    if (await sessionHasGone(error, 0)) { await recoverFromSessionLoss(); return; }
+    showTaskStatus("We couldn’t undo that change. Please refresh and try again.", true);
   }
+}
+
+function showTaskStatus(message, isError) {
+  const statusEl = document.getElementById("task-status");
+  if (!statusEl) return;
+  statusEl.textContent = message;
+  statusEl.className = "status-message" + (isError ? " error" : "");
+  setTimeout(() => {
+    if (statusEl.textContent === message) statusEl.classList.add("hidden");
+  }, 5000);
 }
 
 
@@ -2233,25 +2892,27 @@ function openSettingsModal() {
   const rememberToggle = document.getElementById("remember-garden-toggle");
   if (rememberToggle) rememberToggle.checked = rememberGardenEnabled();
 
-  document.getElementById("settings-modal").classList.remove("hidden");
+  showAccessibleModal("settings-modal", "close-settings-modal");
   fetchHiddenTasks();
 }
 
-function closeSettingsModal() {
-  document.getElementById("settings-modal").classList.add("hidden");
+function closeSettingsModal(restoreFocus = true) {
+  hideAccessibleModal("settings-modal", restoreFocus);
 }
 
 function closeAllModals() {
-  closeSettingsModal();
-  closeGardenModal();
-  closeGardenDangerModal();
-  closeDeleteAccountModal();
-  closeFeedbackModal();
+  closeFeedbackModal(false);
+  closeDeleteAccountModal(false);
+  closeGardenDangerModal(false);
+  closeRemoveItemModal(false);
+  closeSettingsModal(false);
+  closeGardenModal(false);
 }
 
 async function fetchHiddenTasks() {
   const listEl = document.getElementById("hidden-tasks-list");
-  listEl.innerHTML = '<div class="loading-spinner-box">Loading...</div>';
+  const requestSerial = ++hiddenTasksRequestSerial;
+  listEl.innerHTML = '<div class="garden-local-status">Checking hidden tasks…</div>';
   const gardenAtRequest = currentGardenId;
 
   try {
@@ -2260,7 +2921,7 @@ async function fetchHiddenTasks() {
       .select("task_id, hidden_at, task:task_id ( name, category:category_id ( name ) )")
       .eq("garden_id", gardenAtRequest)
       .order("hidden_at", { ascending: false });
-    if (gardenAtRequest !== currentGardenId) return;   // stale: discard
+    if (requestSerial !== hiddenTasksRequestSerial || gardenAtRequest !== currentGardenId) return;
     if (error) throw error;
 
     const rows = (data || []).map(r => ({
@@ -2271,8 +2932,14 @@ async function fetchHiddenTasks() {
     }));
     renderHiddenTasksList(rows);
   } catch (error) {
+    if (requestSerial !== hiddenTasksRequestSerial || gardenAtRequest !== currentGardenId) return;
     console.error("Fetch hidden tasks error:", error);
-    listEl.innerHTML = '<div class="loading-spinner-box">Failed to load hidden tasks.</div>';
+    if (await sessionHasGone(error, 0)) { await recoverFromSessionLoss(); return; }
+    listEl.innerHTML = `
+      <div class="hidden-tasks-error" role="alert">
+        <p>We couldn’t show hidden tasks for this garden.</p>
+        <button type="button" class="secondary-action-btn" data-action="retry-hidden-tasks">Try again</button>
+      </div>`;
   }
 }
 
@@ -2295,28 +2962,37 @@ function renderHiddenTasksList(hiddenTasks) {
         <h4>${escapeHtml(task.task_name)}</h4>
         <p>${escapeHtml(task.category)}</p>
       </div>
-      <button class="restore-task-btn" data-task-id="${task.task_id}">Restore</button>
+      <button class="restore-task-btn" type="button" data-task-id="${task.task_id}">Restore</button>
+      <p class="hidden-task-error hidden" role="alert"></p>
     `;
     listEl.appendChild(card);
   });
 }
 
 async function handleRestoreTask(event) {
+  const retry = event.target.closest('[data-action="retry-hidden-tasks"]');
+  if (retry) { fetchHiddenTasks(); return; }
   const btn = event.target.closest(".restore-task-btn");
   if (!btn) return;
 
   const taskId = parseInt(btn.getAttribute("data-task-id"), 10);
+  const gardenAtRestore = currentGardenId;
+  const card = btn.closest(".hidden-task-card");
+  const taskNameEl = card ? card.querySelector(".hidden-task-info h4") : null;
+  const taskName = taskNameEl ? taskNameEl.textContent : "that task";
+  const errorEl = card ? card.querySelector(".hidden-task-error") : null;
+  if (errorEl) { errorEl.textContent = ""; errorEl.classList.add("hidden"); }
   btn.disabled = true;
-  btn.textContent = "⏳";
+  btn.textContent = "Restoring…";
 
   try {
     const { error } = await sb.from("hidden_task")
       .delete()
-      .eq("garden_id", currentGardenId)
+      .eq("garden_id", gardenAtRestore)
       .eq("task_id", taskId);
     if (error) throw error;
+    if (gardenAtRestore !== currentGardenId) return;
 
-    const card = btn.closest(".hidden-task-card");
     if (card) card.remove();
 
     loadToday();
@@ -2327,8 +3003,14 @@ async function handleRestoreTask(event) {
     }
   } catch (error) {
     console.error("Restore task error:", error);
+    if (gardenAtRestore !== currentGardenId) return;
+    if (await sessionHasGone(error, 0)) { await recoverFromSessionLoss(); return; }
     btn.disabled = false;
     btn.textContent = "Restore";
+    if (errorEl) {
+      errorEl.textContent = "We couldn’t restore “" + taskName + "”. Please try again.";
+      errorEl.classList.remove("hidden");
+    }
   }
 }
 
@@ -2338,40 +3020,66 @@ async function handleRestoreTask(event) {
  * ========================================================================== */
 
 async function handleTaskCompletion(event) {
-  if (!event.target.classList.contains("task-check")) return;
+  const checkbox = event.target.closest(".task-check");
+  if (!checkbox) return;
 
-  const checkbox = event.target;
   const card = checkbox.closest(".task-card");
+  const wrapper = checkbox.closest(".task-card-wrapper");
   const taskId = parseInt(checkbox.getAttribute("data-task-id"), 10);
+  const task = todayTasks.find(item => Number(item.task_id) === taskId);
+  const taskName = task ? task.name : "Task";
+  const gardenAtCompletion = currentGardenId;
 
   checkbox.disabled = true;
-  checkbox.innerText = "⏳";
+  checkbox.setAttribute("aria-label", "Marking " + taskName + " as done");
 
   try {
-    const { error } = await sb.from("task_completion").insert({
-      garden_id: currentGardenId,
+    const { data, error } = await sb.from("task_completion").insert({
+      garden_id: gardenAtCompletion,
       task_id: taskId,
       notes: "Completed via PWA client"
-    });
+    }).select("id").single();
     if (error) throw error;
+    if (gardenAtCompletion !== currentGardenId) return;
+
+    invalidateTodayRequestForLocalMutation();
+    const removed = removeTodayTaskFromClient(taskId);
+    const completedTask = removed.task || task;
 
     checkbox.classList.add("completed");
-    checkbox.innerText = "✓";
-    card.style.opacity = "0.5";
-
-    // Mark the whole card completed: this removes the Hide action sitting behind
-    // it (so it can't show through the now-translucent card) and takes the card
-    // out of the swipe gesture.
-    const wrapper = card.closest(".task-card-wrapper");
+    checkbox.setAttribute("aria-label", taskName + " completed");
+    card.classList.add("completing");
     if (wrapper) {
       wrapper.classList.add("completed");
       if (currentlyRevealedWrapper === wrapper) currentlyRevealedWrapper = null;
       card.style.transform = "translateX(0)";
     }
+
+    const reducedMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    setTimeout(() => {
+      if (gardenAtCompletion !== currentGardenId) return;
+      if (wrapper) wrapper.classList.add("removing");
+      setTimeout(() => {
+        if (gardenAtCompletion !== currentGardenId) return;
+        if (wrapper) wrapper.remove();
+        showUndoToast({
+          type: "completion",
+          taskId,
+          taskName,
+          task: completedTask,
+          taskIndex: removed.index,
+          gardenId: gardenAtCompletion,
+          completionId: data.id
+        });
+      }, reducedMotion ? 0 : 180);
+    }, reducedMotion ? 80 : 420);
   } catch (error) {
     console.error("Completion error:", error);
+    if (gardenAtCompletion !== currentGardenId) return;
+    if (await sessionHasGone(error, 0)) { await recoverFromSessionLoss(); return; }
     checkbox.disabled = false;
-    checkbox.innerText = "❌";
+    checkbox.setAttribute("aria-label", "Mark " + taskName + " as done");
+    showTaskStatus("We couldn’t mark “" + taskName + "” as done. Please try again.", true);
   }
 }
 
@@ -2403,6 +3111,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // --- Sign-in screen ---
   const googleBtn = document.getElementById("signin-google-btn");
   if (googleBtn) googleBtn.addEventListener("click", handleGoogleSignIn);
+  window.addEventListener("pageshow", resetGoogleSignInControl);
 
   // --- Garden form (first run / add another / edit) ---
   const findBtn = document.getElementById("setup-find-btn");
@@ -2431,6 +3140,11 @@ document.addEventListener("DOMContentLoaded", () => {
   if (gardenModal) {
     gardenModal.addEventListener("click", (e) => { if (e.target === gardenModal) closeGardenModal(); });
   }
+  ["garden-modal", "settings-modal", "garden-danger-modal", "delete-account-modal", "feedback-modal"]
+    .forEach(id => {
+      const modal = document.getElementById(id);
+      if (modal) modal.addEventListener("keydown", handleAccessibleModalKeydown);
+    });
   const gardenList = document.getElementById("garden-list");
   if (gardenList) gardenList.addEventListener("click", handleGardenListClick);
   const addGardenBtn = document.getElementById("add-garden-btn");
@@ -2444,13 +3158,18 @@ document.addEventListener("DOMContentLoaded", () => {
     taskContainer.addEventListener("click", handleTaskCompletion);
     taskContainer.addEventListener("click", handleHideTaskClick);
     taskContainer.addEventListener("click", handleTaskCardExpand);
+    taskContainer.addEventListener("click", handleTaskContainerAction);
     taskContainer.addEventListener("pointerdown", onCardPointerDown);
     taskContainer.addEventListener("pointermove", onCardPointerMove);
     taskContainer.addEventListener("pointerup", onCardPointerUp);
     taskContainer.addEventListener("pointercancel", onCardPointerUp);
   }
+  const timeFilterGroup = document.getElementById("time-filter-group");
+  if (timeFilterGroup) timeFilterGroup.addEventListener("click", handleTimeFilter);
 
   // --- My Garden ---
+  const gardenView = document.getElementById("view-garden");
+  if (gardenView) gardenView.addEventListener("click", handleGardenViewAction);
   const inventoryList = document.getElementById("inventory-list");
   if (inventoryList) inventoryList.addEventListener("click", handleRemoveAsset);
   const addAssetBtn = document.getElementById("add-asset-btn");
@@ -2463,10 +3182,23 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   const pillSearchClear = document.getElementById("pill-search-clear");
   if (pillSearchClear) pillSearchClear.addEventListener("click", clearPillSearch);
+  const closeRemoveItemBtn = document.getElementById("close-remove-item-modal");
+  if (closeRemoveItemBtn) closeRemoveItemBtn.addEventListener("click", closeRemoveItemModal);
+  const removeItemCancelBtn = document.getElementById("remove-item-cancel-btn");
+  if (removeItemCancelBtn) removeItemCancelBtn.addEventListener("click", closeRemoveItemModal);
+  const removeItemConfirmBtn = document.getElementById("remove-item-confirm-btn");
+  if (removeItemConfirmBtn) removeItemConfirmBtn.addEventListener("click", executeRemoveAsset);
+  const removeItemModal = document.getElementById("remove-item-modal");
+  if (removeItemModal) {
+    removeItemModal.addEventListener("click", event => {
+      if (event.target === removeItemModal) closeRemoveItemModal();
+    });
+    removeItemModal.addEventListener("keydown", handleRemoveItemModalKeydown);
+  }
 
   // --- Undo / notice toast ---
   const undoBtn = document.getElementById("undo-toast-btn");
-  if (undoBtn) undoBtn.addEventListener("click", handleUndoHide);
+  if (undoBtn) undoBtn.addEventListener("click", handleUndoAction);
 
   // --- Settings modal ---
   const settingsBtn = document.getElementById("settings-btn");

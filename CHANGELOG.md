@@ -15,6 +15,8 @@ Releases 2.15 and earlier are preserved unchanged in the [Archive — legacy for
 
 ## [Unreleased]
 
+- Replaced the coral-dot logo with the approved C15 coral-leaf SVG and regenerated the PWA, home-screen and favicon derivatives.
+- Published the corrected privacy notice on 5 September 2026.
 - Retired the shipped garden-gate design and settled Phase G copy from `docs/temp/` after preserving their rationale and provenance with immutable historical links; no runtime or live changes.
 - R7: condensed recent entries and preserved pre-2.16 history unchanged in a labelled legacy section of this file; allow-lists, runtime, deployment and external state are unchanged.
 - R6 follow-up: corrected the hosting owner in `AGENTS.md` and removed the completed Claude Project-copy action from the roadmap; no runtime or external changes.
@@ -23,8 +25,8 @@ Releases 2.15 and earlier are preserved unchanged in the [Archive — legacy for
 - R4: corrected authoring headers, review layouts, paste grammar, prompt/backlog routing and the voice example; preserved safety wording and recorded unresolved authority, with no live changes.
 - R3: reconciled roadmap and dated review decisions, and corrected review baselines, scope, evidence and delivery rules; no external routines or runtime changes.
 - R2: corrected public access/navigation, offline and weather-failure limits, feedback grants, and configuration evidence/rationale in DEV documentation; no runtime or deployed settings changed.
-- R1: reconciled verified backend state and privacy publication checks, approved direct notice without a banner, recorded R2–R8, and prepared gardening-v17; publication and notification remain unconfirmed.
-- Corrected privacy disclosures and public-notice links; prepared gardening-v16, with notice publication checks still pending.
+- R1: reconciled verified backend state and privacy publication checks, approved direct notice without a banner, recorded R2–R8, and prepared gardening-v17.
+- Corrected privacy disclosures and public-notice links; prepared gardening-v16.
 - Clarified document ownership/update triggers and corrected SQL, origin, feedback and Apps Script runbooks; no runtime or external changes.
 
 ---

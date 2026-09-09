@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 120" role="img" aria-label="Tools task vignette: hand trowel and one gardening glove">
+  <g transform="translate(18 9) rotate(34 47 50)"><rect x="43" y="1" width="13" height="37" rx="7" fill="#6545B7"/><rect x="47" y="36" width="5" height="20" rx="2" fill="#073F35"/><path d="M36 54 H63 L65 68 C65 82 55 93 50 98 C42 91 34 81 34 68Z" fill="#6545B7"/></g>
+  <path fill="#9B7AE0" d="M88 89 C91 69 94 49 99 30 C101 23 108 24 108 32 V54 C110 39 112 22 117 22 C123 22 120 42 120 56 C124 40 126 28 131 29 C136 31 130 49 130 62 C135 48 138 42 142 45 C147 50 137 72 130 88 C122 104 95 104 88 89Z"/>
+  <path fill="#6545B7" d="M88 88 H132 V103 H91Z"/>
+</svg>

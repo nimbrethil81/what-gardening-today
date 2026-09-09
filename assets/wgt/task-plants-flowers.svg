@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 120" role="img" aria-label="Plants and flowers task vignette: two flowers and a fallen petal">
+  <g fill="#075E4B"><rect x="43" y="52" width="6" height="48" rx="3"/><rect x="105" y="54" width="6" height="46" rx="3"/><ellipse cx="34" cy="77" rx="17" ry="8" transform="rotate(35 34 77)"/><ellipse cx="58" cy="83" rx="17" ry="8" transform="rotate(-35 58 83)"/><ellipse cx="96" cy="82" rx="16" ry="8" transform="rotate(35 96 82)"/><ellipse cx="119" cy="76" rx="16" ry="8" transform="rotate(-35 119 76)"/></g>
+  <g fill="#E55F58" transform="translate(46 37)"><ellipse cy="-15" ry="22" rx="10"/><ellipse transform="rotate(72)" cy="-15" ry="22" rx="10"/><ellipse transform="rotate(144)" cy="-15" ry="22" rx="10"/><ellipse transform="rotate(216)" cy="-15" ry="22" rx="10"/><ellipse transform="rotate(288)" cy="-15" ry="22" rx="10"/></g><circle cx="46" cy="37" r="9" fill="#E59A18"/>
+  <path fill="#A72A7C" d="M108 14 L119 28 L134 18 V42 C134 57 123 65 108 65 C93 65 82 57 82 42 V18 L97 28Z"/>
+  <path fill="#E55F58" d="M139 93 C150 89 157 92 153 98 C149 103 142 103 134 100Z"/>
+</svg>

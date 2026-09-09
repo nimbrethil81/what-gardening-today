@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 120" role="img" aria-label="Beds task vignette: three cultivated rows and a hand fork">
+  <path fill="#8A4B2B" d="M18 40 H113 L130 97 H8Z"/>
+  <g fill="#D94F4A"><path d="M35 42 H45 L35 88 H23Z"/><path d="M61 42 H71 L70 88 H58Z"/><path d="M87 42 H97 L106 88 H94Z"/></g>
+  <g fill="#075E4B">
+    <path d="M31 50 C24 44 22 38 25 34 C33 35 38 40 38 47Z"/><path d="M42 50 C49 44 51 38 48 34 C40 35 36 40 36 47Z"/>
+    <path d="M58 61 C51 55 49 49 52 45 C60 46 65 51 65 58Z"/><path d="M69 61 C76 55 78 49 75 45 C67 46 63 51 63 58Z"/>
+    <path d="M85 50 C78 44 76 38 79 34 C87 35 92 40 92 47Z"/><path d="M96 50 C103 44 105 38 102 34 C94 35 90 40 90 47Z"/>
+  </g>
+  <g transform="rotate(20 129 43)"><rect x="125" y="8" width="10" height="34" rx="5" fill="#E55F58"/><rect x="128" y="40" width="4" height="28" rx="2" fill="#073F35"/><path d="M119 66 H141 V71 H137 V90 H132 V71 H128 V90 H123 V71 H119Z" fill="#073F35"/></g>
+</svg>

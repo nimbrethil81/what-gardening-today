@@ -6,16 +6,35 @@
 // APP_VERSION in app.js MUST be the same string. It is what gets sent with a
 // piece of feedback, so if the two drift, every bug report is labelled with a
 // build that was never deployed.
-const CACHE_NAME = 'gardening-v17';
+const CACHE_NAME = 'gardening-v37-production-closeout';
 
 // Scope-relative paths (no leading slash) so they resolve correctly whether the
 // app is served from /what-gardening-today/ or /what-gardening-today-dev/.
 const ASSETS = [
   './',
   './index.html',
-  './style.css',
-  './app.js',
+  './style.css?v=gardening-v37-production-closeout',
+  './app.js?v=gardening-v37-production-closeout',
   './manifest.json',
+  './assets/wgt/logo.svg',
+  './assets/wgt/category-lawn.svg',
+  './assets/wgt/category-beds.svg',
+  './assets/wgt/category-trees-shrubs.svg',
+  './assets/wgt/category-veg-herbs.svg',
+  './assets/wgt/category-structures.svg',
+  './assets/wgt/category-tools.svg',
+  './assets/wgt/category-plants-flowers.svg',
+  './assets/wgt/task-lawn.svg',
+  './assets/wgt/task-beds.svg',
+  './assets/wgt/task-trees-shrubs.svg',
+  './assets/wgt/task-veg-herbs.svg',
+  './assets/wgt/task-structures.svg',
+  './assets/wgt/task-tools.svg',
+  './assets/wgt/task-plants-flowers.svg',
+  './assets/wgt/nothing-much-today.svg',
+  './assets/wgt/planting-seed.svg',
+  './assets/wgt/planting-shoot.svg',
+  './assets/wgt/planting-flower.svg',
   './assets/icons/icon-192.png',
   './assets/icons/icon-512.png',
   './assets/icons/apple-touch-icon.png',
@@ -63,7 +82,10 @@ self.addEventListener('fetch', e => {
   // and fall back to the cached copy only if the network fails (e.g. you're
   // offline in the garden with no signal).
   e.respondWith(
-    fetch(req)
+    // Bypass the browser's separate HTTP cache. The Cache API below remains
+    // our offline fallback, but a successful network request must never pair
+    // new markup with an older stylesheet or script.
+    fetch(req, { cache: 'no-store' })
       .then(response => {
         const clone = response.clone();
         caches.open(CACHE_NAME).then(cache => cache.put(req, clone));

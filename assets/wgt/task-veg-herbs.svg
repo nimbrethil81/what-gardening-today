@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 120" role="img" aria-label="Veg and herbs task vignette: carrot, herb and watering can">
+  <path fill="#8A4B2B" d="M8 95 C31 79 57 82 79 90 C103 79 132 82 152 95Z"/>
+  <path fill="#C56600" d="M35 40 C57 38 65 50 55 66 C47 79 30 88 18 92 C20 72 24 49 35 40Z"/>
+  <g fill="#075E4B"><path d="M41 42 C29 28 35 18 43 28 L45 36 C45 19 57 20 53 31 L48 39 C61 28 68 37 56 43Z"/>
+  <path d="M73 87 V39 H78 V87Z"/><ellipse cx="67" cy="49" rx="11" ry="6" transform="rotate(25 67 49)"/><ellipse cx="84" cy="58" rx="12" ry="6" transform="rotate(-22 84 58)"/><ellipse cx="67" cy="69" rx="10" ry="5" transform="rotate(24 67 69)"/><ellipse cx="86" cy="77" rx="10" ry="5" transform="rotate(-20 86 77)"/></g>
+  <g fill="#E59A18"><path d="M112 49 H141 V88 H112Z"/><path d="M138 54 C158 50 158 80 140 78" fill="none" stroke="#E59A18" stroke-width="7"/><path d="M111 56 L94 47 L91 52 L111 67Z"/><circle cx="92" cy="45" r="2"/><circle cx="87" cy="48" r="2"/></g>
+</svg>
