@@ -15,6 +15,10 @@ Releases 2.15 and earlier are preserved unchanged in the [Archive — legacy for
 
 ## [Unreleased]
 
+- Investigated the gap below the bottom nav bar in mobile Safari: it's Safari's own toolbar, not our layout, and is already absent once installed to the Home Screen; no change made.
+- Tightened the gap between the header row and the Today's Tasks/My Garden page heading, which the garden-selector restyle below had made look too large; prepared gardening-v40.
+- Restyled the header's garden-selector control as quiet UI chrome (smaller, muted, semi-bold) so it no longer reads as a second page headline; prepared gardening-v39.
+- Added a personal visual-identity reference sheet at `docs/reference/visual-identity.html` (non-authoritative, manually maintained).
 - Shipped the v1.1 identity update: green/amber palette, recentred mark, and a new inverted icon treatment with a dedicated 16px favicon glyph; prepared gardening-v38.
 - Replaced the coral-dot logo with the approved C15 coral-leaf SVG and regenerated the PWA, home-screen and favicon derivatives.
 - Published the corrected privacy notice on 5 September 2026.
