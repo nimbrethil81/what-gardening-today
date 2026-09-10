@@ -15,6 +15,7 @@ Releases 2.15 and earlier are preserved unchanged in the [Archive — legacy for
 
 ## [Unreleased]
 
+- Shipped the v1.1 identity update: green/amber palette, recentred mark, and a new inverted icon treatment with a dedicated 16px favicon glyph; prepared gardening-v38.
 - Replaced the coral-dot logo with the approved C15 coral-leaf SVG and regenerated the PWA, home-screen and favicon derivatives.
 - Published the corrected privacy notice on 5 September 2026.
 - Retired the shipped garden-gate design and settled Phase G copy from `docs/temp/` after preserving their rationale and provenance with immutable historical links; no runtime or live changes.

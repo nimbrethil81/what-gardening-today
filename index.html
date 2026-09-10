@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700&amp;family=Source+Sans+3:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=gardening-v37-production-closeout">
+  <link rel="stylesheet" href="style.css?v=gardening-v38-identity-v1-1">
 </head>
 <body>
 
@@ -137,9 +137,15 @@
         </button>
         <button id="settings-btn" class="icon-btn settings-icon-btn" aria-label="Settings">
           <svg viewBox="0 0 24 24" aria-hidden="true">
-            <circle cx="12" cy="12" r="6.25"/>
-            <circle cx="12" cy="12" r="2.5"/>
-            <path d="M12 2.5v3.25M12 18.25v3.25M2.5 12h3.25M18.25 12h3.25M5.28 5.28l2.3 2.3M16.42 16.42l2.3 2.3M18.72 5.28l-2.3 2.3M7.58 16.42l-2.3 2.3"/>
+            <circle cx="12" cy="12" r="7.2" fill="none" stroke="currentColor" stroke-width="3.2"/>
+            <rect x="10.2" y="1.6" width="3.6" height="4.2" rx="1" fill="currentColor"/>
+            <rect x="10.2" y="1.6" width="3.6" height="4.2" rx="1" fill="currentColor" transform="rotate(45 12 12)"/>
+            <rect x="10.2" y="1.6" width="3.6" height="4.2" rx="1" fill="currentColor" transform="rotate(90 12 12)"/>
+            <rect x="10.2" y="1.6" width="3.6" height="4.2" rx="1" fill="currentColor" transform="rotate(135 12 12)"/>
+            <rect x="10.2" y="1.6" width="3.6" height="4.2" rx="1" fill="currentColor" transform="rotate(180 12 12)"/>
+            <rect x="10.2" y="1.6" width="3.6" height="4.2" rx="1" fill="currentColor" transform="rotate(225 12 12)"/>
+            <rect x="10.2" y="1.6" width="3.6" height="4.2" rx="1" fill="currentColor" transform="rotate(270 12 12)"/>
+            <rect x="10.2" y="1.6" width="3.6" height="4.2" rx="1" fill="currentColor" transform="rotate(315 12 12)"/>
           </svg>
         </button>
       </header>
@@ -298,7 +304,7 @@
         </div>
         <div id="garden-list" class="garden-switch-list"></div>
         <div class="garden-add-row">
-          <button id="add-garden-btn" class="secondary-action-btn">＋ Add another garden</button>
+          <button id="add-garden-btn" class="secondary-action-btn">+ Add another garden</button>
         </div>
 
         <!-- Shown in place, under the button, when this person cannot start
@@ -520,6 +526,6 @@
   <!-- Your Supabase URL + anon key. Create this file from config.example.js. -->
   <script src="config.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js?v=gardening-v37-production-closeout"></script>
+  <script src="app.js?v=gardening-v38-identity-v1-1"></script>
 </body>
 </html>

@@ -6,10 +6,10 @@
   --text-main: var(--ink-blue);
   --text-muted: var(--ink-blue);
   --ink-blue-muted: var(--ink-blue);
-  --brand-green: #073F35;
+  --brand-green: #1A5238;
   --action-green: #075E4B;
   --brand-light: #E7F2D7;
-  --accent-coral: #E55F58;
+  --accent-coral: #EF9F27;
   --accent-red: #A83232;
   --border-color: #CBD6D1;
   --paper-separation: #F7F5F0;
@@ -1586,7 +1586,7 @@ h1, h2, h3, h4,
 .task-guidance h4 { margin: 0 0 7px; color: var(--ink-blue); font: 700 20px/1.2 var(--font-body); }
 .task-guidance p { margin: 0; color: var(--ink-blue); font: 400 17px/1.55 var(--font-body); overflow-wrap: anywhere; }
 .task-guidance-actions { display: flex; justify-content: flex-end; margin-top: 14px; }
-.task-hide-explicit { min-height: 44px; padding: 8px 12px; border: 0; border-radius: 9px; background: transparent; color: #7E2727; font-weight: 700; }
+.task-hide-explicit { min-height: 44px; padding: 8px 12px; border: 0; border-radius: 9px; background: transparent; color: var(--ink-blue); font-weight: 700; }
 .task-card.completing { background: #E3F0DA; }
 .task-card-wrapper.removing { animation: card-close 180ms ease forwards; }
 
