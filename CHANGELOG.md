@@ -13,26 +13,32 @@ Releases 2.15 and earlier are preserved unchanged in the [Archive — legacy for
 
 ---
 
-## [Unreleased]
+## [2.23] — 2026-09-11
 
-- Investigated the gap below the bottom nav bar in mobile Safari: it's Safari's own toolbar, not our layout, and is already absent once installed to the Home Screen; no change made.
-- Tightened the gap between the header row and the Today's Tasks/My Garden page heading, which the garden-selector restyle below had made look too large; prepared gardening-v40.
-- Restyled the header's garden-selector control as quiet UI chrome (smaller, muted, semi-bold) so it no longer reads as a second page headline; prepared gardening-v39.
-- Added a personal visual-identity reference sheet at `docs/reference/visual-identity.html` (non-authoritative, manually maintained).
-- Shipped the v1.1 identity update: green/amber palette, recentred mark, and a new inverted icon treatment with a dedicated 16px favicon glyph; prepared gardening-v38.
-- Replaced the coral-dot logo with the approved C15 coral-leaf SVG and regenerated the PWA, home-screen and favicon derivatives.
-- Published the corrected privacy notice on 5 September 2026.
-- Retired the shipped garden-gate design and settled Phase G copy from `docs/temp/` after preserving their rationale and provenance with immutable historical links; no runtime or live changes.
-- R7: condensed recent entries and preserved pre-2.16 history unchanged in a labelled legacy section of this file; allow-lists, runtime, deployment and external state are unchanged.
-- R6 follow-up: corrected the hosting owner in `AGENTS.md` and removed the completed Claude Project-copy action from the roadmap; no runtime or external changes.
-- R6: reconciled public-sign-up, hosting and weather history, recorded the reported `.git` remediation, aligned strategy and tier ownership, and retired the obsolete sign-up design; no runtime or external changes.
-- R5: corrected the six-file snapshot contract, preserved manual checks and dated sync rationale, and retired the obsolete proposal; no runtime or live changes.
-- R4: corrected authoring headers, review layouts, paste grammar, prompt/backlog routing and the voice example; preserved safety wording and recorded unresolved authority, with no live changes.
-- R3: reconciled roadmap and dated review decisions, and corrected review baselines, scope, evidence and delivery rules; no external routines or runtime changes.
-- R2: corrected public access/navigation, offline and weather-failure limits, feedback grants, and configuration evidence/rationale in DEV documentation; no runtime or deployed settings changed.
-- R1: reconciled verified backend state and privacy publication checks, approved direct notice without a banner, recorded R2–R8, and prepared gardening-v17.
-- Corrected privacy disclosures and public-notice links; prepared gardening-v16.
-- Clarified document ownership/update triggers and corrected SQL, origin, feedback and Apps Script runbooks; no runtime or external changes.
+- Capped the daily task list per garden — four, six or nine jobs by inventory size — ranked by how far through its own season each job is, so a long-window job is no longer buried by a shorter one. A job in the last three days of its window is always shown. `db/20` is applied to the live database; no frontend change was needed.
+- Added `Month_Part`, which staggers when a job arrives within the month its window opens, and a narrow predecessor check that hides a job until the one it depends on has been done that season. `db/21` is applied to the live database.
+- Set the autumn and spring lawn renovation chains to arrive in working order — moss treatment, then scarifying and aerating, then overseeding, then top dressing and feeding — and widened three one-month windows so the stagger is legal. `Master_Task_Matrix` carries the matching `Month_Part` column and window changes.
+- Extended the timing review to cover any task carrying a stagger whatever its cooldown, and told the authoring and review prompts that predecessors are set by hand, by exception, and never proposed by a reviewer.
+- Added `scripts/simulate_task_arrival.sql`, which measures the daily load by calling `select_tasks` rather than re-implementing it; `scripts/simulate_task_visibility.py` is kept and labelled as the pre-cap baseline.
+- Added a per-user ceiling on live weather look-ups in the `today` Edge Function, closing the accepted "unmetered OpenWeather proxy" finding, and stopped the frontend firing overlapping daily calls so the ceiling is sized against honest use. `db/19` is applied to the live database and `today` is redeployed; the frontend is prepared as gardening-v42 and not yet promoted to LIVE.
+- Added the five-minute weather look-up note to the privacy notice for the ceiling above; revised in the repository on 11 September 2026 and not yet published.
+- Added "Why today?" lines to task cards: a job now says whether its usual season ends this month, or when it was last done, derived from data already held rather than authored anywhere. `db/18` is applied to the live database; the frontend showing the lines is prepared as gardening-v41 and not yet promoted to LIVE.
+
+---
+
+## [2.22] — 2026-09-10
+
+- Shipped the accepted v1.0 UI refresh across Today’s Tasks, My Garden, shared navigation and supporting states, including task durations, deterministic daily hero selection, completion/Undo, stale-request protection and responsive/accessibility foundations.
+- Tightened the gap between the authenticated header and the Today’s Tasks/My Garden page heading in gardening-v40.
+- Restyled the header garden selector as quiet interface chrome in gardening-v39.
+- Shipped the v1.1 identity follow-up in gardening-v38: green/amber palette, recentred mark, inverted installation icons and a dedicated 16px favicon glyph.
+- Replaced the coral-dot logo with the approved C15 coral-leaf SVG and regenerated its PWA, home-screen and favicon derivatives.
+- Added the non-authoritative personal visual-identity reference sheet at `docs/reference/visual-identity.html`.
+- Confirmed the apparent gap below the bottom navigation in mobile Safari is browser toolbar space and is absent when installed to the Home Screen; no layout change made.
+- Corrected the privacy notice for daily-hero device storage and Google Fonts requests, after the earlier corrected notice was published on 5 September 2026.
+- Retired the shipped garden-gate and Phase G temporary designs after preserving their rationale and provenance through immutable historical links.
+- Completed documentation reconciliation R1–R7: backend/privacy evidence, runtime and configuration ownership, review baselines, authoring/voice routing, Apps Script snapshot boundaries, public-sign-up/hosting/weather history and the streamlined changelog format.
+- Clarified document ownership and update triggers and corrected the SQL, origin, feedback and Apps Script runbooks without changing external routines.
 
 ---
 

@@ -17,8 +17,11 @@
  *  inventory, hidden tasks, completion history — is keyed on garden_id in the
  *  database, so switching is a matter of changing currentGardenId and
  *  re-fetching. What it is NOT a matter of is leaving stale state on screen:
- *  see resetPerGardenUiState(), and the in-flight guards in loadToday() and
- *  loadInventory().
+ *  see resetPerGardenUiState(), and the stale-response guards in loadToday()
+ *  and loadInventory() — each request remembers the garden it was made for and
+ *  discards its own answer if that garden is no longer the one on screen.
+ *  loadToday() carries a true in-flight guard on top of that, because it is the
+ *  one call with a per-user ceiling behind it; see "ONE DAILY CALL AT A TIME".
  * ========================================================================== */
 
 /* ---- Supabase connection -------------------------------------------------
@@ -48,7 +51,7 @@ const sb = configLooksValid ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : nu
  * from. It must match CACHE_NAME in sw.js, and both must be bumped in the same
  * commit — a report labelled with a version that was never deployed is worse
  * than no label at all. */
-const APP_VERSION = "gardening-v40-heading-spacing";
+const APP_VERSION = "gardening-v42-call-ceiling";
 
 /* ---- Small helpers ------------------------------------------------------- */
 
@@ -156,6 +159,26 @@ let todayRequestSerial = 0;
 let todayLoadingTimer = null;
 let expandedTaskId = null;
 let todayHeroTaskId = null;
+
+// --- ONE DAILY CALL AT A TIME ---
+// `today` is the only call that can cost money: a cache miss inside it spends
+// one of OpenWeather's sixty-a-minute, shared across every user of the app at
+// once. Adding a plant, removing one, hiding a job and undoing all fire their
+// own refresh, so a quick flurry of tidying used to fire a burst of calls whose
+// earlier answers were thrown away by the stale-response guard the moment they
+// landed. Since db/19, that burst is also spending a per-user allowance.
+//
+// So: one call in flight at a time. A refresh asked for while one is running
+// does not queue up behind it — it sets a flag, and exactly ONE more call goes
+// out when the current one settles, whatever else was asked for in between.
+// The trailing call reads the garden and state current AT THAT MOMENT rather
+// than when it was requested, which is why it re-enters loadToday() from the
+// top instead of replaying anything.
+//
+// This is not a debounce. Nothing is delayed: the first tap always calls
+// immediately, so no single action ever feels slower.
+let todayInFlight = false;
+let todayTrailingWanted = false;
 
 // The daily hero is presentation state, not a horticultural ranking record.
 // Persist it per user and garden so ordinary re-renders, switching and reloads
@@ -1631,11 +1654,24 @@ function switchTab(viewId, element) {
   element.classList.add("active");
   element.setAttribute("aria-current", "page");
 
+  const target = document.getElementById(`view-${viewId}`);
+  // Tapping Today while Today is already on screen, showing the current
+  // garden's own list, asks for nothing new — so it fetches nothing. The second
+  // half of that test is load-bearing: switchGarden() and the new-garden flow
+  // both reach Today through here, and both have just cleared todayLoadedFor,
+  // which is exactly what says "the list on screen belongs to the garden you
+  // have left". Testing only "is Today already visible" would leave those two
+  // journeys showing the previous garden's jobs.
+  const alreadyShowingThisGarden =
+    viewId === "today" &&
+    target.classList.contains("active-view") &&
+    todayLoadedFor === currentGardenId;
+
   document.querySelectorAll(".view-section").forEach(section => section.classList.remove("active-view"));
-  document.getElementById(`view-${viewId}`).classList.add("active-view");
+  target.classList.add("active-view");
 
   // Returning to Today re-runs the daily call, so the list is always current.
-  if (viewId === "today") loadToday();
+  if (viewId === "today" && !alreadyShowingThisGarden) loadToday();
 }
 
 // Same thing, without needing the button element to hand — used after
@@ -1652,6 +1688,14 @@ function goToTab(viewId) {
 
 async function loadToday() {
   if (!currentGardenId) return;
+
+  // Already asking? Ask again once, when this one is done — see "ONE DAILY CALL
+  // AT A TIME". Note the flag is set, not a copy of anything: five actions in
+  // three seconds still produce exactly one trailing call, and it will use
+  // whatever garden is current when it finally goes out.
+  if (todayInFlight) { todayTrailingWanted = true; return; }
+  todayInFlight = true;
+
   const taskContainer = document.getElementById("task-container");
   const statusEl = document.getElementById("task-status");
   const gardenAtRequest = currentGardenId;
@@ -1723,6 +1767,16 @@ async function loadToday() {
       taskContainer.classList.remove("refreshing");
       taskContainer.setAttribute("aria-busy", "false");
       if (statusEl) statusEl.classList.add("hidden");
+    }
+
+    // finally, not catch: the flag has to clear on a thrown network error and
+    // on a 403 handled above just as surely as on success. Miss one of those
+    // cases and a single failed refresh jams every tap after it, for good,
+    // until the app is reloaded.
+    todayInFlight = false;
+    if (todayTrailingWanted) {
+      todayTrailingWanted = false;
+      loadToday();   // fresh read of currentGardenId; its own stale-garden guard applies
     }
   }
 }
@@ -1826,6 +1880,72 @@ function taskArtPath(category) {
   return "assets/wgt/" + (TASK_ART[category] || "task-plants-flowers.svg");
 }
 
+/* --- "Why today?" — the derived reason line -------------------------------
+ * select_tasks (db/18) returns a reason CODE, never a sentence. A code is a
+ * fact about the garden; a sentence is copy, and copy should not need a
+ * database migration to change. Both strings therefore live here, and only
+ * here.
+ *
+ * The wording is impersonal on purpose. A garden can be shared, so the person
+ * reading the card is not necessarily the person who did the job. "Last done
+ * in April" is true for both of them; "you last did this in April" is not.
+ *
+ * Precedence between the two codes is settled in SQL, so exactly one code ever
+ * arrives and this function never has to choose. A task with no code shows no
+ * line at all — there is deliberately no generic fallback, because a sentence
+ * that fits every job tells the reader nothing.
+ */
+const REASON_MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December"
+];
+
+const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/* Whole months between two matched ISO dates. Both are YYYY-MM-DD in the
+ * GARDEN's timezone — reason_date is computed that way by select_tasks and
+ * gardenCalendarDay() by the same rule — so they are compared as plain
+ * integers. Building Date objects here would let the browser's own timezone
+ * back in, and could shift the answer by a day at the boundary for anyone
+ * reading the app from abroad. */
+function monthsBetween(then, now) {
+  const months = (Number(now[1]) - Number(then[1])) * 12 + (Number(now[2]) - Number(then[2]));
+  // Earlier in the calendar month than the completion was: not a full month yet.
+  return Number(now[3]) < Number(then[3]) ? months - 1 : months;
+}
+
+function taskReasonLine(task) {
+  const code = task && task.reason_code;
+
+  if (code === "season_closing") {
+    // "Usual" is doing real work in this sentence. valid_months records when
+    // the app considers a job eligible, not the last horticulturally sensible
+    // day to do it, so anything more absolute would claim more than is known.
+    return "The usual season for this ends this month.";
+  }
+
+  if (code !== "last_done") return "";
+
+  const then = ISO_DATE.exec(String(task.reason_date || ""));
+  const now = ISO_DATE.exec(gardenCalendarDay());
+  if (!then || !now) return "";
+
+  // Past twelve months a month name stops helping and starts misleading: with a
+  // long cooldown, "last done in April" could mean April of the year before
+  // last. Say the vaguer, true thing instead.
+  if (monthsBetween(then, now) >= 12) return "Last done over a year ago.";
+
+  const month = REASON_MONTHS[Number(then[2]) - 1];
+  if (!month) return "";
+
+  // Naming the year is what separates the two readings of "last done in
+  // January" on the fifth of January: four days ago, or eleven and a half
+  // months ago. Under twelve months, a differing year can only be the last one.
+  return then[1] === now[1]
+    ? "Last done in " + month + "."
+    : "Last done in " + month + " last year.";
+}
+
 /* "Nothing due" and "you haven't told us what's in it yet" are completely
  * different messages, and a brand-new garden must never be congratulated for
  * finishing work it has never had. The two can only be told apart once the
@@ -1870,7 +1990,20 @@ function taskCardMarkup(task, hero) {
   const guidanceId = "task-guidance-" + taskId;
   const expanded = expandedTaskId === taskId;
   const priority = hero ? '<p class="task-priority-label">A good place to start</p>' : "";
-  const summary = hero ? '<p class="task-summary">The shortest job in today’s list — a straightforward way to get going.</p>' : "";
+
+  /* The hero already has a supporting line in the collapsed card, so its reason
+   * goes there, in place of the shortest-job sentence, rather than opening a
+   * second one. Never both: two supporting sentences on the one elevated card
+   * is exactly the "catalogue of competing recommendations" the design intent
+   * rules out. Every other card carries its reason at the top of the expanded
+   * panel instead, where "What to do" still leads. */
+  const reason = taskReasonLine(task);
+  const summary = hero
+    ? `<p class="task-summary">${escapeHtml(reason || "The shortest job in today’s list — a straightforward way to get going.")}</p>`
+    : "";
+  const reasonLine = (reason && !hero)
+    ? `<p class="task-reason">${escapeHtml(reason)}</p>`
+    : "";
 
   return `
     <div class="task-hide-action">
@@ -1893,6 +2026,7 @@ function taskCardMarkup(task, hero) {
         <svg viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="14.5"/><path class="task-tick" d="m11.5 18.3 4.2 4.2 8.8-9"/></svg>
       </button>
       <div id="${guidanceId}" class="task-guidance" ${expanded ? "" : "hidden"}>
+        ${reasonLine}
         <h4>What to do</h4>
         <p>${guidance}</p>
         <div class="task-guidance-actions"><button class="task-hide-explicit hide-task-btn" type="button" data-task-id="${taskId}">Hide this job</button></div>

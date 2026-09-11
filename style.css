@@ -1584,6 +1584,10 @@ h1, h2, h3, h4,
   border-top: 1px solid rgba(7, 63, 53, 0.14);
 }
 .task-guidance[hidden] { display: none; }
+/* "Why today?" — deliberately quieter than the heading below it. It supports
+   understanding; "What to do" still leads. No heading of its own: one short
+   line does not need a label, and a second h4 here would compete. */
+.task-reason { margin: 0 0 13px; color: var(--ink-blue-muted); font: 400 15px/1.45 var(--font-body); }
 .task-guidance h4 { margin: 0 0 7px; color: var(--ink-blue); font: 700 20px/1.2 var(--font-body); }
 .task-guidance p { margin: 0; color: var(--ink-blue); font: 400 17px/1.55 var(--font-body); overflow-wrap: anywhere; }
 .task-guidance-actions { display: flex; justify-content: flex-end; margin-top: 14px; }
