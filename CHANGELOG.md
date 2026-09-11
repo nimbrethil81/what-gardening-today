@@ -13,6 +13,16 @@ Releases 2.15 and earlier are preserved unchanged in the [Archive — legacy for
 
 ---
 
+## [2.24] — 2026-09-11
+
+- Rain-sensitive jobs now remember yesterday. A job marked as spoiled by rain is held back for two days after rain was last seen near the garden, instead of only while it is actually raining — so watering and feeding no longer turn up on a bright morning after a wet day. `db/22` is applied to the live database and `today` is redeployed; no frontend change was needed.
+- Rain memory also applies when the weather service cannot be reached, which previously meant no rain filtering at all however wet the day before had been.
+- Temperature and wind are deliberately unchanged, and the weather panel still reports what the sky is doing rather than what the ground is doing.
+- Recorded that mowing and slug protection are the two poor fits for a single two-day window, and that the answer is a per-job override rather than a different number.
+- Noted in the privacy notice that the app keeps a two-day note of rain in an area, which is not linked to anybody; revised in the repository on 11 September 2026 and not yet published.
+
+---
+
 ## [2.23] — 2026-09-11
 
 - Capped the daily task list per garden — four, six or nine jobs by inventory size — ranked by how far through its own season each job is, so a long-window job is no longer buried by a shorter one. A job in the last three days of its window is always shown. `db/20` is applied to the live database; no frontend change was needed.
