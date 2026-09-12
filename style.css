@@ -10,6 +10,25 @@
   --action-green: #075E4B;
   --brand-light: #E7F2D7;
   --accent-coral: #EF9F27;
+/* The dark end of the SAME amber ramp as --accent-coral, and the reason it
+   exists is worth a line. docs/reference/visual-identity.html records amber as
+   "decorative only — not used as text colour", which was true while amber was
+   the logo leaf and the page-heading rule. The frost warning needs to write ON
+   an amber wash, and the honest choice there is to stay inside the warning's
+   own colour family rather than borrow --ink-blue, which is the app's ordinary
+   reading colour and would make the banner read as just another card.
+
+   THE VALUE IS SET BY THE CONTRAST BAR, NOT BY EYE. This project verifies its
+   text colours at 7:1 rather than the 4.5:1 the guidelines ask for — that is
+   what the identity document records against garden ink — so this one is held
+   to the same bar. Measured: 7.77:1 on the wash below, 7.84:1 on warm paper,
+   8.47:1 on a card, so it is legible wherever it is used and not only where it
+   is used today. An earlier, lighter #854F0B measured 6.12:1: fine by the
+   guidelines, short of the house standard, and the sort of thing that is only
+   ever caught by actually computing it. */
+  --accent-amber-ink: #743F08;
+  --accent-amber-wash: #FDF3E2;
+  --accent-amber-edge: #F0D9AE;
   --accent-red: #A83232;
   --border-color: #CBD6D1;
   --paper-separation: #F7F5F0;
@@ -1394,6 +1413,86 @@ h1, h2, h3, h4,
 .page-heading h1 { font-size: clamp(30px, 8vw, 38px); line-height: 1.08; }
 .page-heading-accent { display: block; width: 48px; height: 4px; margin-top: 8px; border-radius: 99px; background: var(--accent-coral); }
 
+/* --- THE FROST WARNING ----------------------------------------------------
+
+   A summary banner, not a task card and deliberately not shaped like one. It
+   carries no tick, no swipe and no disclosure, because there is nothing on it
+   to complete or expand: the jobs it is about are further down the page as
+   ordinary cards, in their ordinary position.
+
+   The wash is --accent-amber-wash with a slightly deeper edge, and the text is
+   --accent-amber-ink. That keeps the whole thing inside one colour family —
+   see the note by the tokens for why the ink-blue body colour is wrong here.
+
+   It is NOT red. Red in this app is destructive-and-error only (the visual
+   identity is explicit about that), and a frost is neither: it is a normal
+   thing that happens in a British garden and it has a normal answer, which is
+   to go and put the fleece on. Amber is the register the warning wants. */
+.frost-banner {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) 40px;
+  align-items: start;
+  gap: 12px;
+  margin-bottom: var(--space-section-break);
+  padding: 15px 14px;
+  border: 1px solid var(--accent-amber-edge);
+  border-radius: 14px;
+  background: var(--accent-amber-wash);
+  color: var(--accent-amber-ink);
+}
+
+.frost-banner-icon {
+  width: 26px;
+  height: 26px;
+  margin-top: 1px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.frost-banner-copy { min-width: 0; }
+
+.frost-banner h2 {
+  margin: 0;
+  color: var(--accent-amber-ink);
+  font: 700 20px/1.2 var(--font-heading);
+  overflow-wrap: anywhere;
+}
+
+/* The subtitle carries either one job's own name or the "N tasks" fallback, so
+   it has to read as a sentence at either length. Slightly lighter than the
+   title and not italic: this is information, not emphasis. */
+.frost-banner p {
+  margin: 5px 0 0;
+  color: var(--accent-amber-ink);
+  font: 400 15px/1.4 var(--font-body);
+  overflow-wrap: anywhere;
+}
+
+/* 40px wide in the grid, 44px tall in reality: the column is narrow so the
+   copy gets the room, and the tap target still clears the minimum. */
+.frost-banner-dismiss {
+  width: 40px;
+  min-height: 44px;
+  margin: -6px -4px 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--accent-amber-ink);
+  cursor: pointer;
+}
+.frost-banner-dismiss svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
 .today-controls {
   display: flex;
   flex-direction: column;
@@ -2094,6 +2193,11 @@ h1, h2, h3, h4,
   .icon-btn, .settings-icon-btn { width: 44px; height: 44px; padding: 10px; }
   .garden-switch-btn { padding-inline: 5px; }
   .time-pill { min-height: 44px; padding-inline: 2px; font-size: 12px; }
+  .frost-banner { grid-template-columns: 22px minmax(0, 1fr) 36px; gap: 10px; padding: 13px 12px; }
+  .frost-banner-icon { width: 22px; height: 22px; }
+  .frost-banner h2 { font-size: 18px; }
+  .frost-banner-dismiss { width: 36px; }
+
   .task-card, .task-card.hero { padding: 14px 12px; }
   .task-disclosure-visual { grid-template-columns: 46px minmax(0, 1fr); gap: 10px; }
   .hero .task-disclosure-visual { grid-template-columns: 54px minmax(0, 1fr); gap: 10px; }

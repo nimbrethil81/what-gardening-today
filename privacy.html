@@ -31,7 +31,7 @@
 <body>
 
 <h1>Privacy Notice</h1>
-<p class="meta">What Gardening Today? · Last updated 11 September 2026</p>
+<p class="meta">What Gardening Today? · Last updated 12 September 2026</p>
 
 <p class="lead">What the app holds about you, why it holds it, who else is involved, and what you
 can ask me to do about it.</p>
@@ -132,13 +132,40 @@ address, account, garden or device — only the same rounded, approximate locati
 already share for the weather look-up, and the time. There is no way to tell from it who was using the
 app, or whether anyone was. Each note is discarded two days after it is made.</p>
 
+<h3>About the note of a cold spell in a garden</h3>
+
+<p>Some jobs only exist because of the weather — getting fleece over tender plants before a frost.
+When the forecast says a frost is coming, the app adds those jobs to your list and shows a warning
+above them. So that one long frost produces one warning rather than a fresh one every evening, the
+app keeps a short note against <strong>the garden and the job</strong>: that this cold spell is
+under way, and when it began.</p>
+
+<p>It records no name, email address, account or device, and nothing about what you did — only that
+a threshold is currently being crossed for a particular job in a particular garden. It is not used
+to profile you, to advertise to you, or to make any decision about you beyond that one: whether this
+is the same cold spell you have already been told about. <strong>The note is deleted by the app
+itself</strong> once the weather has been clear for two days, and it is deleted with the garden if
+the garden is deleted.</p>
+
+<p>Whether you have <em>dismissed</em> a warning is not part of that note. That stays on your own
+device, as described further down.</p>
+
+<h3>About the forecast the app looks up</h3>
+
+<p>Alongside the current weather described above, the app also fetches a short forecast for the same
+approximate area, and keeps it for a few hours so that everyone nearby shares one look-up. Like the
+rain note, it is about the weather in an area and <strong>not about you</strong>: it records no name,
+email address, account, garden or device — only the same rounded, approximate location, and what the
+weather is expected to do there. Old entries are replaced as newer ones arrive.</p>
+
 <h2>Why the app uses this information</h2>
 
 <ul>
   <li><strong>To provide the service you asked for</strong> — your account, your garden and its
       location and contents, the jobs you complete or hide, and everything needed to work out what
       to suggest. It also covers sending a postcode or coordinates to postcodes.io to find or
-      check a garden's location, and sending an approximate location to OpenWeather to get the weather.
+      check a garden's location, and sending an approximate location to OpenWeather to get the weather
+      and the short forecast the frost warning is based on.
       <em>(Performance of a contract.)</em></li>
   <li><strong>To keep the app secure and working</strong> — sign-in times, and the limited
       technical information involved in serving the website and running the database, including the
@@ -180,6 +207,11 @@ the tally I would expect to simply stop.</p>
   <li><strong>Today’s highlighted job</strong>, recorded for each account and garden on this
       device so completing or hiding it does not immediately highlight a replacement. This is
       a display preference, separate from your saved completion history.</li>
+  <li><strong>A frost warning you have dismissed</strong>, recorded for each account and garden
+      on this device so the same warning does not come back every time you open the app. It is
+      kept on the device on purpose rather than on the server: in a shared garden, a dismissal
+      held centrally would mean whoever opened the app first silenced the warning for everybody
+      else before they had seen it. It clears itself when a new cold spell arrives.</li>
 </ul>
 
 <p>There is no advertising storage, no analytics storage, and nothing that follows you to other
@@ -224,9 +256,9 @@ on your device.</p>
   </tr>
   <tr>
     <td><strong>OpenWeather</strong></td>
-    <td>Provides the weather. For the weather lookup, the server sends a
-        <strong>rounded, approximate location</strong>, not your name, email address, account ID
-        or garden ID. Nearby gardens in the same rounded area share a cached reading.
+    <td>Provides the weather, and a short forecast used for frost warnings. For both lookups the
+        server sends a <strong>rounded, approximate location</strong>, not your name, email address,
+        account ID or garden ID. Nearby gardens in the same rounded area share a cached reading.
         Weather icons load separately <strong>from your browser</strong>, so OpenWeather also
         receives your IP address and ordinary technical request information when an icon loads.</td>
   </tr>

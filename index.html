@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700&amp;family=Source+Sans+3:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=gardening-v42-call-ceiling">
+  <link rel="stylesheet" href="style.css?v=gardening-v44-frost-warnings">
 </head>
 <body>
 
@@ -157,6 +157,24 @@
             <h1>Today’s Tasks</h1>
             <span class="page-heading-accent" aria-hidden="true"></span>
           </div>
+
+          <!-- The frost warning, rendered by app.js and empty until a task is
+               weather-revealed.
+
+               IT SITS HERE, ABOVE THE WEATHER WIDGET AND ABOVE THE PALE-GREEN
+               DAILY HERO, and that position is the decision rather than an
+               accident of markup. Everything else on this screen is an answer
+               to "what could I do today"; this is the only thing on it that
+               expires. A warning below the thing it is more urgent than is not
+               a warning, it is a footnote.
+
+               It is a SUMMARY BANNER, not a re-skin of the task card. The
+               matching jobs still appear as ordinary outlined cards in their
+               normal place in the list, because they are ordinary jobs — it is
+               the reason they are there today that is unusual, and that is what
+               this says. role=status rather than alert: it is the app reporting
+               a condition, not interrupting. -->
+          <div id="frost-banner-slot" class="hidden" role="status" aria-live="polite"></div>
 
           <div class="today-controls">
             <div id="weather-widget" class="weather-widget" aria-live="polite">
@@ -526,6 +544,6 @@
   <!-- Your Supabase URL + anon key. Create this file from config.example.js. -->
   <script src="config.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js?v=gardening-v42-call-ceiling"></script>
+  <script src="app.js?v=gardening-v44-frost-warnings"></script>
 </body>
 </html>

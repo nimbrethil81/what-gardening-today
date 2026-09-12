@@ -13,13 +13,26 @@ Releases 2.15 and earlier are preserved unchanged in the [Archive — legacy for
 
 ---
 
+## [2.25] — 2026-09-12
+
+- The weather can now bring a job onto the list, not only take one off it. A task may carry a temperature or wind threshold, and is offered when the forecast crosses it — so frost protection arrives on the evening a frost is coming rather than sitting in a season that cannot know.
+- A warning above today's list says why, naming the job when one matches and counting them when more do. It can be dismissed, with the same five-second Undo as hiding a job.
+- One cold spell produces one warning: dismissing it keeps it down until the weather has been clear for two days, after which a genuinely new frost shows it again by itself.
+- Dismissals are kept on the device rather than shared, so in a shared garden one member cannot silence a warning the others have not seen.
+- `today` now fetches a short forecast alongside the current weather, cached far longer and metered by the same per-user call ceiling.
+- Matching, publishing and the audit refuse a task that both hides and appears on the same weather axis.
+- `db/23` is applied to the live database and `today` is redeployed as version 9; confirmed working in DEV. No frost content is authored yet, so nothing changes for a user until it is.
+- Noted in the privacy notice the dismissal kept on the device, the per-garden note of a cold spell, and the forecast look-up; revised 12 September 2026 and not yet published.
+- Matched `CACHE_NAME` and `APP_VERSION` at `gardening-v44-frost-warnings`, so an installed app cannot serve the previous privacy notice from its offline copy. Prepared in the repository and not yet promoted to LIVE.
+
 ## [2.24] — 2026-09-11
 
-- Rain-sensitive jobs now remember yesterday. A job marked as spoiled by rain is held back for two days after rain was last seen near the garden, instead of only while it is actually raining — so watering and feeding no longer turn up on a bright morning after a wet day. `db/22` is applied to the live database and `today` is redeployed; no frontend change was needed.
+- Rain-sensitive jobs now remember yesterday. A job marked as spoiled by rain is held back for two days after rain was last seen near the garden, instead of only while it is actually raining — so watering and feeding no longer turn up on a bright morning after a wet day. `db/22` is applied to the live database and `today` is redeployed as version 8; no frontend logic changed.
 - Rain memory also applies when the weather service cannot be reached, which previously meant no rain filtering at all however wet the day before had been.
 - Temperature and wind are deliberately unchanged, and the weather panel still reports what the sky is doing rather than what the ground is doing.
 - Recorded that mowing and slug protection are the two poor fits for a single two-day window, and that the answer is a per-job override rather than a different number.
-- Noted in the privacy notice that the app keeps a two-day note of rain in an area, which is not linked to anybody; revised in the repository on 11 September 2026 and not yet published.
+- Noted in the privacy notice that the app keeps a two-day note of rain in an area, which is not linked to anybody; revised and published on 11 September 2026.
+- Matched `CACHE_NAME` and `APP_VERSION` at `gardening-v43-rain-memory`, so an installed app cannot serve the previous privacy notice from its offline copy. Prepared in the repository and not yet promoted to LIVE.
 
 ---
 
@@ -30,9 +43,9 @@ Releases 2.15 and earlier are preserved unchanged in the [Archive — legacy for
 - Set the autumn and spring lawn renovation chains to arrive in working order — moss treatment, then scarifying and aerating, then overseeding, then top dressing and feeding — and widened three one-month windows so the stagger is legal. `Master_Task_Matrix` carries the matching `Month_Part` column and window changes.
 - Extended the timing review to cover any task carrying a stagger whatever its cooldown, and told the authoring and review prompts that predecessors are set by hand, by exception, and never proposed by a reviewer.
 - Added `scripts/simulate_task_arrival.sql`, which measures the daily load by calling `select_tasks` rather than re-implementing it; `scripts/simulate_task_visibility.py` is kept and labelled as the pre-cap baseline.
-- Added a per-user ceiling on live weather look-ups in the `today` Edge Function, closing the accepted "unmetered OpenWeather proxy" finding, and stopped the frontend firing overlapping daily calls so the ceiling is sized against honest use. `db/19` is applied to the live database and `today` is redeployed; the frontend is prepared as gardening-v42 and not yet promoted to LIVE.
-- Added the five-minute weather look-up note to the privacy notice for the ceiling above; revised in the repository on 11 September 2026 and not yet published.
-- Added "Why today?" lines to task cards: a job now says whether its usual season ends this month, or when it was last done, derived from data already held rather than authored anywhere. `db/18` is applied to the live database; the frontend showing the lines is prepared as gardening-v41 and not yet promoted to LIVE.
+- Added a per-user ceiling on live weather look-ups in the `today` Edge Function, closing the accepted "unmetered OpenWeather proxy" finding, and stopped the frontend firing overlapping daily calls so the ceiling is sized against honest use. `db/19` is applied to the live database and `today` is redeployed; the frontend was promoted to LIVE as gardening-v42 on 11 September 2026.
+- Added the five-minute weather look-up note to the privacy notice for the ceiling above; revised and published on 11 September 2026.
+- Added "Why today?" lines to task cards: a job now says whether its usual season ends this month, or when it was last done, derived from data already held rather than authored anywhere. `db/18` is applied to the live database; the frontend showing the lines reached LIVE on 11 September 2026, carried by gardening-v42.
 
 ---
 

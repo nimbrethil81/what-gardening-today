@@ -51,7 +51,7 @@ const sb = configLooksValid ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : nu
  * from. It must match CACHE_NAME in sw.js, and both must be bumped in the same
  * commit — a report labelled with a version that was never deployed is worse
  * than no label at all. */
-const APP_VERSION = "gardening-v42-call-ceiling";
+const APP_VERSION = "gardening-v44-frost-warnings";
 
 /* ---- Small helpers ------------------------------------------------------- */
 
@@ -186,6 +186,33 @@ let todayTrailingWanted = false;
 const DAILY_HERO_KEY = "wgt.dailyHero";
 const dailyHeroMemory = new Map();
 
+/* --- DISMISSING THE FROST WARNING -----------------------------------------
+ *
+ * ON THE DEVICE, NOT IN THE DATABASE, and this was a deliberate choice over
+ * the more obvious one. A per-garden dismiss stored server-side would be
+ * tidier and would follow a person between their phone and their tablet — and
+ * it would let whoever opens the app first in a SHARED garden silence the
+ * frost warning for everybody else before they had ever seen it. That is not a
+ * rough edge, it is the feature failing at the only moment it matters. So the
+ * dismiss is local, exactly like the daily hero above, and carries the same
+ * two accepted limitations: it does not travel between devices, and it falls
+ * back to memory alone if browser storage is blocked (SPEC.md's "Current
+ * accepted DEV interface").
+ *
+ * The de-dup itself is NOT local. The spell — "is this the same frost we were
+ * already warning about" — is per garden in the database, because that is a
+ * fact about the weather and the garden rather than about a person.
+ *
+ * WHAT IS STORED IS THE SPELL IT DISMISSED, not a date and not a flag. Same
+ * spell still running, the stored value matches and the banner stays down
+ * however many times the app is opened. A genuinely new frost — after a real
+ * forty-eight-hour clear — arrives with a new spell_started_at, the stored
+ * value no longer matches, and the banner comes back on its own. There is no
+ * re-arm step anywhere in the system, and nothing to get out of step.
+ */
+const FROST_DISMISS_KEY = "wgt.frostDismissed";
+const frostDismissMemory = new Map();
+
 // --- MY GARDEN ASYNC / MODAL STATE ---
 let inventoryRequestSerial = 0;
 let catalogueRequestSerial = 0;
@@ -318,6 +345,42 @@ function writeDailyHeroRecord(slot, record) {
     const safeMap = map && typeof map === "object" ? map : {};
     safeMap[slot] = record;
     window.localStorage.setItem(DAILY_HERO_KEY, JSON.stringify(safeMap));
+  } catch (error) {
+    /* In-memory state still keeps the current session coherent. */
+  }
+}
+
+/* Which spell, if any, has been dismissed on this device for this garden.
+ * Slot-keyed on user AND garden like the hero, so two people sharing a tablet
+ * do not inherit each other's dismissals and neither does a second garden. */
+function readFrostDismissedSpell(slot) {
+  if (!slot) return null;
+  if (frostDismissMemory.has(slot)) return frostDismissMemory.get(slot);
+  try {
+    const raw = window.localStorage.getItem(FROST_DISMISS_KEY);
+    const map = raw ? JSON.parse(raw) : {};
+    const spell = map && typeof map === "object" ? map[slot] : null;
+    const value = typeof spell === "string" && spell ? spell : null;
+    frostDismissMemory.set(slot, value);
+    return value;
+  } catch (error) {
+    return null;
+  }
+}
+
+/* Passing null forgets the dismissal, which is what Undo does. The in-memory
+ * copy is written first and unconditionally: with storage blocked it is the
+ * only record there is, and the dismiss must still work for the session. */
+function writeFrostDismissedSpell(slot, spell) {
+  if (!slot) return;
+  frostDismissMemory.set(slot, spell || null);
+  try {
+    const raw = window.localStorage.getItem(FROST_DISMISS_KEY);
+    const map = raw ? JSON.parse(raw) : {};
+    const safeMap = map && typeof map === "object" ? map : {};
+    if (spell) safeMap[slot] = spell;
+    else delete safeMap[slot];
+    window.localStorage.setItem(FROST_DISMISS_KEY, JSON.stringify(safeMap));
   } catch (error) {
     /* In-memory state still keeps the current session coherent. */
   }
@@ -2063,6 +2126,128 @@ function invalidateTodayRequestForLocalMutation() {
   }
 }
 
+/* ==========================================================================
+ *  THE FROST WARNING
+ *
+ *  WHAT IT IS FOR. Until now the weather could only ever take jobs AWAY: a
+ *  task suppressed by rain or cold simply was not on the list, and nothing
+ *  said so. Reveal thresholds (db/23) do the opposite — a frost-protection job
+ *  appears BECAUSE a frost is forecast — and a job that appears for a reason
+ *  the gardener cannot see is worse than one that does not appear at all. This
+ *  banner is that reason, said once, above everything else on the screen.
+ *
+ *  IT IS A SUMMARY, NOT A RE-SKINNED CARD. The matching jobs are still
+ *  ordinary outlined cards in their ordinary place in the list. Styling them
+ *  differently was considered and rejected: they are ordinary jobs, and
+ *  decorating the card would say "this job is unusual" when what is unusual is
+ *  only the reason it is here today.
+ *
+ *  WHY ONLY FROST. `weather_reveal_code` can also say 'wind', and the banner
+ *  deliberately ignores that: wind-triggered content was explicitly deferred
+ *  past the frost pilot, so no wind row exists, and no wording for one has been
+ *  agreed. Inventing "Strong wind expected tonight" here would be putting
+ *  unapproved copy in front of real users for a case that cannot arise yet. A
+ *  wind-revealed task would simply appear as an ordinary card with no banner,
+ *  which is what every card did before this feature existed — so the gap is a
+ *  missing explanation rather than a wrong one.
+ *
+ *  THE COPY. The app describing its own state, so no pronoun, and ordinary
+ *  contractions are fine — this is not one of the four verbatim safety
+ *  categories (docs/WGT_VOICE_AND_TONE.md §4, §5). One matched job is named
+ *  using its own title, because task titles are already plain imperative
+ *  instructions ("Cover tender plants with fleece") and a second, hand-written
+ *  content field would be a second thing to keep true. Two or more always take
+ *  the generic line: joining job names into one sentence reads worse the more
+ *  there are, and it is the case where the list below is the better answer
+ *  anyway.
+ * ========================================================================== */
+
+const FROST_TITLE = "Frost expected tonight";
+
+function frostRevealedTasks(tasks) {
+  return (tasks || []).filter(task => task && task.weather_reveal_code === "frost");
+}
+
+/* DELIBERATELY NOT FILTERED BY THE AVAILABLE-TIME PILLS, unlike the list
+ * itself. "I have fifteen minutes" is a statement about what can be fitted in;
+ * a frost is a statement about what happens tonight whether or not it is
+ * convenient. Filtering the warning would mean the person with least time —
+ * the one most likely to skip the job — is also the one not told about it. */
+function frostBannerState(tasks) {
+  const revealed = frostRevealedTasks(tasks);
+  if (revealed.length === 0) return null;
+
+  /* Every revealed task in one spell shares its garden's spell, but they are
+   * separate rows in the database and only one value can tag a dismissal, so
+   * the newest is taken. It moves only when a genuinely new spell starts, which
+   * is exactly when the dismissal should stop applying.
+   *
+   * The fallback matters more than it looks. A revealed task always carries a
+   * spell in practice — the extremes select_tasks tests against come from the
+   * same call that writes the spell row — but if that ever changed, tagging the
+   * dismissal with the garden's own calendar day degrades to "dismissed for
+   * today" rather than to "dismissed for ever". */
+  const spells = revealed
+    .map(task => task.spell_started_at)
+    .filter(value => typeof value === "string" && value);
+  const spell = spells.length ? spells.slice().sort().pop() : "day:" + gardenCalendarDay();
+
+  return {
+    spell,
+    subtitle: revealed.length === 1
+      ? revealed[0].name
+      : revealed.length + " tasks added to protect against tonight’s frost"
+  };
+}
+
+function renderFrostBanner() {
+  const slot = document.getElementById("frost-banner-slot");
+  if (!slot) return;
+
+  const state = frostBannerState(todayTasks);
+  const dismissed = state && readFrostDismissedSpell(dailyHeroStorageSlot()) === state.spell;
+
+  if (!state || dismissed) {
+    slot.classList.add("hidden");
+    slot.innerHTML = "";
+    return;
+  }
+
+  /* escapeHtml on the subtitle is load-bearing rather than defensive: with one
+   * match it is a task name, which comes from the workbook today but from a
+   * gardener's own custom task the day custom tasks ship. */
+  slot.classList.remove("hidden");
+  slot.innerHTML = `
+    <div class="frost-banner">
+      <svg class="frost-banner-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 2.5v19M3.8 7.2l16.4 9.6M20.2 7.2 3.8 16.8"/>
+        <path d="M12 6.2 9.6 4.4M12 6.2l2.4-1.8M12 17.8l-2.4 1.8M12 17.8l2.4 1.8"/>
+        <path d="m6.3 9 .3-3M6.3 9l-2.8-1.1M17.7 15l-.3 3M17.7 15l2.8 1.1"/>
+        <path d="m6.3 15-2.8 1.1M6.3 15l.3 3M17.7 9l2.8-1.1M17.7 9l-.3-3"/>
+      </svg>
+      <div class="frost-banner-copy">
+        <h2>${escapeHtml(FROST_TITLE)}</h2>
+        <p>${escapeHtml(state.subtitle)}</p>
+      </div>
+      <button class="frost-banner-dismiss" type="button" data-action="dismiss-frost"
+              data-spell="${escapeHtml(state.spell)}" aria-label="Dismiss the frost warning">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 5.5 9 9m0-9-9 9"/></svg>
+      </button>
+    </div>`;
+}
+
+/* Dismiss gets the same five-second Undo as Hide, and for the same reason: the
+ * control is small, it sits next to nothing else, and the thing it removes is
+ * the only notice a person gets about tonight. Nothing here touches the
+ * network — the dismissal is local — so unlike Hide there is no failure path
+ * and no state to roll back on one. */
+function handleFrostDismiss(spell) {
+  const slot = dailyHeroStorageSlot();
+  writeFrostDismissedSpell(slot, spell);
+  renderFrostBanner();
+  showUndoToast({ type: "frost-banner", slot, gardenId: currentGardenId });
+}
+
 function renderCurrentTaskList(options) {
   const taskContainer = document.getElementById("task-container");
   const preservePosition = !!(options && options.preservePosition);
@@ -2070,6 +2255,14 @@ function renderCurrentTaskList(options) {
   taskContainer.innerHTML = "";
   currentlyRevealedWrapper = null;
   missingGardenRecovery = false;   // a successful load clears the recovery latch
+
+  /* FIRST, AND OUTSIDE EVERY EARLY RETURN BELOW. The banner is driven by the
+   * task data rather than by the call site, so completing the last frost job,
+   * hiding it, or undoing either takes the banner with it — and does so through
+   * the one function every one of those paths already calls. Putting it after
+   * the empty-state return would have left a stale warning on screen in the one
+   * case where it is most obviously wrong: no jobs left, still warning. */
+  renderFrostBanner();
 
   if (todayTasks.length === 0) {
     renderTodayEmptyState();
@@ -2945,7 +3138,9 @@ function showUndoToast(state) {
   undoToastState = state;
   const message = state.type === "completion"
     ? '“' + state.taskName + '” completed.'
-    : '“' + state.taskName + '” hidden.';
+    : state.type === "frost-banner"
+      ? "Frost warning dismissed."
+      : '“' + state.taskName + '” hidden.';
   showToast(message, true);
 }
 
@@ -2956,6 +3151,16 @@ async function handleUndoAction() {
 
   hideToast();
   if (state.gardenId !== gardenAtUndo) return;
+
+  /* The frost dismissal is the only undoable thing in the app that never left
+   * the device, so it is undone before the try block rather than inside it:
+   * there is no request to fail, nothing to roll back, and no status message
+   * worth showing for putting a banner back that is now visibly back. */
+  if (state.type === "frost-banner") {
+    writeFrostDismissedSpell(state.slot, null);
+    renderFrostBanner();
+    return;
+  }
 
   try {
     const result = state.type === "completion"
@@ -3300,6 +3505,20 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   const timeFilterGroup = document.getElementById("time-filter-group");
   if (timeFilterGroup) timeFilterGroup.addEventListener("click", handleTimeFilter);
+
+  // --- Today view: the frost warning's dismiss ---
+  // Its own listener rather than a line in handleTaskContainerAction, because
+  // the banner lives OUTSIDE #task-container: it sits above the weather widget,
+  // and the container's listeners also carry the swipe-to-hide gesture, which
+  // has no business anywhere near a one-tap dismiss.
+  const frostSlot = document.getElementById("frost-banner-slot");
+  if (frostSlot) {
+    frostSlot.addEventListener("click", event => {
+      const button = event.target.closest('[data-action="dismiss-frost"]');
+      if (!button) return;
+      handleFrostDismiss(button.dataset.spell || null);
+    });
+  }
 
   // --- My Garden ---
   const gardenView = document.getElementById("view-garden");
