@@ -13,6 +13,14 @@ Releases 2.15 and earlier are preserved unchanged in the [Archive — legacy for
 
 ---
 
+## [2.26] — 2026-09-12
+
+- Four frost-protection jobs are written and published: closing the cold frame, bringing tender pelargoniums under cover, fleecing dahlias still in leaf, and moving a potted olive out of a hard frost. Each is offered in any month, whenever the forecast turns cold enough, and the dahlia one stands down when it is too windy to lay fleece.
+- Publishing puts content straight into the database every address of the app reads, so these four were live to real users the moment they were written — ahead of the warning that explains them, which is carried by `gardening-v44`.
+- None has yet been seen arriving, because a job of this kind only appears when a frost is actually forecast and there has not been one.
+- The editorial review was deliberately not run on these four before publishing.
+- Checked the long-standing note that six kinds of garden structure had no jobs written for them. All six have had jobs for weeks, and nothing in the catalogue is now left without at least one — the note had gone stale rather than the content being missing. Corrected where it was recorded; no content was written for it.
+
 ## [2.25] — 2026-09-12
 
 - The weather can now bring a job onto the list, not only take one off it. A task may carry a temperature or wind threshold, and is offered when the forecast crosses it — so frost protection arrives on the evening a frost is coming rather than sitting in a season that cannot know.
