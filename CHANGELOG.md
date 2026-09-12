@@ -16,7 +16,7 @@ Releases 2.15 and earlier are preserved unchanged in the [Archive — legacy for
 ## [2.26] — 2026-09-12
 
 - Four frost-protection jobs are written and published: closing the cold frame, bringing tender pelargoniums under cover, fleecing dahlias still in leaf, and moving a potted olive out of a hard frost. Each is offered in any month, whenever the forecast turns cold enough, and the dahlia one stands down when it is too windy to lay fleece.
-- Publishing puts content straight into the database every address of the app reads, so these four were live to real users the moment they were written — ahead of the warning that explains them, which is carried by `gardening-v44`.
+- Publishing puts content straight into the database every address of the app reads, so these four were live to real users the moment they were written, onto a site already carrying the warning that explains them.
 - None has yet been seen arriving, because a job of this kind only appears when a frost is actually forecast and there has not been one.
 - The editorial review was deliberately not run on these four before publishing.
 - Checked the long-standing note that six kinds of garden structure had no jobs written for them. All six have had jobs for weeks, and nothing in the catalogue is now left without at least one — the note had gone stale rather than the content being missing. Corrected where it was recorded; no content was written for it.
@@ -30,8 +30,8 @@ Releases 2.15 and earlier are preserved unchanged in the [Archive — legacy for
 - `today` now fetches a short forecast alongside the current weather, cached far longer and metered by the same per-user call ceiling.
 - Matching, publishing and the audit refuse a task that both hides and appears on the same weather axis.
 - `db/23` is applied to the live database and `today` is redeployed as version 9; confirmed working in DEV. No frost content is authored yet, so nothing changes for a user until it is.
-- Noted in the privacy notice the dismissal kept on the device, the per-garden note of a cold spell, and the forecast look-up; revised 12 September 2026 and not yet published.
-- Matched `CACHE_NAME` and `APP_VERSION` at `gardening-v44-frost-warnings`, so an installed app cannot serve the previous privacy notice from its offline copy. Prepared in the repository and not yet promoted to LIVE.
+- Noted in the privacy notice the dismissal kept on the device, the per-garden note of a cold spell, and the forecast look-up; revised and published on 12 September 2026.
+- Matched `CACHE_NAME` and `APP_VERSION` at `gardening-v44-frost-warnings`, so an installed app cannot serve the previous privacy notice from its offline copy. Promoted to LIVE on 12 September 2026.
 
 ## [2.24] — 2026-09-11
 

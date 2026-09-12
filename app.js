@@ -51,7 +51,7 @@ const sb = configLooksValid ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : nu
  * from. It must match CACHE_NAME in sw.js, and both must be bumped in the same
  * commit — a report labelled with a version that was never deployed is worse
  * than no label at all. */
-const APP_VERSION = "gardening-v44-frost-warnings";
+const APP_VERSION = "gardening-v45-time-filter";
 
 /* ---- Small helpers ------------------------------------------------------- */
 
@@ -2033,8 +2033,7 @@ function renderTodayEmptyState() {
 
 function renderNoTimeFitState() {
   const taskContainer = document.getElementById("task-container");
-  const label = selectedTimeMinutes === 60 ? "1 hour" :
-    selectedTimeMinutes === 120 ? "2 hours" : selectedTimeMinutes + " minutes";
+  const label = selectedTimeMinutes === 60 ? "1 hour" : selectedTimeMinutes + " minutes";
   taskContainer.dataset.empty = "false";
   taskContainer.innerHTML = `
     <div class="today-error-state">
