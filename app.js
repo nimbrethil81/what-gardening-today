@@ -44,6 +44,44 @@ const configLooksValid =
   SUPABASE_ANON_KEY.length > 20 &&
   SUPABASE_ANON_KEY.indexOf("YOUR-ANON") === -1;
 
+const SIGNUP_DISABLED_MESSAGE =
+  "New account sign-up is currently closed. If you think you should already have access, get in touch.";
+const OAUTH_CALLBACK_ERROR_MESSAGE =
+  "Google sign-in didn’t finish. Try again, or get in touch if it keeps happening.";
+const OAUTH_CALLBACK_ERROR_PARAMS = ["error", "error_code", "error_description", "error_uri"];
+
+/* OAuth failures return to the same page as successful sign-ins, but without a
+ * session. Read them before supabase-js initialises or signed-out routing runs,
+ * remove provider detail from the address bar, and carry only our safe copy to
+ * the sign-in screen. Successful callback fragments are left entirely alone. */
+function consumeOAuthCallbackError(location = window.location, history = window.history) {
+  const url = new URL(location.href);
+  const hashParams = new URLSearchParams(url.hash.replace(/^#/, ""));
+  const errorCode = url.searchParams.get("error_code") || hashParams.get("error_code");
+  const errorName = url.searchParams.get("error") || hashParams.get("error");
+
+  if (!errorCode && !errorName) return null;
+
+  const hashCarriesOAuthParams = OAUTH_CALLBACK_ERROR_PARAMS.some(param => hashParams.has(param));
+  OAUTH_CALLBACK_ERROR_PARAMS.forEach(param => {
+    url.searchParams.delete(param);
+    hashParams.delete(param);
+  });
+  if (hashCarriesOAuthParams) {
+    const cleanHash = hashParams.toString();
+    url.hash = cleanHash ? "#" + cleanHash : "";
+  }
+  history.replaceState(history.state, "", url.pathname + url.search + url.hash);
+
+  return String(errorCode || "").toLowerCase() === "signup_disabled"
+    ? SIGNUP_DISABLED_MESSAGE
+    : OAUTH_CALLBACK_ERROR_MESSAGE;
+}
+
+let pendingOAuthCallbackError = window.location && window.history
+  ? consumeOAuthCallbackError()
+  : null;
+
 const { createClient } = window.supabase;
 const sb = configLooksValid ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
@@ -51,7 +89,7 @@ const sb = configLooksValid ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : nu
  * from. It must match CACHE_NAME in sw.js, and both must be bumped in the same
  * commit — a report labelled with a version that was never deployed is worse
  * than no label at all. */
-const APP_VERSION = "gardening-v45-time-filter";
+const APP_VERSION = "gardening-v46-auth-errors";
 
 /* ---- Small helpers ------------------------------------------------------- */
 
@@ -539,12 +577,14 @@ async function route() {
   setSplashMessage("");
 
   const { data: { session } } = await sb.auth.getSession();
+  const callbackError = pendingOAuthCallbackError;
+  pendingOAuthCallbackError = null;
   if (!session) {
     currentGardenId = null;
     currentUserId = null;
     gardens = [];
     closeAllModals();
-    showSigninDefault();
+    showSigninDefault(callbackError || "");
     showView("signin");
     requestAnimationFrame(() => document.getElementById("signin-title").focus());
     return;
@@ -614,14 +654,15 @@ function resetGoogleSignInControl() {
   if (btn) btn.disabled = false;
 }
 
-function showSigninDefault() {
+function showSigninDefault(message = "") {
   // Reset a pending state restored from the back-forward cache after an OAuth
   // handoff is cancelled or its external navigation fails.
-  document.getElementById("signin-google-error").textContent = "";
+  document.getElementById("signin-google-error").textContent = message;
   resetGoogleSignInControl();
 }
 
 async function handleGoogleSignIn() {
+  pendingOAuthCallbackError = null;
   const errEl = document.getElementById("signin-google-error");
   errEl.textContent = "";
 

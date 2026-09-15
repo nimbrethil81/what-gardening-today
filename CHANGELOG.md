@@ -13,8 +13,24 @@ Releases 2.15 and earlier are preserved unchanged in the [Archive — legacy for
 
 ---
 
+## Unreleased
+
+- Explained refused Google sign-in returns on the existing sign-in screen, with a specific closed-sign-up message, a safe fallback for other OAuth failures and no raw provider text or refresh replay.
+
+- Added the `GROUP_BORDER_PERENNIAL` collection (26 perennials) and one March mulch-and-feed task targeting it, closing the Perennials_04 spring mulch gap as a single shared card rather than fifteen identical per-plant rows.
+
+- Aligned the DEV Wrangler Worker name with `what-gardening-today-dev` and recorded the dashboard build root `/` (2026-09-14).
+
+- Enabled and validated the DEV-only Cloudflare Access gate (All traffic, account members, 7-day sessions); reconciled the actual Worker name in documentation while retaining the Wrangler mismatch for build inspection. LIVE remains public (2026-09-14).
+
+- Added and deployed an owner-only, read-only Apps Script editorial-review console for generating and copying the canonical review prompt on a phone without changing workbook review state.
+- Corrected three stale documentation claims: the duration badge and Available time filter are described as shipped, the workbook task matrix as nineteen columns with three published beyond the A–L block, and the entitlement tables as granted to the app but read by nothing.
+
+---
+
 ## [2.26] — 2026-09-12
 
+- Simplified Available time to four choices — 15 minutes, 30 minutes, 1 hour and Any — removing the low-value 2-hour option; confirmed in DEV and promoted to LIVE as `gardening-v45-time-filter`.
 - Four frost-protection jobs are written and published: closing the cold frame, bringing tender pelargoniums under cover, fleecing dahlias still in leaf, and moving a potted olive out of a hard frost. Each is offered in any month, whenever the forecast turns cold enough, and the dahlia one stands down when it is too windy to lay fleece.
 - Publishing puts content straight into the database every address of the app reads, so these four were live to real users the moment they were written, onto a site already carrying the warning that explains them.
 - None has yet been seen arriving, because a job of this kind only appears when a frost is actually forecast and there has not been one.
