@@ -15,6 +15,12 @@ Releases 2.15 and earlier are preserved unchanged in the [Archive — legacy for
 
 ## Unreleased
 
+- Recorded the convention that a weather-revealed task's instruction must carry the whole cold spell rather than tonight alone, after a cadence pass found all eight live reveal rows telling the user to undo the job in the morning and none telling them to repeat it at dusk.
+
+- Corrected a wording collision on `Frequency_Days`: a rejected-decision entry and the task prompt both called it the horticultural cadence of the job, contradicting the rule in `DATABASE_WORKFLOW` §9a that it is an editorial decision about how often to interrupt somebody. The decision itself is unchanged.
+
+- Kept weather-revealed tasks out of the timing review and out of the interaction packet's load total, and put their thresholds into the cadence packet, so no review programme reads a reveal row's twelve months as a real season.
+
 - Explained refused Google sign-in returns on the existing sign-in screen, with a specific closed-sign-up message, a safe fallback for other OAuth failures and no raw provider text or refresh replay.
 
 - Added the `GROUP_BORDER_PERENNIAL` collection (26 perennials) and one March mulch-and-feed task targeting it, closing the Perennials_04 spring mulch gap as a single shared card rather than fifteen identical per-plant rows.
@@ -24,7 +30,13 @@ Releases 2.15 and earlier are preserved unchanged in the [Archive — legacy for
 - Enabled and validated the DEV-only Cloudflare Access gate (All traffic, account members, 7-day sessions); reconciled the actual Worker name in documentation while retaining the Wrangler mismatch for build inspection. LIVE remains public (2026-09-14).
 
 - Added and deployed an owner-only, read-only Apps Script editorial-review console for generating and copying the canonical review prompt on a phone without changing workbook review state.
-- Corrected three stale documentation claims: the duration badge and Available time filter are described as shipped, the workbook task matrix as nineteen columns with three published beyond the A–L block, and the entitlement tables as granted to the app but read by nothing.
+- Corrected three stale documentation claims: the duration badge and Available time filter are described as shipped, the then-current workbook task-matrix column contract is recorded, and the entitlement tables as granted to the app but read by nothing.
+
+---
+
+## [2.27] — 2026-09-16
+
+- Rain-sensitive tasks can now shorten or ignore the two-day remembered-rain window without ever bypassing actual rain; `db/24`, the `today` Edge Function, the workbook audit/publish path and the authored mowing/slug-protection overrides are deployed and published.
 
 ---
 
