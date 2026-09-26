@@ -89,7 +89,7 @@ const sb = configLooksValid ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : nu
  * from. It must match CACHE_NAME in sw.js, and both must be bumped in the same
  * commit — a report labelled with a version that was never deployed is worse
  * than no label at all. */
-const APP_VERSION = "gardening-v46-auth-errors";
+const APP_VERSION = "gardening-v47-identity-refresh";
 
 /* ---- Small helpers ------------------------------------------------------- */
 

@@ -9,7 +9,7 @@
   --brand-green: #1A5238;
   --action-green: #075E4B;
   --brand-light: #E7F2D7;
-  --accent-coral: #EF9F27;
+  --accent-coral: #EF9F27; /* legacy token; decorative amber retired, warning amber remains semantic */
 /* The dark end of the SAME amber ramp as --accent-coral, and the reason it
    exists is worth a line. docs/reference/visual-identity.html records amber as
    "decorative only — not used as text colour", which was true while amber was
@@ -1411,7 +1411,6 @@ h1, h2, h3, h4,
 
 .page-heading { margin: 10px 0 22px; }
 .page-heading h1 { font-size: clamp(30px, 8vw, 38px); line-height: 1.08; }
-.page-heading-accent { display: block; width: 48px; height: 4px; margin-top: 8px; border-radius: 99px; background: var(--accent-coral); }
 
 /* --- THE FROST WARNING ----------------------------------------------------
 

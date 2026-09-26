@@ -1,3 +1,4 @@
+- Refined the WGT identity: foliage-green `#63B348` logo leaf, regenerated install/favicon assets, and removed the decorative amber page-heading underline while retaining semantic warning amber.
 # Changelog
 
 All notable changes to "What Gardening Today?" are recorded here, newest first.
@@ -13,7 +14,11 @@ Releases 2.15 and earlier are preserved unchanged in the [Archive — legacy for
 
 ---
 
-## Unreleased
+## [2.28] — 2026-09-18
+
+- Completed the first `Everything` cadence pass, reviewing all 385 live tasks with a cooldown of 30 days or less. The accepted findings turn continuous routines — watering, picking, deadheading, pest patrols — from short cooldowns into fortnightly habit reminders carrying their real cadence in the instruction instead, so the app stops asking the gardener who has just done the job to do it again tomorrow.
+
+- The same pass reached the weather-revealed frost rows, which each described a single evening and then fell silent for a week: their instructions now say the job repeats every qualifying night until the cold spell passes, and the cooldowns that stood at a fortnight come down to the floor.
 
 - Recorded the convention that a weather-revealed task's instruction must carry the whole cold spell rather than tonight alone, after a cadence pass found all eight live reveal rows telling the user to undo the job in the morning and none telling them to repeat it at dusk.
 
