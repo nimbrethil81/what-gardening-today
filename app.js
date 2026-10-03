@@ -89,7 +89,7 @@ const sb = configLooksValid ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : nu
  * from. It must match CACHE_NAME in sw.js, and both must be bumped in the same
  * commit — a report labelled with a version that was never deployed is worse
  * than no label at all. */
-const APP_VERSION = "gardening-v47-identity-refresh";
+const APP_VERSION = "gardening-v51-photo-terms";
 
 /* ---- Small helpers ------------------------------------------------------- */
 
@@ -545,6 +545,9 @@ function closeModalFromKeyboard(modalId) {
   if (modalId === "garden-danger-modal") closeGardenDangerModal();
   if (modalId === "delete-account-modal") closeDeleteAccountModal();
   if (modalId === "feedback-modal") closeFeedbackModal();
+  if (modalId === "item-detail-modal") closeItemDetail();
+  if (modalId === "photo-remove-modal") closePhotoRemoveModal();
+  if (modalId === "photo-viewer") closePhotoViewer();
 }
 
 function handleAccessibleModalKeydown(event) {
@@ -584,6 +587,7 @@ async function route() {
     currentUserId = null;
     gardens = [];
     closeAllModals();
+    forgetPhotoSession();
     showSigninDefault(callbackError || "");
     showView("signin");
     requestAnimationFrame(() => document.getElementById("signin-title").focus());
@@ -871,6 +875,7 @@ function resetPerGardenUiState() {
   setGardenAddError("");
   closeRemoveItemModal(false);
   clearPillSearch();
+  resetItemPhotoState();
 }
 
 /* Called when the server tells us we can no longer see the garden we are in —
@@ -1728,6 +1733,7 @@ async function recoverFromSessionLoss() {
 
     closeAllModals();
     resetPerGardenUiState();
+    forgetPhotoSession();
     currentGardenId = null;
     currentUserId = null;
     gardens = [];
@@ -2397,6 +2403,7 @@ async function loadInventory() {
   const requestSerial = ++inventoryRequestSerial;
   const inventoryList = document.getElementById("inventory-list");
   const hasCurrentContent = inventoryLoadedFor === gardenAtRequest;
+  loadItemPhotos(gardenAtRequest);
   if (!hasCurrentContent) {
     inventoryList.innerHTML = '<div class="garden-local-status">Seeing what’s growing…</div>';
   } else {
@@ -2497,6 +2504,10 @@ function renderGroupedInventory() {
     items.forEach(item => {
       const cardDiv = document.createElement("div");
       cardDiv.className = "inventory-item-card";
+      const itemId = Number(item.item_id);
+      const hasPhoto = itemPhotos.has(itemId);
+      const openable = itemDetailAvailable(itemId);
+      if (hasPhoto) cardDiv.classList.add("has-photo");
 
       const displayName = item.blueprint_name || item.friendly_name || "Item";
       // Show the user's custom reference only when it differs from the item's name
@@ -2509,11 +2520,17 @@ function renderGroupedInventory() {
       // both are escaped before going into innerHTML — same rule as garden
       // names. data-friendly-name was dropped: nothing in the app ever reads
       // it, so it was a second unescaped copy doing no work.
-      cardDiv.innerHTML = `
-        <div class="inventory-item-copy">
+      // RM-026: the photo, when there is one, sits left of the name; the row
+      // opens item detail only when there is something there to see or do.
+      const identityLabel = customRef ? displayName + ", " + customRef : displayName;
+      const copyMarkup = `
           <strong>${escapeHtml(displayName)}</strong>
-          ${customRef ? `<div class="inventory-item-meta">${escapeHtml(customRef)}</div>` : ""}
-        </div>
+          ${customRef ? `<div class="inventory-item-meta">${escapeHtml(customRef)}</div>` : ""}`;
+      cardDiv.innerHTML = `
+        ${hasPhoto ? photoThumbMarkup(itemId, identityLabel) : ""}
+        ${openable
+          ? `<button type="button" class="inventory-item-copy inventory-item-open" data-item-id="${itemId}" aria-label="Open ${escapeHtml(identityLabel)}">${copyMarkup}</button>`
+          : `<div class="inventory-item-copy">${copyMarkup}</div>`}
         <button class="remove-asset-btn" type="button" data-item-id="${item.item_id}" data-item-name="${escapeHtml(displayName)}" aria-label="Remove ${escapeHtml(displayName)} from My Garden">
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6.5 6.5v9M10 6.5v9M13.5 6.5v9M4.5 5h11M7 5V3.5h6V5M5.5 5l.7 12h7.6l.7-12"/></svg>
         </button>
@@ -2921,7 +2938,11 @@ function openRemoveItemModal(state, trigger) {
   removeItemState = state;
   removeItemReturnFocus = trigger || null;
   document.getElementById("remove-item-title").textContent = "Remove " + state.itemName + "?";
-  document.getElementById("remove-item-body").textContent = "This will remove it from My Garden.";
+  // RM-026: removing an item permanently deletes its photo (peer review §2).
+  const photoNote = itemPhotos.has(state.itemId)
+    ? " Its photo will be permanently deleted."
+    : itemPhotosLoadedFor !== state.gardenId ? " If it has a photo, that will be permanently deleted too." : "";
+  document.getElementById("remove-item-body").textContent = "This will remove it from My Garden." + photoNote;
   const errorEl = document.getElementById("remove-item-error");
   errorEl.textContent = "";
   errorEl.classList.add("hidden");
@@ -2986,6 +3007,8 @@ async function executeRemoveAsset() {
     if (state.gardenId !== currentGardenId) return;
 
     userInventory = userInventory.filter(item => Number(item.item_id) !== state.itemId);
+    const removedPhoto = itemPhotos.get(state.itemId);
+    if (removedPhoto) { itemPhotos.delete(state.itemId); forgetPhotoUrls(removedPhoto.generation_id); }
     closeRemoveItemModal(false);
     renderGroupedInventory();
     showToast(state.itemName + " removed from My Garden.", false);
@@ -2999,6 +3022,1062 @@ async function executeRemoveAsset() {
     errorEl.textContent = "We couldn’t remove " + state.itemName + ". Please try again.";
     errorEl.classList.remove("hidden");
   }
+}
+
+
+/* ==========================================================================
+ *  ITEM PHOTOS (RM-026) — one photo on a garden item
+ *
+ *  DEV pilot (issue #17). The database decides everything that matters —
+ *  membership, the RM-026 entitlement, the expected generation, the account
+ *  ceiling, what was actually uploaded — through the item-photos Edge Function,
+ *  which forwards this caller's session. Nothing here is a security boundary:
+ *  hiding a button only keeps the screen honest about what the server allows.
+ *
+ *  Who can do what (journeys §10.3, §11):
+ *    - Add / Change: garden member WITH the RM-026 entitlement;
+ *    - View / Remove: any garden member, entitlement or not, so losing the
+ *      entitlement never hides or traps a photo.
+ *  During the pilot an account without the entitlement sees no Add or Change
+ *  control and no discovery prompt — only existing photos, and Remove.
+ *
+ *  The photo is processed once on the device (Stage 0 §4, §9): decoded by the
+ *  browser (which applies EXIF orientation), resized to a 1600 px main image
+ *  and a 256 px square thumbnail, re-encoded as JPEG — which drops the
+ *  original's metadata — and checked before upload. The original never leaves
+ *  the device. Signed read links live in memory for this session only.
+ * ========================================================================== */
+
+const PHOTO = {
+  BUCKET: "garden-item-photos",          // mirrors item_photo_settings() in the database
+  FUNCTION: "item-photos",
+  MAX_SOURCE_BYTES: 50 * 1024 * 1024,    // coarse sanity check only (Stage 0 §9 item 6)
+  MAX_DECODED_PIXELS: 50000000,          // admits 48 MP; checked from the header BEFORE decoding
+  HEADER_BYTES: 1024 * 1024,             // enough to reach a JPEG's size marker past large APP segments
+  MAIN_EDGE: 1600,
+  MAIN_QUALITY: 0.82,
+  THUMB_EDGE: 256,
+  THUMB_QUALITY: 0.78,
+  MAIN_MAX_BYTES: 2621440,               // the server refuses anything larger (CONFIG_ITEMS #56)
+  THUMB_MAX_BYTES: 204800,
+  CACHE_CONTROL: "31536000",             // generations are immutable, so a long cache is safe
+  SIGN_BATCH: 200,                       // the function's per-call ceiling
+  URL_REFRESH_MARGIN_MS: 5 * 60 * 1000   // re-sign a little before the hour runs out
+};
+
+/* ---- Pure helpers: no DOM, no network (unit-tested) ----------------------- */
+
+function photoAscii(b, at, length) {
+  let s = "";
+  for (let i = at; i < at + length && i < b.length; i++) s += String.fromCharCode(b[i]);
+  return s;
+}
+
+/* Reads EXIF IFD entries from a TIFF block. Returns every tag seen, by IFD,
+ * and the IFD0 orientation. Bounded and cycle-safe: it is fed untrusted bytes. */
+function readTiffTags(b, start, end) {
+  if (start + 8 > end) return null;
+  const le = b[start] === 0x49 && b[start + 1] === 0x49;
+  const be = b[start] === 0x4D && b[start + 1] === 0x4D;
+  if (!le && !be) return null;
+  const u16 = o => le ? (b[o] | (b[o + 1] << 8)) : ((b[o] << 8) | b[o + 1]);
+  const u32 = o => le
+    ? (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16)) + b[o + 3] * 16777216
+    : b[o] * 16777216 + ((b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]);
+  const result = { tags: [], orientation: 1 };
+  const seen = new Set();
+  const walk = (offset, ifd, depth) => {
+    const at = start + offset;
+    if (depth > 4 || offset < 8 || at + 2 > end || seen.has(at)) return;
+    seen.add(at);
+    const count = u16(at);
+    for (let k = 0; k < count; k++) {
+      const entry = at + 2 + k * 12;
+      if (entry + 12 > end) break;
+      const tag = u16(entry);
+      result.tags.push({ ifd, tag, value: u16(entry + 8) });
+      if (ifd === "0" && tag === 0x0112) result.orientation = u16(entry + 8);
+      if (tag === 0x8769) walk(u32(entry + 8), "exif", depth + 1);
+      if (tag === 0x8825) walk(u32(entry + 8), "gps", depth + 1);
+      if (tag === 0xA005) walk(u32(entry + 8), "interop", depth + 1);
+    }
+    const nextAt = at + 2 + count * 12;
+    if (ifd === "0" && nextAt + 4 <= end) {
+      const next = u32(nextAt);
+      if (next) walk(next, "1", depth + 1);
+    }
+  };
+  walk(u32(start + 4), "0", 0);
+  return result;
+}
+
+/* Walks a JPEG's segments up to the image data, handing each one to visit().
+ * visit(marker, dataStart, dataEnd) may return true to stop early. */
+function walkJpegSegments(b, visit) {
+  let i = 2;
+  while (i + 4 <= b.length) {
+    if (b[i] !== 0xFF) return;
+    const marker = b[i + 1];
+    if (marker === 0xFF) { i += 1; continue; }                              // fill byte
+    if (marker === 0x01 || (marker >= 0xD0 && marker <= 0xD8)) { i += 2; continue; }
+    if (marker === 0xD9 || marker === 0xDA) return;                          // end, or image data
+    const length = (b[i + 2] << 8) | b[i + 3];
+    if (length < 2) return;
+    if (visit(marker, i + 4, Math.min(i + 2 + length, b.length))) return;
+    i += 2 + length;
+  }
+}
+
+function readJpegHeader(b) {
+  const header = { format: "jpeg", width: 0, height: 0, orientation: 1 };
+  walkJpegSegments(b, (marker, start, end) => {
+    if (marker === 0xE1 && photoAscii(b, start, 6) === "Exif\0\0") {
+      const tiff = readTiffTags(b, start + 6, end);
+      if (tiff) header.orientation = tiff.orientation;
+    }
+    const isFrame = marker >= 0xC0 && marker <= 0xCF && marker !== 0xC4 && marker !== 0xC8 && marker !== 0xCC;
+    if (isFrame && start + 5 <= end) {
+      header.height = (b[start + 1] << 8) | b[start + 2];
+      header.width = (b[start + 3] << 8) | b[start + 4];
+      return true;
+    }
+    return false;
+  });
+  return header.width && header.height ? header : null;
+}
+
+/* HEIF/AVIF: the largest 'ispe' (image spatial extent) property. Encoded
+ * dimensions, before any 'irot' rotation — fine for a pixel-count guard. */
+function readHeifHeader(b) {
+  let width = 0;
+  let height = 0;
+  for (let i = 4; i + 16 <= b.length; i++) {
+    if (b[i] === 0x69 && b[i + 1] === 0x73 && b[i + 2] === 0x70 && b[i + 3] === 0x65) {   // "ispe"
+      const w = b[i + 8] * 16777216 + ((b[i + 9] << 16) | (b[i + 10] << 8) | b[i + 11]);
+      const h = b[i + 12] * 16777216 + ((b[i + 13] << 16) | (b[i + 14] << 8) | b[i + 15]);
+      if (w * h > width * height) { width = w; height = h; }
+    }
+  }
+  return width && height ? { format: "heif", width, height, orientation: 1 } : null;
+}
+
+/* Encoded width/height (and JPEG orientation) from the first bytes of a file,
+ * or null when the format is not recognised — the decoder then decides, and
+ * a post-decode check is the backstop. */
+function readImageHeader(b) {
+  if (!b || b.length < 12) return null;
+  if (b[0] === 0xFF && b[1] === 0xD8) return readJpegHeader(b);
+  if (b[0] === 0x89 && photoAscii(b, 1, 3) === "PNG" && b.length >= 24) {
+    const w = b[16] * 16777216 + ((b[17] << 16) | (b[18] << 8) | b[19]);
+    const h = b[20] * 16777216 + ((b[21] << 16) | (b[22] << 8) | b[23]);
+    return { format: "png", width: w, height: h, orientation: 1 };
+  }
+  if (photoAscii(b, 0, 3) === "GIF") {
+    return { format: "gif", width: b[6] | (b[7] << 8), height: b[8] | (b[9] << 8), orientation: 1 };
+  }
+  if (photoAscii(b, 0, 4) === "RIFF" && photoAscii(b, 8, 4) === "WEBP" && b.length >= 30) {
+    const chunk = photoAscii(b, 12, 4);
+    if (chunk === "VP8X") {
+      return { format: "webp", width: 1 + (b[24] | (b[25] << 8) | (b[26] << 16)), height: 1 + (b[27] | (b[28] << 8) | (b[29] << 16)), orientation: 1 };
+    }
+    if (chunk === "VP8 ") {
+      return { format: "webp", width: (b[26] | (b[27] << 8)) & 0x3FFF, height: (b[28] | (b[29] << 8)) & 0x3FFF, orientation: 1 };
+    }
+    if (chunk === "VP8L") {
+      const bits = b[21] | (b[22] << 8) | (b[23] << 16) | (b[24] << 24);
+      return { format: "webp", width: (bits & 0x3FFF) + 1, height: ((bits >>> 14) & 0x3FFF) + 1, orientation: 1 };
+    }
+    return null;
+  }
+  if (photoAscii(b, 4, 4) === "ftyp") return readHeifHeader(b);
+  return null;
+}
+
+function photoPixelsAllowed(width, height) {
+  return width > 0 && height > 0 && width * height <= PHOTO.MAX_DECODED_PIXELS;
+}
+
+/* Longest edge at most maxEdge, aspect ratio kept, never upscaled. */
+function photoMainSize(width, height, maxEdge = PHOTO.MAIN_EDGE) {
+  const longest = Math.max(width, height);
+  const scale = longest > maxEdge ? maxEdge / longest : 1;
+  return {
+    width: Math.min(maxEdge, Math.max(1, Math.round(width * scale))),
+    height: Math.min(maxEdge, Math.max(1, Math.round(height * scale)))
+  };
+}
+
+/* The centred square a 'cover' thumbnail is cut from. */
+function photoThumbCrop(width, height) {
+  const side = Math.min(width, height);
+  return { sx: Math.floor((width - side) / 2), sy: Math.floor((height - side) / 2), side };
+}
+
+function isJpegBytes(b) {
+  return !!b && b.length >= 3 && b[0] === 0xFF && b[1] === 0xD8 && b[2] === 0xFF;
+}
+
+/* Tags that would locate, date or identify a photo or its owner. Safari's
+ * encoder writes its own small Exif block (colour space and pixel dimensions),
+ * so the check is for what must NOT be there, not for no Exif at all.
+ * Orientation is refused only when it asks for a rotation or mirror: a value
+ * of 1 ("as stored") is harmless after the decoder has already turned the
+ * pixels upright, and an encoder may write it. */
+const PHOTO_FORBIDDEN_TAGS = {
+  0x010E: "description", 0x010F: "camera make", 0x0110: "camera model",
+  0x0112: "orientation", 0x0132: "date", 0x013B: "artist", 0x013C: "host computer",
+  0x8298: "copyright", 0x8825: "location", 0x9003: "date taken", 0x9004: "date digitised",
+  0x9010: "time offset", 0x9011: "time offset", 0x9012: "time offset",
+  0x927C: "maker note", 0x9286: "comment", 0x9290: "sub-second time",
+  0x9291: "sub-second time", 0x9292: "sub-second time", 0xA420: "image id",
+  0xA430: "owner name", 0xA431: "serial number", 0xA433: "lens make",
+  0xA434: "lens model", 0xA435: "lens serial number"
+};
+
+/* IPTC datasets an encoder writes as housekeeping: envelope version, file
+ * format and character set (record 1) and the application record's version
+ * (2:00). Anything else in record 2 — caption, keywords, dates, places,
+ * authors — or a dated envelope entry is refused. */
+const IPTC_HOUSEKEEPING = new Set(["1:0", "1:20", "1:22", "1:90", "2:0"]);
+
+/* What a Photoshop/IPTC (APP13) block holds beyond an encoder's own
+ * housekeeping. Safari writes a small one when it re-encodes a camera photo;
+ * a canvas re-encode cannot copy the original's, so this is a backstop. A
+ * block that cannot be read counts as a problem: refusing is the safe failure. */
+function iptcProblems(b, start, end) {
+  if (photoAscii(b, start, 14) !== "Photoshop 3.0\0") return ["IPTC"];
+  const problems = [];
+  let i = start + 14;
+  while (i + 12 <= end) {
+    if (photoAscii(b, i, 4) !== "8BIM") { problems.push("IPTC"); break; }
+    const id = (b[i + 4] << 8) | b[i + 5];
+    const nameField = 1 + b[i + 6];                              // Pascal string, padded to even
+    const sizeAt = i + 6 + nameField + (nameField % 2);
+    if (sizeAt + 4 > end) { problems.push("IPTC"); break; }
+    const size = b[sizeAt] * 16777216 + ((b[sizeAt + 1] << 16) | (b[sizeAt + 2] << 8) | b[sizeAt + 3]);
+    const dataStart = sizeAt + 4;
+    const dataEnd = dataStart + size;
+    if (dataEnd > end) { problems.push("IPTC"); break; }
+    if (id === 0x0422 || id === 0x0423) problems.push("Exif in IPTC");
+    if (id === 0x0424) problems.push("XMP");
+    if (id === 0x0404) {
+      for (let k = dataStart; k < dataEnd;) {
+        if (b[k] === 0x00) break;                                // trailing padding
+        if (b[k] !== 0x1C || k + 5 > dataEnd || (b[k + 3] & 0x80)) { problems.push("IPTC"); break; }
+        const name = b[k + 1] + ":" + b[k + 2];
+        if (!IPTC_HOUSEKEEPING.has(name)) problems.push("IPTC " + name);
+        k += 5 + ((b[k + 3] << 8) | b[k + 4]);
+      }
+    }
+    i = dataEnd + (size % 2);
+  }
+  return problems;
+}
+
+/* What a JPEG still carries that it must not: [] means clean. */
+function jpegMetadataProblems(b) {
+  const problems = [];
+  if (!isJpegBytes(b)) return ["not a JPEG"];
+  walkJpegSegments(b, (marker, start, end) => {
+    if (marker === 0xE1 && photoAscii(b, start, 6) === "Exif\0\0") {
+      const tiff = readTiffTags(b, start + 6, end);
+      for (const t of (tiff ? tiff.tags : [])) {
+        if (t.ifd === "gps") problems.push("location");
+        else if (t.tag === 0x0112 && t.value === 1) continue;
+        else if (PHOTO_FORBIDDEN_TAGS[t.tag]) problems.push(PHOTO_FORBIDDEN_TAGS[t.tag]);
+      }
+    }
+    if (marker === 0xE1 && photoAscii(b, start, 28) === "http://ns.adobe.com/xap/1.0/") problems.push("XMP");
+    if (marker === 0xED) problems.push(...iptcProblems(b, start, end));
+    return false;
+  });
+  return Array.from(new Set(problems));
+}
+
+/* ---- Processing (browser) ------------------------------------------------- */
+
+class PhotoProblem extends Error {
+  constructor(kind, details = []) { super(kind); this.kind = kind; this.details = details; }
+}
+
+/* The DEV pilot shows what a refused photo still carried, so a device test can
+ * say exactly what an encoder wrote. Never on the public addresses. */
+function photoDiagnosticsWanted(location = window.location) {
+  const host = (location && location.hostname) || "";
+  return !/(^|\.)whatgardeningtoday\.com$/.test(host) && !/\.github\.io$/.test(host);
+}
+
+function photoProblemMessage(error, withDetails = false) {
+  const kind = error && error.kind;
+  if (kind === "too_large") return "That photo is too large to use. Try another photo.";
+  if (kind === "metadata") {
+    const details = withDetails && error.details && error.details.length ? " (Found: " + error.details.join(", ") + ".)" : "";
+    return "That photo couldn’t be prepared safely. Try another photo." + details;
+  }
+  return "That photo couldn’t be used. Try another photo.";
+}
+
+async function decodePhotoSource(file) {
+  if (typeof createImageBitmap === "function") {
+    try {
+      const bitmap = await createImageBitmap(file);   // applies EXIF orientation by default
+      return { image: bitmap, width: bitmap.width, height: bitmap.height, close: () => { if (bitmap.close) bitmap.close(); } };
+    } catch (e) { /* fall back to the slower image-element decode */ }
+  }
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  try {
+    img.decoding = "async";
+    img.src = url;
+    await img.decode();
+    return {
+      image: img, width: img.naturalWidth, height: img.naturalHeight,
+      close: () => { img.removeAttribute("src"); URL.revokeObjectURL(url); }
+    };
+  } catch (e) {
+    URL.revokeObjectURL(url);
+    throw new PhotoProblem("unsupported");
+  }
+}
+
+/* Draws straight into a derivative-sized canvas — never a source-sized one —
+ * and releases it as soon as the JPEG exists. */
+function encodePhotoDerivative(image, sx, sy, sw, sh, dw, dh, quality) {
+  return new Promise((resolve, reject) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = dw;
+    canvas.height = dh;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) { reject(new PhotoProblem("unsupported")); return; }
+    ctx.fillStyle = "#FFFFFF";        // JPEG has no transparency
+    ctx.fillRect(0, 0, dw, dh);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(image, sx, sy, sw, sh, 0, 0, dw, dh);
+    canvas.toBlob(blob => {
+      canvas.width = 0;
+      canvas.height = 0;
+      if (blob) resolve(blob); else reject(new PhotoProblem("unsupported"));
+    }, "image/jpeg", quality);
+  });
+}
+
+async function checkPhotoDerivative(blob, maxBytes) {
+  if (!blob || blob.type !== "image/jpeg") throw new PhotoProblem("unsupported");
+  if (blob.size > maxBytes) throw new PhotoProblem("too_large");
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  if (!isJpegBytes(bytes)) throw new PhotoProblem("unsupported");
+  const problems = jpegMetadataProblems(bytes);
+  if (problems.length > 0) throw new PhotoProblem("metadata", problems);
+}
+
+async function processItemPhoto(file) {
+  if (!file || !file.size || /svg/i.test(file.type || "")) throw new PhotoProblem("unsupported");
+  if (file.size > PHOTO.MAX_SOURCE_BYTES) throw new PhotoProblem("too_large");
+
+  // Decoding is where the memory goes, so the pixel count is judged first.
+  const head = new Uint8Array(await file.slice(0, PHOTO.HEADER_BYTES).arrayBuffer());
+  const header = readImageHeader(head);
+  if (header && !photoPixelsAllowed(header.width, header.height)) throw new PhotoProblem("too_large");
+
+  const source = await decodePhotoSource(file);
+  try {
+    if (!photoPixelsAllowed(source.width, source.height)) throw new PhotoProblem("too_large");
+    // A diagnostic only: an axis-swapping orientation whose decoded size was
+    // not swapped. Never "corrected" here — the decoder owns orientation.
+    if (header && header.orientation >= 5 && header.orientation <= 8 && header.width !== header.height
+        && source.width === header.width && source.height === header.height) {
+      console.warn("Photo orientation may not have been applied by this browser.");
+    }
+    const size = photoMainSize(source.width, source.height);
+    const main = await encodePhotoDerivative(source.image, 0, 0, source.width, source.height,
+      size.width, size.height, PHOTO.MAIN_QUALITY);
+    const crop = photoThumbCrop(source.width, source.height);
+    const thumb = await encodePhotoDerivative(source.image, crop.sx, crop.sy, crop.side, crop.side,
+      PHOTO.THUMB_EDGE, PHOTO.THUMB_EDGE, PHOTO.THUMB_QUALITY);
+    await checkPhotoDerivative(main, PHOTO.MAIN_MAX_BYTES);
+    await checkPhotoDerivative(thumb, PHOTO.THUMB_MAX_BYTES);
+    return { main, thumb, width: size.width, height: size.height };
+  } finally {
+    source.close();
+  }
+}
+
+/* ---- State ---------------------------------------------------------------- */
+
+let photoEntitlement = { userId: null, known: false, value: false };
+let itemPhotos = new Map();            // garden_item_id -> { generation_id, width, height }
+let itemPhotosLoadedFor = null;        // which garden itemPhotos describes
+let itemPhotosRequestSerial = 0;
+const photoUrlCache = new Map();       // "<generation>:thumb|image" -> { url, expiresAt } — memory only
+let photoDetail = null;                // the open item detail; see openItemDetail()
+let photoOpSerial = 0;                 // stale-response guard for item detail work
+let photoViewer = null;
+let photoViewerSerial = 0;
+
+function photoEntitled() {
+  return photoEntitlement.known && photoEntitlement.userId === currentUserId && photoEntitlement.value;
+}
+
+function itemDetailAvailable(itemId) {
+  return photoEntitled() || itemPhotos.has(Number(itemId));
+}
+
+function photoUrl(generationId, variant) {
+  const hit = photoUrlCache.get(generationId + ":" + variant);
+  return hit && hit.expiresAt > Date.now() ? hit.url : null;
+}
+
+function forgetPhotoUrls(generationId) {
+  photoUrlCache.delete(generationId + ":thumb");
+  photoUrlCache.delete(generationId + ":image");
+}
+
+function inventoryItem(itemId) {
+  return userInventory.find(item => Number(item.item_id) === Number(itemId)) || null;
+}
+
+function itemIdentity(item) {
+  const name = item.blueprint_name || item.friendly_name || "Item";
+  const reference = (item.friendly_name && item.blueprint_name && item.friendly_name !== item.blueprint_name)
+    ? item.friendly_name : "";
+  return { name, reference, label: reference ? name + ", " + reference : name };
+}
+
+/* Called on garden switch and sign-out: nothing photo-related may carry over. */
+function resetItemPhotoState() {
+  itemPhotosRequestSerial += 1;
+  itemPhotos = new Map();
+  itemPhotosLoadedFor = null;
+  closePhotoViewer(false);
+  closePhotoRemoveModal(false);
+  closeItemDetail(false);
+}
+
+function forgetPhotoSession() {
+  resetItemPhotoState();
+  photoUrlCache.clear();
+  photoEntitlement = { userId: null, known: false, value: false };
+}
+
+/* ---- Server calls ----------------------------------------------------------- */
+
+async function callItemPhotos(body) {
+  try {
+    const { data, error } = await sb.functions.invoke(PHOTO.FUNCTION, { body });
+    if (!error) return { ok: true, data: data || {} };
+    let status = 0;
+    let reason = "";
+    const response = error.context;
+    if (response && typeof response.json === "function") {
+      status = response.status || 0;
+      try { reason = ((await response.json()) || {}).error || ""; } catch (e) { /* not JSON */ }
+    }
+    return { ok: false, status, reason };
+  } catch (e) {
+    return { ok: false, status: 0, reason: "" };
+  }
+}
+
+/* Loads the RM-026 entitlement (once per signed-in user) and this garden's
+ * photo list, then signs thumbnail links for any photo without a fresh one.
+ * Re-renders only when something visible changed, so a garden with no photos,
+ * seen by an account without the entitlement, never redraws. */
+async function loadItemPhotos(gardenId) {
+  if (!gardenId) return;
+  const serial = ++itemPhotosRequestSerial;
+  const userAtRequest = currentUserId;
+  const wasEntitled = photoEntitled();
+  const hadPhotos = itemPhotosLoadedFor === gardenId && itemPhotos.size > 0;
+  const entitlementWanted = !(photoEntitlement.known && photoEntitlement.userId === userAtRequest);
+
+  const [entitlement, list] = await Promise.all([
+    entitlementWanted ? sb.rpc("item_photos_entitled").then(r => r, () => null) : Promise.resolve(null),
+    sb.rpc("item_photo_list", { p_garden_id: gardenId }).then(r => r, () => null)
+  ]);
+  if (currentUserId !== userAtRequest) return;
+  if (entitlement && !entitlement.error) {
+    photoEntitlement = { userId: userAtRequest, known: true, value: entitlement.data === true };
+  }
+  if (serial !== itemPhotosRequestSerial || gardenId !== currentGardenId) return;
+  if (!list || list.error) {
+    // The inventory itself reports garden-level failures. Photos stay unknown,
+    // which the remove-item warning allows for.
+    if (photoEntitled() !== wasEntitled) rerenderPhotoSurfaces();
+    return;
+  }
+
+  itemPhotos = new Map((list.data || []).map(row => [
+    Number(row.garden_item_id),
+    { generation_id: row.generation_id, width: row.width, height: row.height }
+  ]));
+  itemPhotosLoadedFor = gardenId;
+  if (itemPhotos.size > 0 || hadPhotos || photoEntitled() !== wasEntitled) rerenderPhotoSurfaces();
+  if (itemPhotos.size === 0) return;
+
+  const signed = await ensurePhotoUrls(gardenId, Array.from(itemPhotos.keys()), false);
+  if (serial !== itemPhotosRequestSerial || gardenId !== currentGardenId) return;
+  if (signed) rerenderPhotoSurfaces();
+}
+
+/* Signs links for the listed items that lack a fresh one. The function signs
+ * only what the database says this caller may see. Returns true if anything
+ * new arrived. */
+async function ensurePhotoUrls(gardenId, itemIds, includeImage) {
+  const wanted = itemIds.map(Number).filter(id => {
+    const photo = itemPhotos.get(id);
+    if (!photo) return false;
+    return !photoUrl(photo.generation_id, "thumb") || (includeImage && !photoUrl(photo.generation_id, "image"));
+  });
+  if (wanted.length === 0) return false;
+
+  let changed = false;
+  for (let i = 0; i < wanted.length; i += PHOTO.SIGN_BATCH) {
+    const res = await callItemPhotos({
+      action: "sign",
+      garden_id: gardenId,
+      garden_item_ids: wanted.slice(i, i + PHOTO.SIGN_BATCH),
+      include_image: includeImage
+    });
+    if (!res.ok) {
+      if (res.status === 401 && await sessionHasGone(null, 401)) { await recoverFromSessionLoss(); }
+      return changed;
+    }
+    if (gardenId !== currentGardenId) return changed;
+    const expiresAt = Date.now() + (Number(res.data.expires_in) || 3600) * 1000 - PHOTO.URL_REFRESH_MARGIN_MS;
+    for (const p of (res.data.photos || [])) {
+      const id = Number(p.garden_item_id);
+      const known = itemPhotos.get(id);
+      // The server's current generation wins over a list read moments earlier.
+      if (known && known.generation_id !== p.generation_id) {
+        itemPhotos.set(id, { generation_id: p.generation_id, width: p.width, height: p.height });
+      }
+      if (p.thumb_url) photoUrlCache.set(p.generation_id + ":thumb", { url: p.thumb_url, expiresAt });
+      if (p.image_url) photoUrlCache.set(p.generation_id + ":image", { url: p.image_url, expiresAt });
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+function rerenderPhotoSurfaces() {
+  if (inventoryLoadedFor === currentGardenId) renderGroupedInventory();
+  if (photoDetail) renderItemDetail();
+}
+
+/* ---- My Garden thumbnail ---------------------------------------------------- */
+
+function photoThumbMarkup(itemId, label) {
+  const photo = itemPhotos.get(Number(itemId));
+  if (!photo) return "";
+  const url = photoUrl(photo.generation_id, "thumb");
+  return `<button type="button" class="inventory-item-photo" data-photo-item-id="${Number(itemId)}" aria-label="View photo of ${escapeHtml(label)}">${
+    url ? `<img class="inventory-photo-img" src="${escapeHtml(url)}" alt="" width="64" height="64" decoding="async">` : ""
+  }</button>`;
+}
+
+function handleInventoryPhotoClick(event) {
+  const thumb = event.target.closest(".inventory-item-photo");
+  if (thumb) { openPhotoViewer(Number(thumb.dataset.photoItemId), null); return; }
+  const open = event.target.closest(".inventory-item-open");
+  if (open) openItemDetail(Number(open.dataset.itemId), open);
+}
+
+/* A broken thumbnail leaves the calm placeholder, never a broken-image icon.
+ * Listened for in the capture phase, because image errors do not bubble. */
+function handlePhotoImageError(event) {
+  const img = event.target;
+  if (!img || img.tagName !== "IMG") return;
+  if (img.classList.contains("inventory-photo-img")) { img.remove(); return; }
+  if (img.classList.contains("item-detail-img") && photoDetail) {
+    photoDetail.imageFailed = true;
+    renderItemDetail();
+  }
+}
+
+/* ---- Item detail -------------------------------------------------------------- */
+
+function openItemDetail(itemId, trigger) {
+  if (!inventoryItem(itemId) || !itemDetailAvailable(itemId)) return;
+  photoDetail = {
+    itemId: Number(itemId),
+    gardenId: currentGardenId,
+    step: "idle",          // idle | terms | choosing | processing | confirming | saving | failed
+    mode: null,            // add | change
+    uploadTermsAccepted: false, // applies to this upload attempt; never persisted
+    pending: null,         // { main, thumb, width, height, previewUrl? } kept for Retry
+    message: "",
+    messageIsError: false,
+    imageFailed: false,
+    token: ++photoOpSerial
+  };
+  renderItemDetail();
+  showAccessibleModal("item-detail-modal", "close-item-detail-modal");
+  if (trigger) modalFocusReturn.set("item-detail-modal", trigger);   // the row, not a rebuilt copy of it
+  loadDetailImage(photoDetail.token);
+}
+
+async function loadDetailImage(token) {
+  const d = photoDetail;
+  if (!d || !itemPhotos.has(d.itemId)) return;
+  const photo = itemPhotos.get(d.itemId);
+  if (photoUrl(photo.generation_id, "image")) return;
+  const gardenId = d.gardenId;
+  await ensurePhotoUrls(gardenId, [d.itemId], true);
+  if (!photoDetail || photoDetail.token !== token) return;
+  if (!photoUrl((itemPhotos.get(d.itemId) || photo).generation_id, "image")) photoDetail.imageFailed = true;
+  renderItemDetail();
+}
+
+function closeItemDetail(restoreFocus = true) {
+  if (photoDetail) discardPendingPhoto(photoDetail);
+  photoDetail = null;
+  photoOpSerial += 1;
+  hideAccessibleModal("item-detail-modal", restoreFocus);
+}
+
+function discardPendingPhoto(d) {
+  if (d && d.pending && d.pending.previewUrl) URL.revokeObjectURL(d.pending.previewUrl);
+  if (d) d.pending = null;
+}
+
+function isCurrentPhotoOp(token) {
+  return !!photoDetail && photoDetail.token === token && photoDetail.gardenId === currentGardenId;
+}
+
+function setDetailMessage(d, message, isError) {
+  d.message = message;
+  d.messageIsError = !!isError;
+}
+
+function renderItemDetail(focusFirstAction = false) {
+  const d = photoDetail;
+  if (!d) return;
+  const item = inventoryItem(d.itemId);
+  if (!item || d.gardenId !== currentGardenId) { closeItemDetail(false); return; }
+  const who = itemIdentity(item);
+  const photo = itemPhotos.get(d.itemId) || null;
+  const entitled = photoEntitled();
+
+  document.getElementById("item-detail-title").textContent = who.name;
+  const refEl = document.getElementById("item-detail-reference");
+  refEl.textContent = who.reference;
+  refEl.classList.toggle("hidden", !who.reference);
+
+  // The photo area. A replacement is previewed here before it is used; the
+  // current photo stays until a new one has been safely saved.
+  const area = document.getElementById("item-detail-photo");
+  if (d.step === "confirming" && d.pending && d.pending.previewUrl) {
+    area.innerHTML = `<img class="item-detail-preview" src="${escapeHtml(d.pending.previewUrl)}" alt="The new photo for ${escapeHtml(who.label)}">`;
+  } else if (photo) {
+    const image = d.imageFailed ? null : photoUrl(photo.generation_id, "image");
+    const thumb = photoUrl(photo.generation_id, "thumb");
+    const shown = image || thumb;
+    area.innerHTML = `
+      <button type="button" class="item-detail-photo-btn" data-photo-action="view" aria-label="View photo of ${escapeHtml(who.label)}">
+        ${shown ? `<img class="item-detail-img" src="${escapeHtml(shown)}" alt="" decoding="async">` : ""}
+      </button>
+      ${d.imageFailed ? `
+        <div class="item-detail-photo-problem">
+          <p>Photo unavailable</p>
+          <button type="button" class="secondary-action-btn" data-photo-action="retry-image">Try again</button>
+        </div>` : ""}`;
+    const ratio = photo.width && photo.height ? photo.width + " / " + photo.height : "4 / 3";
+    area.style.setProperty("--photo-ratio", ratio);
+  } else {
+    area.innerHTML = "";
+  }
+  area.classList.toggle("hidden", area.innerHTML.trim() === "");
+
+  const status = document.getElementById("item-detail-status");
+  status.textContent = d.message;
+  status.classList.toggle("is-error", d.messageIsError);
+  status.classList.toggle("hidden", !d.message);
+
+  const buttons = [];
+  const button = (action, label, kind) =>
+    `<button type="button" class="${kind}" data-photo-action="${action}">${label}</button>`;
+  if (d.step === "idle") {
+    if (photo) {
+      if (entitled) buttons.push(button("change", "Change photo", "secondary-action-btn"));
+      buttons.push(button("remove", "Remove photo", "photo-remove-btn"));
+    } else if (entitled) {
+      buttons.push(button("add", "Add photo", "primary-action-btn"));
+    }
+  } else if (d.step === "terms") {
+    buttons.push(button("agree-upload", "Agree and continue", "primary-action-btn"));
+    buttons.push(button("cancel", "Cancel", "photo-text-btn"));
+  } else if (d.step === "choosing") {
+    buttons.push(button("camera", "Take photo", "primary-action-btn"));
+    buttons.push(button("library", "Choose from library", "secondary-action-btn"));
+    buttons.push(button("cancel", "Cancel", "photo-text-btn"));
+  } else if (d.step === "confirming") {
+    buttons.push(button("use", "Use this photo", "primary-action-btn"));
+    buttons.push(button("another", "Try another photo", "secondary-action-btn"));
+    buttons.push(button("cancel", "Cancel", "photo-text-btn"));
+  } else if (d.step === "failed") {
+    if (d.pending) buttons.push(button("retry", "Retry", "primary-action-btn"));
+    buttons.push(button("another", "Try another photo", d.pending ? "secondary-action-btn" : "primary-action-btn"));
+    buttons.push(button("cancel", "Cancel", "photo-text-btn"));
+  }
+  const actions = document.getElementById("item-detail-actions");
+  actions.innerHTML = buttons.join("");
+  actions.classList.toggle("hidden", buttons.length === 0);
+  document.getElementById("item-detail-upload-terms").classList.toggle("hidden", d.step !== "terms");
+
+  if (focusFirstAction) {
+    const first = actions.querySelector("button") || document.getElementById("close-item-detail-modal");
+    requestAnimationFrame(() => { if (first && document.contains(first)) first.focus(); });
+  }
+}
+
+function handleItemDetailAction(event) {
+  const control = event.target.closest("[data-photo-action]");
+  const d = photoDetail;
+  if (!control || !d) return;
+  const action = control.dataset.photoAction;
+
+  if (action === "view") { openPhotoViewer(d.itemId, "item-detail-modal"); return; }
+  if (action === "retry-image") {
+    const photo = itemPhotos.get(d.itemId);
+    if (photo) photoUrlCache.delete(photo.generation_id + ":image");
+    d.imageFailed = false;
+    renderItemDetail();
+    loadDetailImage(d.token);
+    return;
+  }
+  if (action === "add" || action === "change") {
+    if (!photoEntitled()) return;
+    d.mode = action;
+    d.uploadTermsAccepted = false;
+    d.step = "terms";
+    setDetailMessage(d, "", false);
+    renderItemDetail(true);
+    return;
+  }
+  if (action === "agree-upload") {
+    if (d.step !== "terms" || !photoEntitled()) return;
+    d.uploadTermsAccepted = true;
+    d.step = "choosing";
+    setDetailMessage(d, "", false);
+    renderItemDetail(true);
+    return;
+  }
+  if (action === "camera" || action === "library" || action === "another") {
+    if (!d.uploadTermsAccepted || !photoEntitled()) return;
+    if (action === "another") {
+      discardPendingPhoto(d);
+      d.step = "choosing";
+      setDetailMessage(d, "", false);
+      renderItemDetail(true);
+      return;
+    }
+    // Must run inside the tap for iOS to open the camera or library.
+    const input = document.getElementById(action === "camera" ? "photo-input-camera" : "photo-input-library");
+    input.value = "";
+    input.click();
+    return;
+  }
+  if (action === "cancel") {
+    discardPendingPhoto(d);
+    d.step = "idle";
+    d.mode = null;
+    d.uploadTermsAccepted = false;
+    d.token = ++photoOpSerial;
+    setDetailMessage(d, "", false);
+    renderItemDetail(true);
+    return;
+  }
+  if (action === "use" || action === "retry") { savePendingPhoto(); return; }
+  if (action === "remove") openPhotoRemoveModal();
+}
+
+async function handlePhotoFileChosen(event) {
+  const input = event.target;
+  const file = input.files && input.files[0];
+  input.value = "";
+  const d = photoDetail;
+  if (!file || !d || d.step !== "choosing" || !d.uploadTermsAccepted || !photoEntitled()) return;
+
+  const token = d.token = ++photoOpSerial;
+  discardPendingPhoto(d);
+  d.step = d.mode === "change" ? "processing" : "saving";
+  setDetailMessage(d, d.mode === "change" ? "Preparing photo…" : "Saving photo…", false);
+  renderItemDetail();
+
+  let processed;
+  try {
+    processed = await processItemPhoto(file);
+  } catch (error) {
+    if (!isCurrentPhotoOp(token)) return;
+    if (!(error instanceof PhotoProblem)) console.error("Photo processing failed:", error);
+    d.step = "failed";
+    setDetailMessage(d, photoProblemMessage(error, photoDiagnosticsWanted()), true);
+    renderItemDetail(true);
+    return;
+  }
+  if (!isCurrentPhotoOp(token)) return;
+  d.pending = processed;
+
+  if (d.mode === "change") {
+    d.pending.previewUrl = URL.createObjectURL(processed.main);
+    d.step = "confirming";
+    setDetailMessage(d, "", false);
+    renderItemDetail(true);
+    return;
+  }
+  savePendingPhoto();
+}
+
+/* begin → two signed uploads → commit. Once the uploads have started the save
+ * is carried through even if this screen is closed; only a garden switch or
+ * sign-out abandons it (an uncommitted upload is swept up later). The screen
+ * is updated only while it still shows the same attempt. */
+async function savePendingPhoto() {
+  const d = photoDetail;
+  if (!d || !d.pending || !d.uploadTermsAccepted || !photoEntitled()) return;
+  const token = d.token = ++photoOpSerial;
+  const pending = d.pending;
+  const gardenId = d.gardenId;
+  const itemId = d.itemId;
+  const userAtStart = currentUserId;
+  const before = itemPhotos.get(itemId) || null;
+  const expected = d.mode === "change" && before ? before.generation_id : null;
+  const stillHere = () => currentGardenId === gardenId && currentUserId === userAtStart;
+
+  d.step = "saving";
+  setDetailMessage(d, "Saving photo…", false);
+  renderItemDetail();
+
+  const begin = await callItemPhotos({ action: "begin", garden_item_id: itemId, expected_generation_id: expected });
+  if (!stillHere()) return;
+  if (!begin.ok) { photoSaveFailed(token, begin); return; }
+
+  try {
+    const uploads = begin.data.uploads || {};
+    const bucket = sb.storage.from(begin.data.bucket || PHOTO.BUCKET);
+    const options = { contentType: "image/jpeg", cacheControl: PHOTO.CACHE_CONTROL };
+    const results = await Promise.all([
+      bucket.uploadToSignedUrl(uploads.image.path, uploads.image.token, pending.main, options),
+      bucket.uploadToSignedUrl(uploads.thumb.path, uploads.thumb.token, pending.thumb, options)
+    ]);
+    const failed = results.find(r => r && r.error);
+    if (failed) throw failed.error;
+  } catch (error) {
+    console.error("Photo upload failed:", error);
+    if (!stillHere()) return;
+    photoSaveFailed(token, { ok: false, status: 0, reason: "upload_failed" });
+    return;
+  }
+  if (!stillHere()) return;
+
+  const commit = await callItemPhotos({
+    action: "commit", garden_item_id: itemId, generation_id: begin.data.generation_id,
+    width: pending.width, height: pending.height, expected_generation_id: expected
+  });
+  if (!stillHere()) return;
+  if (!commit.ok) { photoSaveFailed(token, commit); return; }
+
+  const saved = commit.data.photo || {};
+  itemPhotos.set(itemId, {
+    generation_id: saved.generation_id || begin.data.generation_id,
+    width: saved.width || pending.width,
+    height: saved.height || pending.height
+  });
+  itemPhotosLoadedFor = gardenId;
+  if (before) forgetPhotoUrls(before.generation_id);
+
+  if (isCurrentPhotoOp(token)) {
+    discardPendingPhoto(photoDetail);
+    photoDetail.step = "idle";
+    photoDetail.mode = null;
+    photoDetail.imageFailed = false;
+    setDetailMessage(photoDetail, "Photo saved.", false);
+    renderItemDetail(true);
+  }
+  if (inventoryLoadedFor === gardenId) renderGroupedInventory();
+  await ensurePhotoUrls(gardenId, [itemId], true);
+  if (stillHere()) rerenderPhotoSurfaces();
+}
+
+function photoSaveFailed(token, res) {
+  if (res.status === 401) {
+    sessionHasGone(null, 401).then(gone => { if (gone) recoverFromSessionLoss(); });
+    return;
+  }
+  const reason = res.reason || "";
+  if (reason === "item_unavailable" || reason === "item_removed") {
+    if (isCurrentPhotoOp(token)) closeItemDetail(false);
+    showToast("That item is no longer in this garden.", false);
+    loadInventory();
+    return;
+  }
+  if (!isCurrentPhotoOp(token)) return;
+  const d = photoDetail;
+
+  if (reason === "not_entitled") {
+    photoEntitlement = { userId: currentUserId, known: true, value: false };
+    discardPendingPhoto(d);
+    d.step = "idle";
+    d.mode = null;
+    setDetailMessage(d, "Photos can’t be added on this account.", true);
+    rerenderPhotoSurfaces();
+    return;
+  }
+  if (reason === "photo_exists" || reason === "stale_generation" || reason === "generation_in_use") {
+    discardPendingPhoto(d);
+    d.step = "idle";
+    d.mode = null;
+    setDetailMessage(d, "This item’s photo was just changed somewhere else, so this one wasn’t saved.", true);
+    renderItemDetail(true);
+    loadItemPhotos(d.gardenId);
+    return;
+  }
+  if (reason === "account_ceiling") {
+    discardPendingPhoto(d);
+    d.step = "idle";
+    d.mode = null;
+    setDetailMessage(d, "Photo not saved. This account has reached its photo limit.", true);
+    renderItemDetail(true);
+    return;
+  }
+  // Anything else — connection, Storage, an expired upload — is worth a retry
+  // with the photo already prepared.
+  d.step = "failed";
+  setDetailMessage(d, "Photo not saved", true);
+  renderItemDetail(true);
+}
+
+/* ---- Remove photo ------------------------------------------------------------ */
+
+function openPhotoRemoveModal() {
+  const d = photoDetail;
+  if (!d || !itemPhotos.has(d.itemId)) return;
+  const errorEl = document.getElementById("photo-remove-error");
+  errorEl.textContent = "";
+  errorEl.classList.add("hidden");
+  const confirm = document.getElementById("photo-remove-confirm-btn");
+  confirm.disabled = false;
+  confirm.textContent = "Remove photo";
+  showAccessibleModal("photo-remove-modal", "photo-remove-cancel-btn", "item-detail-modal");
+}
+
+function closePhotoRemoveModal(restoreFocus = true) {
+  hideAccessibleModal("photo-remove-modal", restoreFocus);
+}
+
+/* The photo stays on screen until the server confirms it is gone. */
+async function confirmPhotoRemove() {
+  const d = photoDetail;
+  const photo = d ? itemPhotos.get(d.itemId) : null;
+  if (!d || !photo) { closePhotoRemoveModal(); return; }
+  const token = d.token = ++photoOpSerial;
+  const gardenId = d.gardenId;
+  const itemId = d.itemId;
+  const confirm = document.getElementById("photo-remove-confirm-btn");
+  const errorEl = document.getElementById("photo-remove-error");
+  confirm.disabled = true;
+  confirm.textContent = "Removing…";
+  errorEl.classList.add("hidden");
+
+  const res = await callItemPhotos({ action: "remove", garden_item_id: itemId, expected_generation_id: photo.generation_id });
+  if (gardenId !== currentGardenId) return;
+
+  if (res.ok || res.reason === "no_photo") {
+    itemPhotos.delete(itemId);
+    forgetPhotoUrls(photo.generation_id);
+    closePhotoRemoveModal(false);
+    if (inventoryLoadedFor === gardenId) renderGroupedInventory();
+    if (isCurrentPhotoOp(token)) {
+      photoDetail.imageFailed = false;
+      setDetailMessage(photoDetail, "Photo removed.", false);
+      renderItemDetail(true);
+    }
+    return;
+  }
+  if (res.status === 401 && await sessionHasGone(null, 401)) { await recoverFromSessionLoss(); return; }
+  if (res.reason === "stale_generation") {
+    closePhotoRemoveModal(false);
+    if (isCurrentPhotoOp(token)) {
+      setDetailMessage(photoDetail, "This item’s photo was just changed somewhere else. Check it before removing it.", true);
+      renderItemDetail(true);
+    }
+    loadItemPhotos(gardenId);
+    return;
+  }
+  if (res.reason === "item_unavailable" || res.reason === "item_removed") {
+    closePhotoRemoveModal(false);
+    photoSaveFailed(token, res);
+    return;
+  }
+  confirm.disabled = false;
+  confirm.textContent = "Remove photo";
+  errorEl.textContent = "Couldn’t remove this photo. Check your connection and try again.";
+  errorEl.classList.remove("hidden");
+}
+
+/* ---- Full-screen viewer ------------------------------------------------------ */
+
+function openPhotoViewer(itemId, parentModalId) {
+  const item = inventoryItem(itemId);
+  const photo = itemPhotos.get(Number(itemId));
+  if (!item || !photo) return;
+  const serial = ++photoViewerSerial;
+  photoViewer = { itemId: Number(itemId), gardenId: currentGardenId, serial };
+  document.getElementById("photo-viewer-title").textContent = "Photo of " + itemIdentity(item).label;
+  const stage = document.getElementById("photo-viewer-stage");
+  stage.classList.remove("zoomed");
+  showPhotoViewerImage(photoUrl(photo.generation_id, "image") || photoUrl(photo.generation_id, "thumb"));
+  showAccessibleModal("photo-viewer", "close-photo-viewer", parentModalId);
+  if (!photoUrl(photo.generation_id, "image")) loadPhotoViewerImage(serial);
+}
+
+async function loadPhotoViewerImage(serial) {
+  const v = photoViewer;
+  if (!v) return;
+  setPhotoViewerProblem(false);
+  await ensurePhotoUrls(v.gardenId, [v.itemId], true);
+  if (!photoViewer || photoViewer.serial !== serial) return;
+  const photo = itemPhotos.get(v.itemId);
+  const url = photo ? photoUrl(photo.generation_id, "image") : null;
+  if (url) showPhotoViewerImage(url); else setPhotoViewerProblem(true);
+}
+
+function showPhotoViewerImage(url) {
+  const img = document.getElementById("photo-viewer-img");
+  if (url) { img.src = url; img.classList.remove("hidden"); }
+  else { img.removeAttribute("src"); img.classList.add("hidden"); }
+}
+
+function setPhotoViewerProblem(show) {
+  document.getElementById("photo-viewer-problem").classList.toggle("hidden", !show);
+}
+
+function closePhotoViewer(restoreFocus = true) {
+  photoViewer = null;
+  photoViewerSerial += 1;
+  const img = document.getElementById("photo-viewer-img");
+  if (img) img.removeAttribute("src");
+  hideAccessibleModal("photo-viewer", restoreFocus);
+}
+
+function handlePhotoViewerClick(event) {
+  if (event.target.closest("#close-photo-viewer")) { closePhotoViewer(); return; }
+  if (event.target.closest("#photo-viewer-retry")) {
+    const v = photoViewer;
+    const photo = v ? itemPhotos.get(v.itemId) : null;
+    if (photo) photoUrlCache.delete(photo.generation_id + ":image");
+    if (v) loadPhotoViewerImage(v.serial);
+    return;
+  }
+  // Tap the photo to see it at full size; tap again to fit it to the screen.
+  if (event.target.id === "photo-viewer-img") {
+    document.getElementById("photo-viewer-stage").classList.toggle("zoomed");
+  }
+}
+
+function handlePhotoViewerImageError() {
+  if (photoViewer) setPhotoViewerProblem(true);
 }
 
 
@@ -3280,6 +4359,9 @@ function closeSettingsModal(restoreFocus = true) {
 }
 
 function closeAllModals() {
+  closePhotoViewer(false);
+  closePhotoRemoveModal(false);
+  closeItemDetail(false);
   closeFeedbackModal(false);
   closeDeleteAccountModal(false);
   closeGardenDangerModal(false);
@@ -3519,7 +4601,8 @@ document.addEventListener("DOMContentLoaded", () => {
   if (gardenModal) {
     gardenModal.addEventListener("click", (e) => { if (e.target === gardenModal) closeGardenModal(); });
   }
-  ["garden-modal", "settings-modal", "garden-danger-modal", "delete-account-modal", "feedback-modal"]
+  ["garden-modal", "settings-modal", "garden-danger-modal", "delete-account-modal", "feedback-modal",
+   "item-detail-modal", "photo-remove-modal", "photo-viewer"]
     .forEach(id => {
       const modal = document.getElementById(id);
       if (modal) modal.addEventListener("keydown", handleAccessibleModalKeydown);
@@ -3564,7 +4647,39 @@ document.addEventListener("DOMContentLoaded", () => {
   const gardenView = document.getElementById("view-garden");
   if (gardenView) gardenView.addEventListener("click", handleGardenViewAction);
   const inventoryList = document.getElementById("inventory-list");
-  if (inventoryList) inventoryList.addEventListener("click", handleRemoveAsset);
+  if (inventoryList) {
+    inventoryList.addEventListener("click", handleRemoveAsset);
+    inventoryList.addEventListener("click", handleInventoryPhotoClick);
+    inventoryList.addEventListener("error", handlePhotoImageError, true);
+  }
+
+  // --- RM-026 item photos: detail, remove-photo confirm, viewer ---
+  const itemDetailModal = document.getElementById("item-detail-modal");
+  if (itemDetailModal) {
+    itemDetailModal.addEventListener("click", event => {
+      if (event.target === itemDetailModal || event.target.closest("#close-item-detail-modal")) { closeItemDetail(); return; }
+      handleItemDetailAction(event);
+    });
+    itemDetailModal.addEventListener("error", handlePhotoImageError, true);
+  }
+  ["photo-input-camera", "photo-input-library"].forEach(id => {
+    const input = document.getElementById(id);
+    if (input) input.addEventListener("change", handlePhotoFileChosen);
+  });
+  const photoRemoveModal = document.getElementById("photo-remove-modal");
+  if (photoRemoveModal) {
+    photoRemoveModal.addEventListener("click", event => {
+      if (event.target === photoRemoveModal || event.target.closest("#close-photo-remove-modal, #photo-remove-cancel-btn")) {
+        closePhotoRemoveModal();
+        return;
+      }
+      if (event.target.closest("#photo-remove-confirm-btn")) confirmPhotoRemove();
+    });
+  }
+  const photoViewerEl = document.getElementById("photo-viewer");
+  if (photoViewerEl) photoViewerEl.addEventListener("click", handlePhotoViewerClick);
+  const photoViewerImg = document.getElementById("photo-viewer-img");
+  if (photoViewerImg) photoViewerImg.addEventListener("error", handlePhotoViewerImageError);
   const addAssetBtn = document.getElementById("add-asset-btn");
   if (addAssetBtn) addAssetBtn.addEventListener("click", handleAddAsset);
   const pillSearch = document.getElementById("pill-search");

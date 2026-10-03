@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700&amp;family=Source+Sans+3:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=gardening-v47-identity-refresh">
+  <link rel="stylesheet" href="style.css?v=gardening-v51-photo-terms">
 </head>
 <body>
 
@@ -353,6 +353,68 @@
     </div>
 
     <!-- ============================================================= -->
+    <!--  ITEM DETAIL AND ITS PHOTO (RM-026)                           -->
+    <!--                                                               -->
+    <!--  Opened from a My Garden row. app.js fills it and decides which -->
+    <!--  photo actions this account may see; the server decides what   -->
+    <!--  it may do. The two file inputs are opened by the Take photo   -->
+    <!--  and Choose from library buttons.                              -->
+    <!-- ============================================================= -->
+    <div id="item-detail-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="item-detail-title">
+      <div class="modal-panel item-detail-panel">
+        <div class="modal-header">
+          <div class="item-detail-identity">
+            <h2 class="section-title" id="item-detail-title">Item</h2>
+            <p id="item-detail-reference" class="item-detail-reference hidden"></p>
+          </div>
+          <button id="close-item-detail-modal" class="modal-close-btn" type="button" aria-label="Close">✕</button>
+        </div>
+        <div id="item-detail-photo" class="item-detail-photo hidden"></div>
+        <div id="item-detail-upload-terms" class="hidden">
+          <h3>Before uploading a photo</h3>
+          <p>Only upload a photo you took or have permission to use here. It stays yours.
+            By agreeing, you let me resize, store and display it to provide item photos in the app.</p>
+          <p>These photo terms apply when you agree and continue. Cancel leaves any saved photo unchanged.</p>
+          <p><a href="terms.html#uploaded-photos" target="_blank" rel="noopener">Read the photo terms</a>
+            and <a href="privacy.html" target="_blank" rel="noopener">Privacy Notice</a>.</p>
+        </div>
+        <p id="item-detail-status" class="item-detail-status hidden" role="status" aria-live="polite"></p>
+        <div id="item-detail-actions" class="item-detail-actions hidden"></div>
+        <input id="photo-input-camera" class="photo-file-input" type="file" accept="image/*" capture="environment" tabindex="-1" aria-hidden="true">
+        <input id="photo-input-library" class="photo-file-input" type="file" accept="image/*" tabindex="-1" aria-hidden="true">
+      </div>
+    </div>
+
+    <div id="photo-remove-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="photo-remove-title">
+      <div class="modal-panel remove-item-panel">
+        <div class="modal-header">
+          <h2 class="section-title" id="photo-remove-title">Remove this photo?</h2>
+          <button id="close-photo-remove-modal" class="modal-close-btn" type="button" aria-label="Close">✕</button>
+        </div>
+        <p class="delete-lede">This photo will be permanently removed from the garden item.</p>
+        <p id="photo-remove-error" class="garden-inline-error hidden" role="alert"></p>
+        <div class="delete-actions">
+          <button id="photo-remove-cancel-btn" class="primary-action-btn" type="button">Cancel</button>
+          <button id="photo-remove-confirm-btn" class="destructive-action-btn" type="button">Remove photo</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="photo-viewer" class="photo-viewer hidden" role="dialog" aria-modal="true" aria-labelledby="photo-viewer-title">
+      <div class="photo-viewer-bar">
+        <h2 id="photo-viewer-title" class="photo-viewer-title">Photo</h2>
+        <button id="close-photo-viewer" class="photo-viewer-close" type="button">Close</button>
+      </div>
+      <div id="photo-viewer-stage" class="photo-viewer-stage" tabindex="-1">
+        <img id="photo-viewer-img" class="photo-viewer-img" alt="">
+        <div id="photo-viewer-problem" class="photo-viewer-problem hidden">
+          <p>Photo unavailable</p>
+          <button id="photo-viewer-retry" class="secondary-action-btn" type="button">Try again</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================= -->
     <!--  SETTINGS                                                     -->
     <!--                                                               -->
     <!--  Split in two, because it now holds two different kinds of     -->
@@ -541,6 +603,6 @@
   <!-- Your Supabase URL + anon key. Create this file from config.example.js. -->
   <script src="config.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js?v=gardening-v47-identity-refresh"></script>
+  <script src="app.js?v=gardening-v51-photo-terms"></script>
 </body>
 </html>

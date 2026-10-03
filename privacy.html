@@ -31,7 +31,7 @@
 <body>
 
 <h1>Privacy Notice</h1>
-<p class="meta">What Gardening Today? · Last updated 12 September 2026</p>
+<p class="meta">What Gardening Today? · Last updated 2 October 2026</p>
 
 <p class="lead">What the app holds about you, why it holds it, who else is involved, and what you
 can ask me to do about it.</p>
@@ -73,6 +73,13 @@ anything on this page, including any of the rights below.</p>
     <td>From you.</td>
   </tr>
   <tr>
+    <td><strong>Photos of garden items</strong> — one photo per item, where you choose to add
+        one: a resized copy and a small thumbnail</td>
+    <td>From you. The photo is prepared on your device first: it is resized, and its location,
+        camera details and the date it was taken are removed. The original stays on your device.
+        See below.</td>
+  </tr>
+  <tr>
     <td><strong>What you have done</strong> — jobs you have ticked off and when, and jobs you have
         chosen to hide</td>
     <td>From you, as you use the app. This is what stops the same job being suggested again the
@@ -108,6 +115,21 @@ record which screens you looked at or what you did while it was open.</p>
 maintain. Answering that requires recognising that the same garden was opened on different days,
 which is why it is kept at all. It is not used to profile you, to advertise to you, or to make any
 decision about you, and it is not used for anything beyond the purposes described in this notice.</p>
+
+<h3>About photos of garden items</h3>
+
+<p>A photo belongs to the garden item it was added to, not to the person who added it. Everyone
+who is a member of that garden can see it, and any member can remove it. The app records which
+account added a photo, for support and to apply a limit on how many photos one account can add,
+but does not show this to anyone.</p>
+
+<p>Photos are kept in private storage. They are not public: the app shows a photo only to members
+of its garden, using a link that stops working after an hour.</p>
+
+<p>Photos are deleted when the photo or item is removed, when its garden is deleted, or when
+account deletion causes that garden to be deleted. Photos remain with shared gardens that survive
+an account deletion. A deleted photo disappears from the app straight away; its stored files are
+then erased by a regular clean-up, normally within a few days.</p>
 
 <h3>About the weather look-up note</h3>
 
@@ -162,7 +184,7 @@ weather is expected to do there. Old entries are replaced as newer ones arrive.<
 
 <ul>
   <li><strong>To provide the service you asked for</strong> — your account, your garden and its
-      location and contents, the jobs you complete or hide, and everything needed to work out what
+      location and contents, photos you add to garden items, the jobs you complete or hide, and everything needed to work out what
       to suggest. It also covers sending a postcode or coordinates to postcodes.io to find or
       check a garden's location, and sending an approximate location to OpenWeather to get the weather
       and the short forecast the frost warning is based on.
@@ -234,8 +256,8 @@ on your device.</p>
   </tr>
   <tr>
     <td><strong>Supabase</strong></td>
-    <td>Stores the database and handles sign-in on my behalf. The database is hosted in Supabase's
-        London region.</td>
+    <td>Stores the database and photos of garden items, and handles sign-in, on my behalf. The
+        database and photo storage are hosted in Supabase's London region.</td>
   </tr>
   <tr>
     <td><strong>Cloudflare</strong></td>
@@ -245,7 +267,8 @@ on your device.</p>
   <tr>
     <td><strong>GitHub</strong></td>
     <td>Runs and stores access-restricted database backups, including garden records and in-app
-        feedback, for up to seven days. These do not include the sign-in system's account records.
+        feedback, for up to seven days. These do not include the sign-in system's account records or
+        photos.
         GitHub also serves the older GitHub Pages address, processing technical information such
         as your IP address when you use that address.</td>
   </tr>
@@ -290,20 +313,21 @@ would like more detail about a particular transfer or the safeguards behind it.<
 <h2>How long it is kept</h2>
 
 <p><strong>Your account: for as long as it exists. Garden records: for as long as the garden
-exists. Weather look-up notes: five minutes. Notes of recent rain in an area, which are not linked to
+exists. Photos of garden items: until the photo or its item is removed, or its garden is deleted. Weather look-up notes: five minutes. Notes of recent rain in an area, which are not linked to
 anybody: two days.</strong></p>
 
 <p>You can delete your account yourself, from Settings inside the app. A successful deletion
 removes your account, your garden memberships and any feedback you sent through the app from
 the live database straight away. It cannot be undone through the app.</p>
 
-<p>A garden where you are the only member is deleted too, including its contents, job history,
+<p>A garden where you are the only member is deleted too, including its contents, photos, job history,
 hidden jobs and daily activity records. <strong>If other members remain, the garden and those
-records stay available to them</strong>, including things you added or recorded. If you were
+records stay available to them</strong>, including things you added or recorded and photos you added. If you were
 its only owner, ownership passes to the longest-standing remaining member. Please check what
 will happen before you confirm.</p>
 
 <p>Deleted information may survive for a short time in access-restricted backups of the database,
+which do not include photos,
 for up to <strong>seven days</strong>, until those backups expire in the ordinary course.
 They exist to recover from a disaster, not to keep a copy of you, and they are not searched or
 used for anything else.</p>
@@ -349,7 +373,8 @@ only gardens you are a member of. Connections are encrypted.</p>
 
 <p>No system is perfectly secure, and this one is run by one person as a hobby. So a practical
 suggestion rather than a legal one: please don't put anything sensitive into garden names, plant
-nicknames or feedback messages.</p>
+nicknames or feedback messages. The same goes for photos: other members of the garden will see
+them, so leave out people, house numbers and anything else you would rather not share.</p>
 
 <h2>Children</h2>
 
@@ -363,7 +388,7 @@ existing users know, either directly or in the app. Small corrections happen wit
 
 <div class="box">
   <p><strong>In one paragraph.</strong> The app knows your email address, your Google display name,
-  where your garden is, what you grow, what you have done in it, and a daily count of times you
+  where your garden is, what you grow, any photos you add to garden items, what you have done in it, and a daily count of times you
   opened it. It uses that to tell you what to do in the garden today, to keep the service working,
   and to judge whether people come back. It shows no adverts, sells nothing, and carries no
   cross-site tracking. Deleting your account removes it and gardens where you are the only

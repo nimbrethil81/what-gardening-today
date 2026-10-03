@@ -25,4 +25,4 @@ Built with HTML, CSS and JavaScript, with Supabase for sign-in and garden data.
 The primary address is served by a Cloudflare Worker. The older
 [GitHub Pages address](https://nimbrethil81.github.io/what-gardening-today/) is a legacy surface.
 
-[Privacy notice](./privacy.html) · [Terms of use](./terms.html) · [Changelog](./CHANGELOG.md)
+[Privacy notice](./privacy.html) · [Terms of use](./terms.html)
