@@ -89,7 +89,7 @@ const sb = configLooksValid ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : nu
  * from. It must match CACHE_NAME in sw.js, and both must be bumped in the same
  * commit — a report labelled with a version that was never deployed is worse
  * than no label at all. */
-const APP_VERSION = "gardening-v51-photo-terms";
+const APP_VERSION = "gardening-v55-privacy-name";
 
 /* ---- Small helpers ------------------------------------------------------- */
 
@@ -3602,9 +3602,9 @@ function openItemDetail(itemId, trigger) {
   photoDetail = {
     itemId: Number(itemId),
     gardenId: currentGardenId,
-    step: "idle",          // idle | terms | choosing | processing | confirming | saving | failed
+    step: "idle",          // idle | choosing | processing | confirming | saving | failed
     mode: null,            // add | change
-    uploadTermsAccepted: false, // applies to this upload attempt; never persisted
+    pickerReturnState: null, // restore the current view if the native picker is cancelled
     pending: null,         // { main, thumb, width, height, previewUrl? } kept for Retry
     message: "",
     messageIsError: false,
@@ -3658,6 +3658,7 @@ function renderItemDetail(focusFirstAction = false) {
   const who = itemIdentity(item);
   const photo = itemPhotos.get(d.itemId) || null;
   const entitled = photoEntitled();
+  const viewStep = d.step === "choosing" && d.pickerReturnState ? d.pickerReturnState.step : d.step;
 
   document.getElementById("item-detail-title").textContent = who.name;
   const refEl = document.getElementById("item-detail-reference");
@@ -3667,7 +3668,7 @@ function renderItemDetail(focusFirstAction = false) {
   // The photo area. A replacement is previewed here before it is used; the
   // current photo stays until a new one has been safely saved.
   const area = document.getElementById("item-detail-photo");
-  if (d.step === "confirming" && d.pending && d.pending.previewUrl) {
+  if (viewStep === "confirming" && d.pending && d.pending.previewUrl) {
     area.innerHTML = `<img class="item-detail-preview" src="${escapeHtml(d.pending.previewUrl)}" alt="The new photo for ${escapeHtml(who.label)}">`;
   } else if (photo) {
     const image = d.imageFailed ? null : photoUrl(photo.generation_id, "image");
@@ -3697,25 +3698,20 @@ function renderItemDetail(focusFirstAction = false) {
   const buttons = [];
   const button = (action, label, kind) =>
     `<button type="button" class="${kind}" data-photo-action="${action}">${label}</button>`;
-  if (d.step === "idle") {
+  if (viewStep === "idle") {
     if (photo) {
       if (entitled) buttons.push(button("change", "Change photo", "secondary-action-btn"));
       buttons.push(button("remove", "Remove photo", "photo-remove-btn"));
     } else if (entitled) {
       buttons.push(button("add", "Add photo", "primary-action-btn"));
     }
-  } else if (d.step === "terms") {
-    buttons.push(button("agree-upload", "Agree and continue", "primary-action-btn"));
-    buttons.push(button("cancel", "Cancel", "photo-text-btn"));
-  } else if (d.step === "choosing") {
-    buttons.push(button("camera", "Take photo", "primary-action-btn"));
-    buttons.push(button("library", "Choose from library", "secondary-action-btn"));
-    buttons.push(button("cancel", "Cancel", "photo-text-btn"));
-  } else if (d.step === "confirming") {
+
+
+  } else if (viewStep === "confirming") {
     buttons.push(button("use", "Use this photo", "primary-action-btn"));
     buttons.push(button("another", "Try another photo", "secondary-action-btn"));
     buttons.push(button("cancel", "Cancel", "photo-text-btn"));
-  } else if (d.step === "failed") {
+  } else if (viewStep === "failed") {
     if (d.pending) buttons.push(button("retry", "Retry", "primary-action-btn"));
     buttons.push(button("another", "Try another photo", d.pending ? "secondary-action-btn" : "primary-action-btn"));
     buttons.push(button("cancel", "Cancel", "photo-text-btn"));
@@ -3723,7 +3719,6 @@ function renderItemDetail(focusFirstAction = false) {
   const actions = document.getElementById("item-detail-actions");
   actions.innerHTML = buttons.join("");
   actions.classList.toggle("hidden", buttons.length === 0);
-  document.getElementById("item-detail-upload-terms").classList.toggle("hidden", d.step !== "terms");
 
   if (focusFirstAction) {
     const first = actions.querySelector("button") || document.getElementById("close-item-detail-modal");
@@ -3746,34 +3741,14 @@ function handleItemDetailAction(event) {
     loadDetailImage(d.token);
     return;
   }
-  if (action === "add" || action === "change") {
+  if (action === "add" || action === "change" || action === "another") {
     if (!photoEntitled()) return;
-    d.mode = action;
-    d.uploadTermsAccepted = false;
-    d.step = "terms";
-    setDetailMessage(d, "", false);
-    renderItemDetail(true);
-    return;
-  }
-  if (action === "agree-upload") {
-    if (d.step !== "terms" || !photoEntitled()) return;
-    d.uploadTermsAccepted = true;
+    if (d.step !== "choosing") d.pickerReturnState = { step: d.step, mode: d.mode };
+    if (action !== "another") d.mode = action;
     d.step = "choosing";
-    setDetailMessage(d, "", false);
-    renderItemDetail(true);
-    return;
-  }
-  if (action === "camera" || action === "library" || action === "another") {
-    if (!d.uploadTermsAccepted || !photoEntitled()) return;
-    if (action === "another") {
-      discardPendingPhoto(d);
-      d.step = "choosing";
-      setDetailMessage(d, "", false);
-      renderItemDetail(true);
-      return;
-    }
-    // Must run inside the tap for iOS to open the camera or library.
-    const input = document.getElementById(action === "camera" ? "photo-input-camera" : "photo-input-library");
+    // Open inside the tap: the device/browser owns camera, library and file choices.
+    // Keep the existing view and pending preview intact until a file is selected.
+    const input = document.getElementById("photo-input");
     input.value = "";
     input.click();
     return;
@@ -3782,7 +3757,7 @@ function handleItemDetailAction(event) {
     discardPendingPhoto(d);
     d.step = "idle";
     d.mode = null;
-    d.uploadTermsAccepted = false;
+    d.pickerReturnState = null;
     d.token = ++photoOpSerial;
     setDetailMessage(d, "", false);
     renderItemDetail(true);
@@ -3792,12 +3767,24 @@ function handleItemDetailAction(event) {
   if (action === "remove") openPhotoRemoveModal();
 }
 
+function handlePhotoPickerCancelled() {
+  const d = photoDetail;
+  if (!d || d.step !== "choosing" || !d.pickerReturnState) return;
+  const before = d.pickerReturnState;
+  d.step = before.step;
+  d.mode = before.mode;
+  d.pickerReturnState = null;
+  renderItemDetail(true);
+}
+
 async function handlePhotoFileChosen(event) {
   const input = event.target;
   const file = input.files && input.files[0];
   input.value = "";
   const d = photoDetail;
-  if (!file || !d || d.step !== "choosing" || !d.uploadTermsAccepted || !photoEntitled()) return;
+  if (!file) { handlePhotoPickerCancelled(); return; }
+  if (!d || d.step !== "choosing" || !photoEntitled()) return;
+  d.pickerReturnState = null;
 
   const token = d.token = ++photoOpSerial;
   discardPendingPhoto(d);
@@ -3835,7 +3822,7 @@ async function handlePhotoFileChosen(event) {
  * is updated only while it still shows the same attempt. */
 async function savePendingPhoto() {
   const d = photoDetail;
-  if (!d || !d.pending || !d.uploadTermsAccepted || !photoEntitled()) return;
+  if (!d || !d.pending || !photoEntitled()) return;
   const token = d.token = ++photoOpSerial;
   const pending = d.pending;
   const gardenId = d.gardenId;
@@ -4662,10 +4649,11 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     itemDetailModal.addEventListener("error", handlePhotoImageError, true);
   }
-  ["photo-input-camera", "photo-input-library"].forEach(id => {
-    const input = document.getElementById(id);
-    if (input) input.addEventListener("change", handlePhotoFileChosen);
-  });
+  const photoInput = document.getElementById("photo-input");
+  if (photoInput) {
+    photoInput.addEventListener("change", handlePhotoFileChosen);
+    photoInput.addEventListener("cancel", handlePhotoPickerCancelled);
+  }
   const photoRemoveModal = document.getElementById("photo-remove-modal");
   if (photoRemoveModal) {
     photoRemoveModal.addEventListener("click", event => {

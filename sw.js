@@ -6,15 +6,15 @@
 // APP_VERSION in app.js MUST be the same string. It is what gets sent with a
 // piece of feedback, so if the two drift, every bug report is labelled with a
 // build that was never deployed.
-const CACHE_NAME = 'gardening-v51-photo-terms';
+const CACHE_NAME = 'gardening-v55-privacy-name';
 
 // Scope-relative paths (no leading slash) so they resolve correctly whether the
 // app is served from /what-gardening-today/ or /what-gardening-today-dev/.
 const ASSETS = [
   './',
   './index.html',
-  './style.css?v=gardening-v51-photo-terms',
-  './app.js?v=gardening-v51-photo-terms',
+  './style.css?v=gardening-v55-privacy-name',
+  './app.js?v=gardening-v55-privacy-name',
   './manifest.json',
   './assets/wgt/logo.svg',
   './assets/wgt/category-lawn.svg',
