@@ -89,7 +89,7 @@ const sb = configLooksValid ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : nu
  * from. It must match CACHE_NAME in sw.js, and both must be bumped in the same
  * commit — a report labelled with a version that was never deployed is worse
  * than no label at all. */
-const APP_VERSION = "gardening-v55-privacy-name";
+const APP_VERSION = "gardening-v56-identify-photo";
 
 /* ---- Small helpers ------------------------------------------------------- */
 
@@ -548,6 +548,7 @@ function closeModalFromKeyboard(modalId) {
   if (modalId === "item-detail-modal") closeItemDetail();
   if (modalId === "photo-remove-modal") closePhotoRemoveModal();
   if (modalId === "photo-viewer") closePhotoViewer();
+  if (modalId === "identify-modal") closeIdentify();
 }
 
 function handleAccessibleModalKeydown(event) {
@@ -588,6 +589,7 @@ async function route() {
     gardens = [];
     closeAllModals();
     forgetPhotoSession();
+    forgetIdentifySession();
     showSigninDefault(callbackError || "");
     showView("signin");
     requestAnimationFrame(() => document.getElementById("signin-title").focus());
@@ -876,6 +878,7 @@ function resetPerGardenUiState() {
   closeRemoveItemModal(false);
   clearPillSearch();
   resetItemPhotoState();
+  closeIdentify({ forced: true, gardenSwitch: true });
 }
 
 /* Called when the server tells us we can no longer see the garden we are in —
@@ -1734,6 +1737,7 @@ async function recoverFromSessionLoss() {
     closeAllModals();
     resetPerGardenUiState();
     forgetPhotoSession();
+    forgetIdentifySession();
     currentGardenId = null;
     currentUserId = null;
     gardens = [];
@@ -2404,6 +2408,7 @@ async function loadInventory() {
   const inventoryList = document.getElementById("inventory-list");
   const hasCurrentContent = inventoryLoadedFor === gardenAtRequest;
   loadItemPhotos(gardenAtRequest);
+  loadIdentifyAccess();
   if (!hasCurrentContent) {
     inventoryList.innerHTML = '<div class="garden-local-status">Seeing what’s growing…</div>';
   } else {
@@ -3058,7 +3063,7 @@ const PHOTO = {
   MAIN_QUALITY: 0.82,
   THUMB_EDGE: 256,
   THUMB_QUALITY: 0.78,
-  MAIN_MAX_BYTES: 2621440,               // the server refuses anything larger (CONFIG_ITEMS #56)
+  MAIN_MAX_BYTES: 2621440,               // the server refuses anything larger
   THUMB_MAX_BYTES: 204800,
   CACHE_CONTROL: "31536000",             // generations are immutable, so a long cache is safe
   SIGN_BATCH: 200,                       // the function's per-call ceiling
@@ -3816,8 +3821,56 @@ async function handlePhotoFileChosen(event) {
   savePendingPhoto();
 }
 
-/* begin → two signed uploads → commit. Once the uploads have started the save
- * is carried through even if this screen is closed; only a garden switch or
+/* begin → two signed uploads → commit, shared by item detail and the RM-015
+ * identification journey. Returns { abandoned } once stillHere() fails, the
+ * failed call's { ok: false, status, reason }, or { ok: true, photo }. */
+async function uploadItemPhoto(itemId, pending, expected, stillHere) {
+  const begin = await callItemPhotos({ action: "begin", garden_item_id: itemId, expected_generation_id: expected });
+  if (!stillHere()) return { abandoned: true };
+  if (!begin.ok) return begin;
+
+  try {
+    const uploads = begin.data.uploads || {};
+    const bucket = sb.storage.from(begin.data.bucket || PHOTO.BUCKET);
+    const options = { contentType: "image/jpeg", cacheControl: PHOTO.CACHE_CONTROL };
+    const results = await Promise.all([
+      bucket.uploadToSignedUrl(uploads.image.path, uploads.image.token, pending.main, options),
+      bucket.uploadToSignedUrl(uploads.thumb.path, uploads.thumb.token, pending.thumb, options)
+    ]);
+    const failed = results.find(r => r && r.error);
+    if (failed) throw failed.error;
+  } catch (error) {
+    console.error("Photo upload failed:", error);
+    if (!stillHere()) return { abandoned: true };
+    return { ok: false, status: 0, reason: "upload_failed" };
+  }
+  if (!stillHere()) return { abandoned: true };
+
+  const commit = await callItemPhotos({
+    action: "commit", garden_item_id: itemId, generation_id: begin.data.generation_id,
+    width: pending.width, height: pending.height, expected_generation_id: expected
+  });
+  if (!stillHere()) return { abandoned: true };
+  if (!commit.ok) return commit;
+  const saved = commit.data.photo || {};
+  return {
+    ok: true,
+    photo: {
+      generation_id: saved.generation_id || begin.data.generation_id,
+      width: saved.width || pending.width,
+      height: saved.height || pending.height
+    }
+  };
+}
+
+function recordSavedPhoto(gardenId, itemId, photo, before) {
+  itemPhotos.set(itemId, photo);
+  itemPhotosLoadedFor = gardenId;
+  if (before) forgetPhotoUrls(before.generation_id);
+}
+
+/* Item-detail Add/Change. Once the uploads have started the save is carried
+ * through even if this screen is closed; only a garden switch or
  * sign-out abandons it (an uncommitted upload is swept up later). The screen
  * is updated only while it still shows the same attempt. */
 async function savePendingPhoto() {
@@ -3836,43 +3889,10 @@ async function savePendingPhoto() {
   setDetailMessage(d, "Saving photo…", false);
   renderItemDetail();
 
-  const begin = await callItemPhotos({ action: "begin", garden_item_id: itemId, expected_generation_id: expected });
-  if (!stillHere()) return;
-  if (!begin.ok) { photoSaveFailed(token, begin); return; }
-
-  try {
-    const uploads = begin.data.uploads || {};
-    const bucket = sb.storage.from(begin.data.bucket || PHOTO.BUCKET);
-    const options = { contentType: "image/jpeg", cacheControl: PHOTO.CACHE_CONTROL };
-    const results = await Promise.all([
-      bucket.uploadToSignedUrl(uploads.image.path, uploads.image.token, pending.main, options),
-      bucket.uploadToSignedUrl(uploads.thumb.path, uploads.thumb.token, pending.thumb, options)
-    ]);
-    const failed = results.find(r => r && r.error);
-    if (failed) throw failed.error;
-  } catch (error) {
-    console.error("Photo upload failed:", error);
-    if (!stillHere()) return;
-    photoSaveFailed(token, { ok: false, status: 0, reason: "upload_failed" });
-    return;
-  }
-  if (!stillHere()) return;
-
-  const commit = await callItemPhotos({
-    action: "commit", garden_item_id: itemId, generation_id: begin.data.generation_id,
-    width: pending.width, height: pending.height, expected_generation_id: expected
-  });
-  if (!stillHere()) return;
-  if (!commit.ok) { photoSaveFailed(token, commit); return; }
-
-  const saved = commit.data.photo || {};
-  itemPhotos.set(itemId, {
-    generation_id: saved.generation_id || begin.data.generation_id,
-    width: saved.width || pending.width,
-    height: saved.height || pending.height
-  });
-  itemPhotosLoadedFor = gardenId;
-  if (before) forgetPhotoUrls(before.generation_id);
+  const res = await uploadItemPhoto(itemId, pending, expected, stillHere);
+  if (res.abandoned) return;
+  if (!res.ok) { photoSaveFailed(token, res); return; }
+  recordSavedPhoto(gardenId, itemId, res.photo, before);
 
   if (isCurrentPhotoOp(token)) {
     discardPendingPhoto(photoDetail);
@@ -4065,6 +4085,663 @@ function handlePhotoViewerClick(event) {
 
 function handlePhotoViewerImageError() {
   if (photoViewer) setPhotoViewerProblem(true);
+}
+
+
+/* ==========================================================================
+ *  IDENTIFY FROM PHOTO (RM-015) — inside My Garden's Add
+ *
+ *  Issue #41, Dan-only pilot. The plant-identification Edge Function decides
+ *  everything that matters — the signed-in caller, the separate RM-015
+ *  entitlement, the operator pause, both usage ceilings and how the evidence
+ *  is classified and which choices may be offered — so nothing here is a
+ *  security boundary. has_entitlement is asked only so the button is offered
+ *  to the account that may use it, before any photo is requested; a pause or
+ *  usage limit is refused by the backend before any provider call is made.
+ *
+ *  One journey at a time, carried in identifyJourney with a token. Every
+ *  await is followed by identifyCurrent(token), so a late reply, a garden
+ *  switch or sign-out can never paint into or save to another journey or
+ *  garden. Steps:
+ *    choosing → preparing → preview → identifying → result → adding
+ *      → attaching (RM-026 entitled accounts only) → finished
+ *  with problem (photo/offline/service/limits/paused), uncertain (the Add
+ *  may or may not have landed) and photo_failed (item saved, photo not) as
+ *  the other ways out. The photo is prepared once, by the item-photo
+ *  pipeline, and the same processed JPEG is attached; it is never kept
+ *  beyond this foreground journey.
+ * ========================================================================== */
+
+const IDENTIFY = {
+  FUNCTION: "plant-identification",
+  PRODUCT: "FEATURE_PLANT_IDENTIFICATION",   // the separate RM-015 entitlement
+  CHOICE_LIMIT: 3,
+  PHOTO_TIP: "One plant, close up and in good light, usually works best."
+};
+
+let identifyAccess = { userId: null, known: false, value: false };
+let identifyJourney = null;
+let identifySerial = 0;
+
+function identifyAvailable() {
+  return identifyAccess.known && identifyAccess.userId === currentUserId && identifyAccess.value;
+}
+
+function identifyCurrent(token) {
+  const j = identifyJourney;
+  return !!j && j.token === token && j.gardenId === currentGardenId && j.userId === currentUserId;
+}
+
+/* Once per signed-in user. A failed read leaves the button hidden: offering
+ * something that may be refused helps nobody, and ordinary search remains. */
+async function loadIdentifyAccess() {
+  const userAtRequest = currentUserId;
+  if (!userAtRequest) return;
+  if (!(identifyAccess.known && identifyAccess.userId === userAtRequest)) {
+    let res = null;
+    try { res = await sb.rpc("has_entitlement", { p_code: IDENTIFY.PRODUCT }); } catch (e) { res = null; }
+    if (currentUserId !== userAtRequest) return;
+    if (res && !res.error) identifyAccess = { userId: userAtRequest, known: true, value: res.data === true };
+  }
+  renderIdentifyEntry();
+}
+
+function renderIdentifyEntry() {
+  const entry = document.getElementById("identify-entry");
+  if (entry) entry.classList.toggle("hidden", !identifyAvailable());
+}
+
+function forgetIdentifySession() {
+  closeIdentify({ forced: true });
+  identifyAccess = { userId: null, known: false, value: false };
+  renderIdentifyEntry();
+}
+
+function releaseIdentifyPhoto(j) {
+  if (j && j.previewUrl) URL.revokeObjectURL(j.previewUrl);
+  if (j) { j.previewUrl = null; j.photo = null; }
+}
+
+/* The catalogue entry for a mapped blueprint, filed under the first of its
+ * categories in display order, exactly as if it had been picked there. */
+function identifyCatalogueItem(blueprintId) {
+  const entries = globalDictionary.filter(entry => entry.blueprint_id === blueprintId);
+  if (entries.length === 0) return null;
+  const rank = category => { const i = CATEGORY_ORDER.indexOf(category); return i === -1 ? CATEGORY_ORDER.length : i; };
+  return entries.slice().sort((a, b) => rank(a.Category) - rank(b.Category))[0];
+}
+
+/* The backend has already chosen and ordered what may be offered; this only
+ * attaches WGT names. An unmapped choice keeps its place. */
+function identifyChoices(data) {
+  const raw = Array.isArray(data && data.choices) ? data.choices : [];
+  return raw.slice(0, IDENTIFY.CHOICE_LIMIT).filter(choice => choice && typeof choice === "object").map(choice => {
+    const catalogue = choice.catalogue && typeof choice.catalogue === "object" ? choice.catalogue : null;
+    const item = catalogue ? identifyCatalogueItem(Number(catalogue.blueprint_id)) : null;
+    const commonNames = Array.isArray(choice.common_names) ? choice.common_names : [];
+    return {
+      item,
+      unshown: !!catalogue && !item,          // mapped, but this device's catalogue can't show it
+      genusOnly: choice.evidence_type === "genus",
+      broad: choice.evidence_type === "genus" || (!!catalogue && catalogue.mapping_rank === "genus"),
+      botanical: String(choice.scientific_name || choice.genus || ""),
+      common: typeof commonNames[0] === "string" ? commonNames[0] : ""
+    };
+  });
+}
+
+function identifyRetryTime(iso) {
+  const at = iso ? new Date(iso) : null;
+  if (!at || isNaN(at.getTime())) return "";
+  const time = at.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  const now = new Date();
+  if (at.toDateString() === now.toDateString()) return time;
+  const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  if (at.toDateString() === tomorrow.toDateString()) return time + " tomorrow";
+  return at.toLocaleDateString("en-GB", { weekday: "long" }) + " at " + time;
+}
+
+/* ---- Server call ------------------------------------------------------------ */
+
+async function callPlantIdentification(blob) {
+  const form = new FormData();
+  form.append("image", blob, "plant.jpg");
+  try {
+    const { data, error } = await sb.functions.invoke(IDENTIFY.FUNCTION, { body: form });
+    if (!error) return { ok: true, status: 200, data: data || {} };
+    let status = 0;
+    let body = {};
+    const response = error.context;
+    if (response && typeof response.json === "function") {
+      status = response.status || 0;
+      try { body = (await response.json()) || {}; } catch (e) { /* not JSON */ }
+    }
+    return { ok: false, status, data: body };
+  } catch (e) {
+    return { ok: false, status: 0, data: {} };
+  }
+}
+
+function identifyProblemKind(res) {
+  const reason = (res.data && res.data.error) || "";
+  if (reason === "not_entitled") return "unavailable";
+  if (reason === "capability_disabled") return "paused";
+  if (reason === "user_limit") return "user_limit";
+  if (reason === "global_limit" || reason === "provider_quota") return "busy";
+  if (["invalid_image", "wrong_image_type", "image_too_large", "identifying_metadata"].indexOf(reason) !== -1) return "photo";
+  if (res.status === 0 && navigator.onLine === false) return "offline";
+  return "service";
+}
+
+/* ---- Journey ---------------------------------------------------------------- */
+
+function startIdentify() {
+  if (!identifyAvailable() || !currentGardenId) return;
+  // A picker whose cancel the browser never reported leaves "choosing"
+  // behind with nothing on screen; starting again simply replaces it.
+  if (identifyJourney && identifyJourney.step !== "choosing") return;
+  identifyJourney = {
+    token: ++identifySerial,
+    gardenId: currentGardenId,
+    userId: currentUserId,
+    step: "choosing",
+    pickerReturn: null,     // the view to restore if Try another photo is cancelled
+    photo: null,            // { main, thumb, width, height } from processItemPhoto
+    previewUrl: null,
+    result: null,
+    latencyMs: null,
+    selectedId: null,
+    addError: "",
+    problem: null,          // { kind, message?, retryAt? }
+    itemId: null,           // set once, by the one successful Add
+    itemName: "",
+    photoProblem: ""
+  };
+  openIdentifyPicker();
+}
+
+function openIdentifyPicker() {
+  // Inside the tap: the device/browser owns camera, library and file choices.
+  const input = document.getElementById("identify-input");
+  if (!input) return;
+  input.value = "";
+  input.click();
+}
+
+function identifyAnotherPhoto() {
+  const j = identifyJourney;
+  if (!j || ["preview", "result", "problem"].indexOf(j.step) === -1) return;
+  j.pickerReturn = j.step;
+  j.step = "choosing";
+  openIdentifyPicker();
+}
+
+function handleIdentifyPickerCancelled() {
+  const j = identifyJourney;
+  if (!j || j.step !== "choosing") return;
+  if (!j.pickerReturn) { identifyJourney = null; return; }   // nothing was ever shown
+  j.step = j.pickerReturn;
+  j.pickerReturn = null;
+  renderIdentify(true);
+}
+
+async function handleIdentifyFileChosen(event) {
+  const input = event.target;
+  const file = input.files && input.files[0];
+  input.value = "";
+  if (!file) { handleIdentifyPickerCancelled(); return; }
+  const j = identifyJourney;
+  if (!j || j.step !== "choosing" || j.gardenId !== currentGardenId || j.userId !== currentUserId) return;
+
+  const token = j.token = ++identifySerial;
+  releaseIdentifyPhoto(j);
+  Object.assign(j, { pickerReturn: null, result: null, latencyMs: null, selectedId: null, addError: "", problem: null });
+  j.step = "preparing";
+  openIdentifyModal();
+  renderIdentify();
+
+  let processed;
+  try {
+    processed = await processItemPhoto(file);
+  } catch (error) {
+    if (!identifyCurrent(token)) return;
+    if (!(error instanceof PhotoProblem)) console.error("Photo processing failed:", error);
+    j.step = "problem";
+    j.problem = { kind: "photo", message: photoProblemMessage(error, photoDiagnosticsWanted()) };
+    renderIdentify(true);
+    return;
+  }
+  if (!identifyCurrent(token)) return;
+  j.photo = processed;
+  j.previewUrl = URL.createObjectURL(processed.main);
+  j.step = "preview";
+  renderIdentify(true);
+}
+
+/* One press, one dispatch: the step leaves "preview" before the request is
+ * made, so a repeated tap finds nothing to do. Nothing retries by itself. */
+async function runIdentification() {
+  const j = identifyJourney;
+  if (!j || j.step !== "preview" || !j.photo) return;
+  if (navigator.onLine === false) {
+    j.step = "problem";
+    j.problem = { kind: "offline" };
+    renderIdentify(true);
+    return;
+  }
+  const token = j.token = ++identifySerial;
+  j.step = "identifying";
+  renderIdentify();
+
+  const started = Date.now();
+  const res = await callPlantIdentification(j.photo.main);
+  if (!identifyCurrent(token)) return;
+  j.latencyMs = Date.now() - started;
+
+  if (res.ok) {
+    j.result = res.data;
+    const offered = identifyChoices(res.data).filter(choice => choice.item);
+    const single = res.data.outcome === "strong" || res.data.outcome === "genus";
+    j.selectedId = single && offered.length === 1 ? offered[0].item.blueprint_id : null;
+    j.step = "result";
+    renderIdentify(true);
+    return;
+  }
+  if (res.status === 401 && await sessionHasGone(null, 401)) { await recoverFromSessionLoss(); return; }
+  if (!identifyCurrent(token)) return;
+  const kind = identifyProblemKind(res);
+  if (kind === "unavailable") {
+    identifyAccess = { userId: currentUserId, known: true, value: false };
+    renderIdentifyEntry();
+  }
+  j.step = "problem";
+  j.problem = { kind, retryAt: res.data && res.data.retry_at };
+  renderIdentify(true);
+}
+
+function selectIdentifiedItem(blueprintId) {
+  const j = identifyJourney;
+  if (!j || j.step !== "result") return;
+  const offered = identifyChoices(j.result).some(choice => choice.item && choice.item.blueprint_id === blueprintId);
+  if (!offered) return;
+  j.selectedId = blueprintId;
+  j.addError = "";
+  renderIdentify(`[data-blueprint-id="${blueprintId}"]`);
+}
+
+/* The insert is the commit point. A definite refusal can be retried; an
+ * answer that never arrived cannot be, because the item may already exist. */
+async function addIdentifiedItem() {
+  const j = identifyJourney;
+  if (!j || j.step !== "result" || j.selectedId === null || j.itemId) return;
+  const item = identifyCatalogueItem(j.selectedId);
+  if (!item || !identifyCurrent(j.token)) return;
+  if (navigator.onLine === false) {
+    j.addError = "You seem to be offline, so nothing was added. Connect and try again.";
+    renderIdentify();
+    return;
+  }
+  const referenceEl = document.getElementById("identify-reference-input");
+  const reference = referenceEl ? referenceEl.value.trim() : "";
+  const token = j.token = ++identifySerial;
+  const journey = j;
+  j.step = "adding";
+  j.addError = "";
+  j.itemName = item.Suggested_Name;
+  renderIdentify();
+
+  let data = null;
+  let error = null;
+  try {
+    ({ data, error } = await sb.from("garden_item").insert({
+      garden_id: j.gardenId,
+      blueprint_id: item.blueprint_id,
+      friendly_name: reference.length > 0 ? reference : null,
+      legacy_category: item.Category
+    }).select("id").single());
+  } catch (e) {
+    error = e;
+  }
+
+  if (!identifyCurrent(token)) {
+    // Only a forced close (garden switch) can get here mid-insert. The item
+    // still exists in the garden it was added to, and the person is told so.
+    if (!error && data && currentUserId === journey.userId) {
+      const garden = gardens.find(g => g.id === journey.gardenId);
+      showToast(item.Suggested_Name + " was added to " + (garden ? garden.name : "your other garden") + ".", false);
+    }
+    return;
+  }
+  if (error) {
+    console.error("Add identified item error:", error);
+    if (await sessionHasGone(error, 0)) { await recoverFromSessionLoss(); return; }
+    if (!identifyCurrent(token)) return;
+    if (!error.code) {
+      j.step = "uncertain";
+      renderIdentify(true);
+      loadInventory();
+      return;
+    }
+    const full = String(error.message || "").indexOf("maximum of") !== -1;
+    j.step = "result";
+    j.addError = full
+      ? "This garden is full, so another item can’t be added."
+      : item.Suggested_Name + " couldn’t be added. Please try again.";
+    renderIdentify(true);
+    return;
+  }
+
+  j.itemId = Number(data && data.id);
+  loadInventory();
+  loadToday();
+  if (j.itemId && photoEntitled()) { attachIdentifiedPhoto(); return; }
+  finishIdentify(j.itemName + " added to My Garden.");
+}
+
+/* Item first, photo second: the same processed image, never a second Add. */
+async function attachIdentifiedPhoto() {
+  const j = identifyJourney;
+  if (!j || !j.itemId || !j.photo || (j.step !== "adding" && j.step !== "photo_failed")) return;
+  const token = j.token = ++identifySerial;
+  const gardenId = j.gardenId;
+  const itemId = j.itemId;
+  const userAtStart = j.userId;
+  const stillHere = () => currentGardenId === gardenId && currentUserId === userAtStart;
+  j.step = "attaching";
+  j.photoProblem = "";
+  renderIdentify();
+
+  // Carried through even if the sheet is closed, like an item-detail save;
+  // only a garden switch or sign-out abandons it.
+  const res = await uploadItemPhoto(itemId, j.photo, null, stillHere);
+  if (res.abandoned) return;
+  if (res.ok) {
+    recordSavedPhoto(gardenId, itemId, res.photo, null);
+    if (inventoryLoadedFor === gardenId) renderGroupedInventory();
+    ensurePhotoUrls(gardenId, [itemId], false).then(signed => { if (signed && stillHere()) rerenderPhotoSurfaces(); });
+    if (identifyCurrent(token)) finishIdentify(j.itemName + " added to My Garden with its photo.");
+    return;
+  }
+  if (res.status === 401 && await sessionHasGone(null, 401)) { await recoverFromSessionLoss(); return; }
+  if (!identifyCurrent(token)) return;
+  j.step = "photo_failed";
+  j.photoProblem = res.reason || "";
+  renderIdentify(true);
+}
+
+function identifyPhotoRetryable(reason) {
+  return ["not_entitled", "account_ceiling", "item_unavailable", "item_removed", "photo_exists"].indexOf(reason) === -1;
+}
+
+function finishIdentify(message) {
+  closeIdentify({ finished: true });
+  showToast(message, false);
+}
+
+/* Every way out. Before Add nothing exists to mention; after Add the person
+ * is told the item is there. A forced close (garden switch, sign-out) never
+ * waits; an ordinary close waits for an Add in flight to answer. */
+function closeIdentify(options = {}) {
+  const j = identifyJourney;
+  if (j && j.step === "adding" && !options.forced && !options.finished) return;
+  identifyJourney = null;
+  identifySerial += 1;
+  const reference = document.getElementById("identify-reference-input");
+  if (reference) reference.value = "";
+  hideAccessibleModal("identify-modal", !options.forced);
+  if (!j) return;
+  releaseIdentifyPhoto(j);
+  if (!j.itemId || options.finished) return;
+  if (options.forced) {
+    if (options.gardenSwitch) {
+      const garden = gardens.find(g => g.id === j.gardenId);
+      showToast(j.itemName + " was added to " + (garden ? garden.name : "your other garden") + ".", false);
+    }
+    return;
+  }
+  showToast(j.step === "attaching"
+    ? j.itemName + " added to My Garden. Its photo is still saving."
+    : j.itemName + " added to My Garden" + (j.step === "photo_failed" ? " without its photo." : "."), false);
+}
+
+function identifySearchInstead() {
+  closeIdentify();
+  const search = document.getElementById("pill-search");
+  if (search) {
+    search.focus();
+    if (search.scrollIntoView) search.scrollIntoView({ block: "center" });
+  }
+}
+
+function identifyCheckGarden() {
+  closeIdentify();
+  const inventory = document.getElementById("garden-inventory-title");
+  if (inventory && inventory.scrollIntoView) inventory.scrollIntoView({ block: "start" });
+}
+
+function openIdentifyModal() {
+  const modal = document.getElementById("identify-modal");
+  if (!modal || !modal.classList.contains("hidden")) return;
+  showAccessibleModal("identify-modal", "close-identify-modal");
+  const trigger = document.getElementById("identify-btn");
+  if (trigger) modalFocusReturn.set("identify-modal", trigger);
+}
+
+function handleIdentifyModalClick(event) {
+  const modal = document.getElementById("identify-modal");
+  if (event.target === modal || event.target.closest("#close-identify-modal")) { closeIdentify(); return; }
+  const control = event.target.closest("[data-identify-action]");
+  if (!control || control.disabled) return;
+  const action = control.dataset.identifyAction;
+  // A tap on the sheet means the picker has gone, whether or not the browser
+  // reported its cancel; restore the view it was opened from.
+  if (identifyJourney && identifyJourney.step === "choosing" && identifyJourney.pickerReturn) {
+    identifyJourney.step = identifyJourney.pickerReturn;
+    identifyJourney.pickerReturn = null;
+  }
+  if (action === "identify") runIdentification();
+  else if (action === "retry") {
+    const j = identifyJourney;
+    if (j && j.step === "problem" && j.photo) { j.step = "preview"; runIdentification(); }
+  }
+  else if (action === "another") identifyAnotherPhoto();
+  else if (action === "select") selectIdentifiedItem(Number(control.dataset.blueprintId));
+  else if (action === "add") addIdentifiedItem();
+  else if (action === "retry-photo") attachIdentifiedPhoto();
+  else if (action === "search") identifySearchInstead();
+  else if (action === "check-garden") identifyCheckGarden();
+  else if (action === "cancel" || action === "done") closeIdentify();
+}
+
+/* ---- Presentation ------------------------------------------------------------- */
+
+function identifyLead(heading, note) {
+  return `<p class="identify-lead">${heading}</p>` + (note ? `<p class="identify-note">${note}</p>` : "");
+}
+
+function identifyBotanicalLine(choice) {
+  const parts = [];
+  if (choice.botanical) parts.push(`<i>${escapeHtml(choice.botanical)}</i>`);
+  if (choice.common && choice.item) parts.push(escapeHtml(choice.common));
+  if (choice.genusOnly) parts.push("exact type unclear");
+  return parts.join(" · ");
+}
+
+function identifyChoiceMarkup(choice, selectedId, eyebrow) {
+  const line = identifyBotanicalLine(choice);
+  if (choice.item) {
+    const selected = choice.item.blueprint_id === selectedId;
+    return `<button type="button" class="identify-choice${selected ? " selected" : ""}" data-identify-action="select"
+        data-blueprint-id="${Number(choice.item.blueprint_id)}" aria-pressed="${selected}">
+      ${eyebrow ? `<span class="identify-choice-eyebrow">${eyebrow}</span>` : ""}
+      <span class="identify-choice-name">${escapeHtml(choice.item.Suggested_Name)}</span>
+      ${line ? `<span class="identify-choice-latin">${line}</span>` : ""}
+      ${selected ? `<span class="identify-choice-selected" aria-hidden="true">✓ Selected</span>` : ""}
+    </button>`;
+  }
+  const name = choice.common || choice.botanical;
+  const note = choice.unshown ? "Can’t be shown just now. Try searching for it." : "Not in WGT yet";
+  return `<div class="identify-choice is-unavailable">
+      ${eyebrow ? `<span class="identify-choice-eyebrow">${eyebrow}</span>` : ""}
+      <span class="identify-choice-name">${escapeHtml(name)}</span>
+      ${choice.common && choice.botanical ? `<span class="identify-choice-latin"><i>${escapeHtml(choice.botanical)}</i></span>` : ""}
+      <span class="identify-choice-note">${note}</span>
+    </div>`;
+}
+
+function identifyResultMarkup(j) {
+  const data = j.result || {};
+  const outcome = data.outcome;
+  const choices = identifyChoices(data);
+  if (choices.length === 0) {
+    return outcome === "not_identified"
+      ? identifyLead("No plant could be identified in this photo.", IDENTIFY.PHOTO_TIP)
+      : identifyLead("The plant couldn’t be identified clearly from this photo.", IDENTIFY.PHOTO_TIP);
+  }
+  if (outcome === "ambiguous") {
+    const any = choices.some(choice => choice.item);
+    return identifyLead(choices.length > 1 ? "It could be one of these." : "It might be this.",
+        any ? "Choose the one that matches, or search if none of them do." : "None of these are in WGT yet. Search below if it might be something else.") +
+      `<div class="identify-choices">${choices.map(choice => identifyChoiceMarkup(choice, j.selectedId, "")).join("")}</div>`;
+  }
+  const choice = choices[0];
+  const eyebrow = choice.broad ? "This looks like a kind of" : "This looks like";
+  let note = "";
+  if (!choice.item && choice.genusOnly) {
+    note = "The exact plant isn’t clear from this photo, so it can’t be matched to an item in WGT. Search for it, or try a closer photo.";
+  } else if (!choice.item && !choice.unshown) {
+    note = "That plant isn’t in WGT yet, so it can’t be added. Search if you think it’s something else.";
+  } else if (choice.item && choice.broad) {
+    note = "WGT’s advice for " + escapeHtml(choice.item.Suggested_Name) + " suits this whole group of plants.";
+  }
+  return `<div class="identify-choices">${identifyChoiceMarkup(choice, j.selectedId, eyebrow)}</div>` +
+    (note ? `<p class="identify-note">${note}</p>` : "");
+}
+
+function identifyProblemMarkup(problem) {
+  const when = identifyRetryTime(problem.retryAt);
+  switch (problem.kind) {
+    case "photo": return identifyLead(escapeHtml(problem.message || "That photo couldn’t be used. Try another photo."), "");
+    case "offline": return identifyLead("You seem to be offline.", "Nothing has been sent. Connect and try again.");
+    case "user_limit": return identifyLead("You’ve used all your photo identifications for now.",
+      (when ? "You can identify another plant after " + escapeHtml(when) + ". " : "") + "You can still search for the plant.");
+    case "busy": return identifyLead("Photo identification is busy today.",
+      (when ? "Try again after " + escapeHtml(when) + ". " : "") + "You can still search for the plant.");
+    case "paused": return identifyLead("Photo identification is paused just now.", "You can still search for the plant.");
+    case "unavailable": return identifyLead("Photo identification isn’t available on this account.", "You can still search for the plant.");
+    default: return identifyLead("The photo couldn’t be identified just now.",
+      "Trying again counts as another identification. You can also search for the plant.");
+  }
+}
+
+function identifyPhotoFailedNote(reason) {
+  if (reason === "not_entitled") return "Photos can’t be added on this account.";
+  if (reason === "account_ceiling") return "This account has reached its photo limit.";
+  if (reason === "item_unavailable" || reason === "item_removed") return "That item is no longer in this garden.";
+  if (reason === "photo_exists") return "It already has a photo.";
+  return "Check your connection and retry, or add a photo later from the item in My Garden.";
+}
+
+/* DEV-only evaluation evidence for the issue #41 real-photo calibration.
+ * Never on the public addresses, which is why raw scores may appear. */
+function identifyDiagnosticsMarkup(j) {
+  if (!photoDiagnosticsWanted() || !j.result) return "";
+  const d = j.result;
+  const row = entry => {
+    const name = escapeHtml(entry.scientific_name || entry.genus || "?");
+    const score = typeof entry.score === "number" ? entry.score.toFixed(3) : "?";
+    const map = entry.catalogue ? " → " + escapeHtml(String(entry.catalogue.mapping_rank)) + " #" + Number(entry.catalogue.blueprint_id) : "";
+    return `<li>${name} ${score}${map}</li>`;
+  };
+  const list = rows => Array.isArray(rows) && rows.length ? `<ol>${rows.map(row).join("")}</ol>` : "<p>None</p>";
+  const usage = d.usage || {};
+  const left = value => value === undefined || value === null ? "?" : escapeHtml(String(value));
+  const photo = j.photo ? `${j.photo.width}×${j.photo.height}, ${j.photo.main.size} bytes` : "";
+  return `<details class="identify-diagnostics"><summary>Evaluation details (DEV only)</summary>
+    <p>Outcome ${escapeHtml(String(d.outcome || ""))}${d.reason ? " (" + escapeHtml(String(d.reason)) + ")" : ""}
+      · model ${escapeHtml(String(d.provider_version || "unknown"))} · ${Number(j.latencyMs) || 0} ms
+      · left ${left(usage.user_remaining)} you / ${left(usage.global_remaining)} all
+      · photo ${escapeHtml(photo)}</p>
+    <p>Species</p>${list(d.candidates)}<p>Genus</p>${list(d.genus_evidence)}</details>`;
+}
+
+function identifyBodyMarkup(j, view) {
+  const name = escapeHtml(j.itemName);
+  switch (view) {
+    case "preparing": return identifyLead("Preparing photo…", "");
+    case "preview": return identifyLead("Check the photo shows the plant clearly.",
+      "Identify sends this photo to Pl@ntNet, which suggests what the plant might be. " + IDENTIFY.PHOTO_TIP);
+    case "identifying": return identifyLead("Identifying the plant…", "");
+    case "result": return identifyResultMarkup(j) + identifyDiagnosticsMarkup(j);
+    case "adding": return identifyLead("Adding " + name + "…", "");
+    case "attaching": return identifyLead(name + " is in My Garden.", "Saving its photo…");
+    case "photo_failed": return identifyLead(name + " is in My Garden, but its photo wasn’t saved.",
+      identifyPhotoFailedNote(j.photoProblem));
+    case "uncertain": return identifyLead("It isn’t clear whether " + name + " was added.",
+      "Check My Garden before adding it again, so it isn’t added twice.");
+    case "problem": return identifyProblemMarkup(j.problem || {});
+    default: return "";
+  }
+}
+
+function identifyActionsMarkup(j, view, selected) {
+  const b = (action, label, kind, disabled) =>
+    `<button type="button" class="${kind}" data-identify-action="${action}"${disabled ? " disabled" : ""}>${label}</button>`;
+  const cancel = b("cancel", "Cancel", "photo-text-btn");
+  const search = kind => b("search", "Search instead", kind);
+  switch (view) {
+    case "preparing":
+    case "identifying": return cancel;
+    case "preview": return b("identify", "Identify", "primary-action-btn") + b("another", "Try another photo", "secondary-action-btn") + cancel;
+    case "result": return (selected ? b("add", "Add to My Garden", "primary-action-btn") : "") +
+      b("another", "Try another photo", selected ? "secondary-action-btn" : "primary-action-btn") + search("photo-text-btn") + cancel;
+    case "adding": return b("add", "Adding…", "primary-action-btn", true);
+    case "attaching": return "";
+    case "photo_failed": return (identifyPhotoRetryable(j.photoProblem) ? b("retry-photo", "Retry photo", "primary-action-btn") : "") +
+      b("done", "Done", identifyPhotoRetryable(j.photoProblem) ? "secondary-action-btn" : "primary-action-btn");
+    case "uncertain": return b("check-garden", "Check My Garden", "primary-action-btn");
+    case "problem": {
+      const kind = (j.problem || {}).kind;
+      if (kind === "photo") return b("another", "Try another photo", "primary-action-btn") + search("secondary-action-btn") + cancel;
+      if (kind === "offline" || kind === "service") return b("retry", "Try again", "primary-action-btn") + search("secondary-action-btn") + cancel;
+      return search("primary-action-btn") + cancel;
+    }
+    default: return "";
+  }
+}
+
+function renderIdentify(focus = false) {
+  const j = identifyJourney;
+  if (!j) return;
+  const view = j.step === "choosing" && j.pickerReturn ? j.pickerReturn : j.step;
+  const modal = document.getElementById("identify-modal");
+
+  const photoEl = document.getElementById("identify-photo");
+  const showPhoto = !!j.previewUrl && ["preview", "identifying", "result"].indexOf(view) !== -1;
+  photoEl.innerHTML = showPhoto ? `<img class="identify-preview" src="${escapeHtml(j.previewUrl)}" alt="The photo to identify">` : "";
+  photoEl.classList.toggle("hidden", !showPhoto);
+  photoEl.classList.toggle("is-compact", view === "result");
+
+  document.getElementById("identify-body").innerHTML = identifyBodyMarkup(j, view);
+
+  const selected = view === "result" && j.selectedId !== null;
+  document.getElementById("identify-reference").classList.toggle("hidden", !selected);
+  const errorEl = document.getElementById("identify-error");
+  const errorText = view === "result" ? j.addError : "";
+  errorEl.textContent = errorText;
+  errorEl.classList.toggle("hidden", !errorText);
+
+  const actions = document.getElementById("identify-actions");
+  actions.innerHTML = identifyActionsMarkup(j, view, selected);
+  actions.classList.toggle("hidden", actions.innerHTML === "");
+
+  if (focus) {
+    requestAnimationFrame(() => {
+      const target = (typeof focus === "string" && modal && modal.querySelector(focus)) ||
+        actions.querySelector("button:not([disabled])") || document.getElementById("close-identify-modal");
+      if (target && document.contains(target)) target.focus();
+    });
+  }
 }
 
 
@@ -4346,6 +5023,7 @@ function closeSettingsModal(restoreFocus = true) {
 }
 
 function closeAllModals() {
+  closeIdentify({ forced: true });
   closePhotoViewer(false);
   closePhotoRemoveModal(false);
   closeItemDetail(false);
@@ -4589,7 +5267,7 @@ document.addEventListener("DOMContentLoaded", () => {
     gardenModal.addEventListener("click", (e) => { if (e.target === gardenModal) closeGardenModal(); });
   }
   ["garden-modal", "settings-modal", "garden-danger-modal", "delete-account-modal", "feedback-modal",
-   "item-detail-modal", "photo-remove-modal", "photo-viewer"]
+   "item-detail-modal", "photo-remove-modal", "photo-viewer", "identify-modal"]
     .forEach(id => {
       const modal = document.getElementById(id);
       if (modal) modal.addEventListener("keydown", handleAccessibleModalKeydown);
@@ -4654,6 +5332,16 @@ document.addEventListener("DOMContentLoaded", () => {
     photoInput.addEventListener("change", handlePhotoFileChosen);
     photoInput.addEventListener("cancel", handlePhotoPickerCancelled);
   }
+  // --- RM-015 identify from photo ---
+  const identifyBtn = document.getElementById("identify-btn");
+  if (identifyBtn) identifyBtn.addEventListener("click", startIdentify);
+  const identifyInput = document.getElementById("identify-input");
+  if (identifyInput) {
+    identifyInput.addEventListener("change", handleIdentifyFileChosen);
+    identifyInput.addEventListener("cancel", handleIdentifyPickerCancelled);
+  }
+  const identifyModal = document.getElementById("identify-modal");
+  if (identifyModal) identifyModal.addEventListener("click", handleIdentifyModalClick);
   const photoRemoveModal = document.getElementById("photo-remove-modal");
   if (photoRemoveModal) {
     photoRemoveModal.addEventListener("click", event => {

@@ -2268,6 +2268,66 @@ h1, h2, h3, h4,
 .photo-text-btn { color: var(--ink-blue); }
 .photo-file-input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 
+/* --- RM-015 IDENTIFY FROM PHOTO: entry in Add, and its one sheet --- */
+.identify-entry { position: relative; margin: 0 0 22px; }
+.identify-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 52px;
+}
+.identify-btn-icon { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
+.identify-photo { margin: 0 0 14px; }
+.identify-preview { display: block; width: 100%; max-height: 46dvh; object-fit: contain; border-radius: 14px; background: #E3E9E3; }
+.identify-photo.is-compact .identify-preview { max-height: 22dvh; }
+.identify-lead { margin: 0 0 6px; color: var(--ink-blue); font: 700 18px/1.3 var(--font-body); }
+.identify-note { margin: 0 0 12px; color: var(--text-main); font: 400 16px/1.4 var(--font-body); }
+.identify-choices { display: flex; flex-direction: column; gap: 10px; margin: 4px 0 12px; }
+.identify-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  min-height: 56px;
+  padding: 12px 14px;
+  border: 1.5px solid rgba(7, 63, 53, 0.18);
+  border-radius: 14px;
+  background: var(--bg-card);
+  color: var(--ink-blue);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+.identify-choice.selected { border-color: var(--action-green); background: var(--brand-light); box-shadow: inset 0 0 0 1px var(--action-green); }
+.identify-choice.is-unavailable { cursor: default; border-style: dashed; background: transparent; }
+.identify-choice:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px; }
+.identify-choice-eyebrow { font: 500 14px/1.3 var(--font-body); }
+.identify-choice-name { font: 700 18px/1.25 var(--font-body); overflow-wrap: anywhere; }
+.identify-choice-latin { font: 400 15px/1.35 var(--font-body); overflow-wrap: anywhere; }
+.identify-choice-note,
+.identify-choice-selected { margin-top: 4px; font: 600 14px/1.3 var(--font-body); }
+.identify-choice-selected { color: var(--ink-blue); }
+.identify-reference .garden-field-title { margin-top: 4px; }
+.identify-actions { margin-top: 8px; }
+.identify-credit { margin: 16px 0 0; color: var(--text-main); font: 400 14px/1.3 var(--font-body); text-align: center; }
+.identify-credit a { color: var(--ink-blue); }
+.identify-diagnostics {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px dashed var(--border-color);
+  border-radius: 10px;
+  color: var(--text-main);
+  font: 400 13px/1.4 ui-monospace, Menlo, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+.identify-diagnostics summary { min-height: 32px; cursor: pointer; }
+.identify-diagnostics p,
+.identify-diagnostics ol { margin: 4px 0; }
+
 .photo-viewer {
   position: fixed;
   inset: 0;
