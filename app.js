@@ -89,7 +89,7 @@ const sb = configLooksValid ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : nu
  * from. It must match CACHE_NAME in sw.js, and both must be bumped in the same
  * commit — a report labelled with a version that was never deployed is worse
  * than no label at all. */
-const APP_VERSION = "gardening-v56-identify-photo";
+const APP_VERSION = "gardening-v62-jobs-closeout";
 
 /* ---- Small helpers ------------------------------------------------------- */
 
@@ -196,7 +196,7 @@ let selectedTimeMinutes = null; // null = Any
 let todayRequestSerial = 0;
 let todayLoadingTimer = null;
 let expandedTaskId = null;
-let todayHeroTaskId = null;
+let todayHeroKey = null;      // "generated:<id>" | "custom:<id>"
 
 // --- ONE DAILY CALL AT A TIME ---
 // `today` is the only call that can cost money: a cache miss inside it spends
@@ -259,6 +259,18 @@ let gardenAddResetTimer = null;
 let removeItemState = null;
 let removeItemReturnFocus = null;
 const modalFocusReturn = new Map();
+
+// --- RM-025 YOUR JOBS ---
+// Reads stay available after entitlement expires. The browser copy controls
+// discovery only; every write is still decided by the trusted RPC.
+let customJobEntitlement = { userId: null, known: false, value: false };
+let customJobs = [];
+let customJobsLoadedFor = null;
+let customJobsRequestSerial = 0;
+let customJobJourneySerial = 0;
+let customJobDetail = null;       // { jobId, gardenId, parentModalId }
+let customJobJourney = null;      // create | edit | reschedule
+let customJobDeleteState = null;
 
 
 /* ==========================================================================
@@ -549,6 +561,11 @@ function closeModalFromKeyboard(modalId) {
   if (modalId === "photo-remove-modal") closePhotoRemoveModal();
   if (modalId === "photo-viewer") closePhotoViewer();
   if (modalId === "identify-modal") closeIdentify();
+  if (modalId === "your-jobs-modal") closeYourJobs();
+  if (modalId === "job-detail-modal") closeCustomJobDetail();
+  if (modalId === "job-editor-modal") closeCustomJobEditor();
+  if (modalId === "job-delete-modal") closeCustomJobDelete();
+  if (modalId === "job-premium-modal") closeCustomJobPremium();
 }
 
 function handleAccessibleModalKeydown(event) {
@@ -590,6 +607,7 @@ async function route() {
     closeAllModals();
     forgetPhotoSession();
     forgetIdentifySession();
+    forgetCustomJobSession();
     showSigninDefault(callbackError || "");
     showView("signin");
     requestAnimationFrame(() => document.getElementById("signin-title").focus());
@@ -845,7 +863,7 @@ function resetPerGardenUiState() {
   todayTasks = [];
   todayLoadedFor = null;
   expandedTaskId = null;
-  todayHeroTaskId = null;
+  todayHeroKey = null;
   const taskStatus = document.getElementById("task-status");
   if (taskStatus) {
     taskStatus.textContent = "";
@@ -879,6 +897,7 @@ function resetPerGardenUiState() {
   clearPillSearch();
   resetItemPhotoState();
   closeIdentify({ forced: true, gardenSwitch: true });
+  resetCustomJobState();
 }
 
 /* Called when the server tells us we can no longer see the garden we are in —
@@ -1860,10 +1879,11 @@ async function loadToday() {
     }
 
     renderWeather(data && data.weather);
-    todayTasks = (data && Array.isArray(data.tasks)) ? data.tasks : [];
-    todayHeroTaskId = resolveDailyHeroTaskId(todayTasks);
+    todayTasks = todayItemsFromPayload(data);
+    todayHeroKey = resolveDailyHeroKey(todayTasks);
     todayLoadedFor = gardenAtRequest;
     renderCurrentTaskList();
+    refreshTodayJobPhotos(gardenAtRequest);
   } catch (err) {
     if (requestSerial !== todayRequestSerial || gardenAtRequest !== currentGardenId) return;
     console.error("Today failed:", err);
@@ -1920,9 +1940,49 @@ function renderWeather(weather) {
   }
 }
 
+/* --- One Today stream, two sources (RM-025) ---------------------------------
+ * The `today` function returns `items`: WGT's generated tasks and the
+ * gardener's own Custom Jobs, already interleaved on the server. Each carries
+ * its real identity (task_id or custom_job_id) and a collision-safe display
+ * key, "generated:<id>" or "custom:<id>". The browser never re-ranks the
+ * stream; it only applies the available-time filter and picks the one hero.
+ *
+ * An older `today` deployment returns `tasks` alone. That payload is read as a
+ * generated-only stream, so the app keeps working while the two halves of a
+ * release are deployed separately. */
+function generatedTaskKey(taskId) {
+  return "generated:" + Number(taskId);
+}
+
+function isCustomTodayItem(item) {
+  return !!item && item.source === "custom";
+}
+
+function todayItemKey(item) {
+  if (!item) return "";
+  if (typeof item.key === "string" && item.key) return item.key;
+  return isCustomTodayItem(item) ? "custom:" + item.custom_job_id : generatedTaskKey(item.task_id);
+}
+
+function todayItemsFromPayload(data) {
+  if (data && Array.isArray(data.items)) return data.items;
+  const tasks = data && Array.isArray(data.tasks) ? data.tasks : [];
+  return tasks.map(task => Object.assign({}, task, { source: "generated", key: generatedTaskKey(task.task_id) }));
+}
+
 function taskMinutes(task) {
   const minutes = Number(task && task.estimated_minutes);
   return Number.isFinite(minutes) && minutes > 0 ? minutes : Number.POSITIVE_INFINITY;
+}
+
+/* THE ONE AVAILABLE-TIME RULE, for both sources (RM-023). A job with no
+ * estimate is eligible under every choice: "we don't know how long" is not
+ * "too long", and treating it as infinite used to hide it silently. A known
+ * estimate fits when it is at most the chosen maximum. */
+function fitsAvailableTime(item, maximumMinutes) {
+  if (maximumMinutes === null) return true;
+  const minutes = taskMinutes(item);
+  return !Number.isFinite(minutes) || minutes <= maximumMinutes;
 }
 
 function formatTaskDuration(task) {
@@ -1937,25 +1997,39 @@ function formatTaskDuration(task) {
   return hours + " hr " + (minutes % 60) + " min";
 }
 
-/* The server's category-first order remains authoritative for the normal
- * list. The one display exception is the hero: choose the shortest eligible
- * job. Equal durations retain returned order; task_id is the final stable
- * fallback if future transforms ever introduce duplicate positions. */
-function orderTasksForDisplay(tasks, maximumMinutes, fixedHeroTaskId) {
+/* "A good place to start". Generated tasks are candidates exactly as before.
+ * A Custom Job is a candidate only with a known estimate and while current —
+ * an outstanding job is not offered as the easy start. */
+function heroCandidate(item) {
+  if (!isCustomTodayItem(item)) return true;
+  return item.schedule_state === "current" && Number.isFinite(taskMinutes(item));
+}
+
+/* Shortest candidate wins. On an equal duration a generated task wins, so a
+ * Custom Job becomes the hero only when it is genuinely shorter than every
+ * generated candidate, or when there is none; being custom earns nothing.
+ * Stream order then settles any remaining tie. */
+function compareHeroCandidates(a, b) {
+  const minutesA = taskMinutes(a.task);
+  const minutesB = taskMinutes(b.task);
+  if (minutesA !== minutesB) return minutesA < minutesB ? -1 : 1;
+  const customA = isCustomTodayItem(a.task) ? 1 : 0;
+  const customB = isCustomTodayItem(b.task) ? 1 : 0;
+  return customA - customB || a.index - b.index;
+}
+
+/* The server's stream order remains authoritative for the normal list. The
+ * one display exception is the hero, lifted to the top. With no fixed hero
+ * the shortest candidate is chosen; with one, only that item can be hero. */
+function orderTasksForDisplay(tasks, maximumMinutes, fixedHeroKey) {
   const indexed = (tasks || []).map((task, index) => ({ task, index }));
-  const eligible = maximumMinutes === null
-    ? indexed
-    : indexed.filter(entry => taskMinutes(entry.task) <= maximumMinutes);
+  const eligible = indexed.filter(entry => fitsAvailableTime(entry.task, maximumMinutes));
 
   if (eligible.length === 0) return { hero: null, remaining: [], eligible: [] };
 
-  const heroEntry = fixedHeroTaskId === undefined
-    ? eligible.slice().sort((a, b) =>
-        taskMinutes(a.task) - taskMinutes(b.task) ||
-        a.index - b.index ||
-        Number(a.task.task_id || 0) - Number(b.task.task_id || 0)
-      )[0]
-    : eligible.find(entry => Number(entry.task.task_id) === Number(fixedHeroTaskId)) || null;
+  const heroEntry = fixedHeroKey === undefined
+    ? eligible.filter(entry => heroCandidate(entry.task)).sort(compareHeroCandidates)[0] || null
+    : eligible.find(entry => todayItemKey(entry.task) === fixedHeroKey) || null;
 
   return {
     hero: heroEntry ? heroEntry.task : null,
@@ -1964,19 +2038,27 @@ function orderTasksForDisplay(tasks, maximumMinutes, fixedHeroTaskId) {
   };
 }
 
-function resolveDailyHeroTaskId(tasks) {
+/* Records written before RM-025 hold a numeric taskId; they still name the
+ * same generated task, so the day's hero survives the upgrade. */
+function dailyHeroRecordKey(record) {
+  if (!record) return null;
+  if (typeof record.key === "string" && record.key) return record.key;
+  return Number.isFinite(Number(record.taskId)) && record.taskId !== null
+    ? generatedTaskKey(record.taskId) : null;
+}
+
+function resolveDailyHeroKey(tasks) {
   const slot = dailyHeroStorageSlot();
   const day = gardenCalendarDay();
   const existing = readDailyHeroRecord(slot);
-  if (existing && existing.day === day && Number.isFinite(Number(existing.taskId))) {
-    return Number(existing.taskId);
-  }
+  const existingKey = existing && existing.day === day ? dailyHeroRecordKey(existing) : null;
+  if (existingKey) return existingKey;
 
   const ordered = orderTasksForDisplay(tasks, null);
   if (!ordered.hero) return null;
-  const taskId = Number(ordered.hero.task_id);
-  writeDailyHeroRecord(slot, { day, taskId });
-  return taskId;
+  const key = todayItemKey(ordered.hero);
+  writeDailyHeroRecord(slot, { day, key });
+  return key;
 }
 
 const TASK_ART = {
@@ -2095,6 +2177,7 @@ function renderNoTimeFitState() {
 }
 
 function taskCardMarkup(task, hero) {
+  if (isCustomTodayItem(task)) return customJobCardMarkup(task, hero);
   const taskId = Number(task.task_id);
   const title = escapeHtml(task.name);
   const category = escapeHtml(task.category || "Garden task");
@@ -2147,19 +2230,60 @@ function taskCardMarkup(task, hero) {
     </article>`;
 }
 
+/* A Custom Job on Today: the same card grammar, with one quiet provenance
+ * line — "Your job" — and nothing generated-only. There is no "What to do"
+ * guidance to disclose and no Hide (hiding is a WGT recommendation
+ * preference); the card opens the Your jobs detail sheet instead, which owns
+ * Done, Do later, Edit and Delete. The tick completes it through the RM-025
+ * lifecycle, never as an authored task.
+ *
+ * The art is always the ordinary fallback illustration. A job has no category,
+ * and its own words are never read for meaning. */
+function customJobCardMarkup(job, hero) {
+  const jobId = escapeHtml(job.custom_job_id);
+  const domId = String(job.custom_job_id).replace(/[^A-Za-z0-9_-]/g, "");
+  const title = escapeHtml(job.name);
+  const titleId = "job-title-" + domId;
+  const priority = hero ? '<p class="task-priority-label">A good place to start</p>' : "";
+  const summary = hero
+    ? '<p class="task-summary">The shortest job in today’s list — a straightforward way to get going.</p>'
+    : "";
+  const outstanding = job.schedule_state === "outstanding" ? " · Still to do" : "";
+  const art = todayJobArt(job.custom_job_id);
+
+  return `
+    <article class="task-card custom-job-card${hero ? " hero" : ""}" aria-labelledby="${titleId}">
+      <button class="task-disclosure" type="button" data-job-id="${jobId}" aria-haspopup="dialog" aria-label="Open ${title}, your job">
+        <span class="sr-only">Open job details</span>
+      </button>
+      <div class="task-disclosure-visual">
+        <img class="${art.className}" src="${escapeHtml(art.src)}" alt="" data-job-art="${jobId}">
+        <span class="task-info">
+          ${priority}
+          <h3 id="${titleId}">${title}<svg class="task-title-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3.5 4.5 4.5L6 12.5"/></svg></h3>
+          ${summary}
+          <span class="task-meta"><span class="task-provenance">Your job${outstanding}</span><span class="task-duration"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5"/><path d="M10 5.8v4.5l3 1.8"/></svg>${escapeHtml(formatTaskDuration(job))}</span></span>
+        </span>
+      </div>
+      <button class="task-action-btn task-check" type="button" data-job-id="${jobId}" aria-label="Mark ${title}, your job, as done">
+        <svg viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="14.5"/><path class="task-tick" d="m11.5 18.3 4.2 4.2 8.8-9"/></svg>
+      </button>
+    </article>`;
+}
+
 /* Completion and Hide are local operations, so their visible result must also
  * live in the local task model. Removing only the card element lets any later
  * render (for example, expanding the next card) resurrect stale content. */
-function removeTodayTaskFromClient(taskId) {
-  const index = todayTasks.findIndex(task => Number(task.task_id) === Number(taskId));
+function removeTodayTaskFromClient(key) {
+  const index = todayTasks.findIndex(task => todayItemKey(task) === key);
   if (index < 0) return { task: null, index: -1 };
   const [task] = todayTasks.splice(index, 1);
-  if (expandedTaskId === Number(taskId)) expandedTaskId = null;
+  if (!isCustomTodayItem(task) && expandedTaskId === Number(task.task_id)) expandedTaskId = null;
   return { task, index };
 }
 
 function restoreTodayTaskToClient(task, index) {
-  if (!task || todayTasks.some(item => Number(item.task_id) === Number(task.task_id))) return;
+  if (!task || todayTasks.some(item => todayItemKey(item) === todayItemKey(task))) return;
   const insertionIndex = Number.isInteger(index)
     ? Math.max(0, Math.min(index, todayTasks.length))
     : todayTasks.length;
@@ -2319,7 +2443,7 @@ function renderCurrentTaskList(options) {
     return;
   }
 
-  const ordered = orderTasksForDisplay(todayTasks, selectedTimeMinutes, todayHeroTaskId);
+  const ordered = orderTasksForDisplay(todayTasks, selectedTimeMinutes, todayHeroKey);
   if (ordered.eligible.length === 0) {
     renderNoTimeFitState();
     return;
@@ -2328,10 +2452,12 @@ function renderCurrentTaskList(options) {
   taskContainer.dataset.empty = "false";
 
   (ordered.hero ? [ordered.hero] : []).concat(ordered.remaining).forEach(task => {
-    const isHero = !!ordered.hero && Number(task.task_id) === Number(ordered.hero.task_id);
+    const isHero = task === ordered.hero;
+    const custom = isCustomTodayItem(task);
     const wrapper = document.createElement("div");
-    wrapper.className = "task-card-wrapper" + (isHero ? " hero-wrapper" : "");
-    wrapper.dataset.taskId = String(task.task_id);
+    wrapper.className = "task-card-wrapper" + (custom ? " custom-job-wrapper" : "") + (isHero ? " hero-wrapper" : "");
+    wrapper.dataset.key = todayItemKey(task);
+    if (!custom) wrapper.dataset.taskId = String(task.task_id);
     wrapper.innerHTML = taskCardMarkup(task, isHero);
     taskContainer.appendChild(wrapper);
   });
@@ -2361,6 +2487,7 @@ function handleTaskCardExpand(event) {
 
   const disclosure = event.target.closest(".task-disclosure");
   if (!disclosure) return;
+  if (disclosure.dataset.jobId) { openTodayCustomJob(disclosure.dataset.jobId); return; }
   const taskId = Number(disclosure.dataset.taskId);
   expandedTaskId = expandedTaskId === taskId ? null : taskId;
   renderCurrentTaskList({ preservePosition: true });
@@ -2434,6 +2561,7 @@ async function loadInventory() {
     }));
     inventoryLoadedFor = gardenAtRequest;
     renderGroupedInventory();
+    if (customJobsLoadedFor === gardenAtRequest) renderCustomJobSurfaces();
 
     // Today may already be showing its empty state, which could not choose the
     // right wording until this arrived. Now it can.
@@ -3017,6 +3145,7 @@ async function executeRemoveAsset() {
     closeRemoveItemModal(false);
     renderGroupedInventory();
     showToast(state.itemName + " removed from My Garden.", false);
+    if (customJobsLoadedFor === state.gardenId) loadCustomJobs(state.gardenId, { quiet: true });
     loadToday();
   } catch (error) {
     console.error("Remove item error:", error);
@@ -3319,15 +3448,22 @@ function photoProblemMessage(error, withDetails = false) {
     const details = withDetails && error.details && error.details.length ? " (Found: " + error.details.join(", ") + ".)" : "";
     return "That photo couldn’t be prepared safely. Try another photo." + details;
   }
-  return "That photo couldn’t be used. Try another photo.";
+  let detail = "";
+  if (withDetails && error instanceof PhotoProblem && error.details && error.details.length) {
+    detail = " (" + (kind || "problem") + ": " + error.details.join(", ") + ".)";
+  } else if (withDetails && error && !(error instanceof PhotoProblem)) {
+    detail = " (Error: " + String(error.name || "Error") + ": " + String(error.message || "").slice(0, 120) + ")";
+  }
+  return "That photo couldn’t be used. Try another photo." + detail;
 }
 
 async function decodePhotoSource(file) {
+  let bitmapError = null;
   if (typeof createImageBitmap === "function") {
     try {
       const bitmap = await createImageBitmap(file);   // applies EXIF orientation by default
       return { image: bitmap, width: bitmap.width, height: bitmap.height, close: () => { if (bitmap.close) bitmap.close(); } };
-    } catch (e) { /* fall back to the slower image-element decode */ }
+    } catch (e) { bitmapError = e; /* fall back to the slower image-element decode */ }
   }
   const url = URL.createObjectURL(file);
   const img = new Image();
@@ -3341,7 +3477,8 @@ async function decodePhotoSource(file) {
     };
   } catch (e) {
     URL.revokeObjectURL(url);
-    throw new PhotoProblem("unsupported");
+    throw new PhotoProblem("unsupported", ["decode " + (file.type || "unknown type"),
+      "bitmap " + (bitmapError ? bitmapError.name || "error" : "not tried"), "image " + ((e && e.name) || "error")]);
   }
 }
 
@@ -3353,7 +3490,7 @@ function encodePhotoDerivative(image, sx, sy, sw, sh, dw, dh, quality) {
     canvas.width = dw;
     canvas.height = dh;
     const ctx = canvas.getContext("2d");
-    if (!ctx) { reject(new PhotoProblem("unsupported")); return; }
+    if (!ctx) { reject(new PhotoProblem("unsupported", ["canvas " + dw + "x" + dh])); return; }
     ctx.fillStyle = "#FFFFFF";        // JPEG has no transparency
     ctx.fillRect(0, 0, dw, dh);
     ctx.imageSmoothingEnabled = true;
@@ -3362,22 +3499,24 @@ function encodePhotoDerivative(image, sx, sy, sw, sh, dw, dh, quality) {
     canvas.toBlob(blob => {
       canvas.width = 0;
       canvas.height = 0;
-      if (blob) resolve(blob); else reject(new PhotoProblem("unsupported"));
+      if (blob) resolve(blob); else reject(new PhotoProblem("unsupported", ["encode " + dw + "x" + dh]));
     }, "image/jpeg", quality);
   });
 }
 
 async function checkPhotoDerivative(blob, maxBytes) {
-  if (!blob || blob.type !== "image/jpeg") throw new PhotoProblem("unsupported");
+  if (!blob || blob.type !== "image/jpeg") throw new PhotoProblem("unsupported", ["encoded type " + ((blob && blob.type) || "none")]);
   if (blob.size > maxBytes) throw new PhotoProblem("too_large");
   const bytes = new Uint8Array(await blob.arrayBuffer());
-  if (!isJpegBytes(bytes)) throw new PhotoProblem("unsupported");
+  if (!isJpegBytes(bytes)) throw new PhotoProblem("unsupported", ["encoded bytes"]);
   const problems = jpegMetadataProblems(bytes);
   if (problems.length > 0) throw new PhotoProblem("metadata", problems);
 }
 
 async function processItemPhoto(file) {
-  if (!file || !file.size || /svg/i.test(file.type || "")) throw new PhotoProblem("unsupported");
+  if (!file || !file.size || /svg/i.test(file.type || "")) {
+    throw new PhotoProblem("unsupported", ["source " + ((file && file.type) || "unknown type") + " " + ((file && file.size) || 0) + " bytes"]);
+  }
   if (file.size > PHOTO.MAX_SOURCE_BYTES) throw new PhotoProblem("too_large");
 
   // Decoding is where the memory goes, so the pixel count is judged first.
@@ -3425,7 +3564,9 @@ function photoEntitled() {
 }
 
 function itemDetailAvailable(itemId) {
-  return photoEntitled() || itemPhotos.has(Number(itemId));
+  // Every saved item now has useful context: Your jobs can be attached here
+  // even when the item has no photo and this account cannot add one.
+  return !!inventoryItem(itemId);
 }
 
 function photoUrl(generationId, variant) {
@@ -3468,8 +3609,14 @@ function forgetPhotoSession() {
 /* ---- Server calls ----------------------------------------------------------- */
 
 async function callItemPhotos(body) {
+  return callPhotoFunction(PHOTO.FUNCTION, body);
+}
+
+/* Both photo functions (item-photos, custom-job-photos) answer the same way:
+ * data on success, or an HTTP status with a JSON { error: reason }. */
+async function callPhotoFunction(name, body) {
   try {
-    const { data, error } = await sb.functions.invoke(PHOTO.FUNCTION, { body });
+    const { data, error } = await sb.functions.invoke(name, { body });
     if (!error) return { ok: true, data: data || {} };
     let status = 0;
     let reason = "";
@@ -3620,6 +3767,7 @@ function openItemDetail(itemId, trigger) {
   showAccessibleModal("item-detail-modal", "close-item-detail-modal");
   if (trigger) modalFocusReturn.set("item-detail-modal", trigger);   // the row, not a rebuilt copy of it
   loadDetailImage(photoDetail.token);
+  loadCustomJobs(currentGardenId, { quiet: true });
 }
 
 async function loadDetailImage(token) {
@@ -3724,6 +3872,7 @@ function renderItemDetail(focusFirstAction = false) {
   const actions = document.getElementById("item-detail-actions");
   actions.innerHTML = buttons.join("");
   actions.classList.toggle("hidden", buttons.length === 0);
+  renderItemCustomJobs();
 
   if (focusFirstAction) {
     const first = actions.querySelector("button") || document.getElementById("close-item-detail-modal");
@@ -3825,13 +3974,20 @@ async function handlePhotoFileChosen(event) {
  * identification journey. Returns { abandoned } once stillHere() fails, the
  * failed call's { ok: false, status, reason }, or { ok: true, photo }. */
 async function uploadItemPhoto(itemId, pending, expected, stillHere) {
-  const begin = await callItemPhotos({ action: "begin", garden_item_id: itemId, expected_generation_id: expected });
+  return uploadPhotoGeneration(callItemPhotos, PHOTO.BUCKET, { garden_item_id: itemId }, pending, expected, stillHere);
+}
+
+/* The one upload sequence for every photo kind. `target` names the owner
+ * ({ garden_item_id } or { custom_job_id }); only processed derivatives from
+ * processItemPhoto() are ever sent, never the original file. */
+async function uploadPhotoGeneration(call, fallbackBucket, target, pending, expected, stillHere) {
+  const begin = await call(Object.assign({ action: "begin" }, target, { expected_generation_id: expected }));
   if (!stillHere()) return { abandoned: true };
   if (!begin.ok) return begin;
 
   try {
     const uploads = begin.data.uploads || {};
-    const bucket = sb.storage.from(begin.data.bucket || PHOTO.BUCKET);
+    const bucket = sb.storage.from(begin.data.bucket || fallbackBucket);
     const options = { contentType: "image/jpeg", cacheControl: PHOTO.CACHE_CONTROL };
     const results = await Promise.all([
       bucket.uploadToSignedUrl(uploads.image.path, uploads.image.token, pending.main, options),
@@ -3846,10 +4002,10 @@ async function uploadItemPhoto(itemId, pending, expected, stillHere) {
   }
   if (!stillHere()) return { abandoned: true };
 
-  const commit = await callItemPhotos({
-    action: "commit", garden_item_id: itemId, generation_id: begin.data.generation_id,
+  const commit = await call(Object.assign({ action: "commit" }, target, {
+    generation_id: begin.data.generation_id,
     width: pending.width, height: pending.height, expected_generation_id: expected
-  });
+  }));
   if (!stillHere()) return { abandoned: true };
   if (!commit.ok) return commit;
   const saved = commit.data.photo || {};
@@ -3957,15 +4113,23 @@ function photoSaveFailed(token, res) {
 
 /* ---- Remove photo ------------------------------------------------------------ */
 
-function openPhotoRemoveModal() {
-  const d = photoDetail;
-  if (!d || !itemPhotos.has(d.itemId)) return;
+let photoRemoveFor = "item";            // which detail the shared Remove confirm serves: item | job
+
+function preparePhotoRemoveModal(kind, copy) {
+  photoRemoveFor = kind;
+  document.getElementById("photo-remove-copy").textContent = copy;
   const errorEl = document.getElementById("photo-remove-error");
   errorEl.textContent = "";
   errorEl.classList.add("hidden");
   const confirm = document.getElementById("photo-remove-confirm-btn");
   confirm.disabled = false;
   confirm.textContent = "Remove photo";
+}
+
+function openPhotoRemoveModal() {
+  const d = photoDetail;
+  if (!d || !itemPhotos.has(d.itemId)) return;
+  preparePhotoRemoveModal("item", "This photo will be permanently removed from the garden item.");
   showAccessibleModal("photo-remove-modal", "photo-remove-cancel-btn", "item-detail-modal");
 }
 
@@ -4043,6 +4207,14 @@ async function loadPhotoViewerImage(serial) {
   const v = photoViewer;
   if (!v) return;
   setPhotoViewerProblem(false);
+  if (v.kind === "job") {
+    await loadJobPhotos(v.gardenId, [v.jobId], true);
+    if (!photoViewer || photoViewer.serial !== serial) return;
+    const photo = jobPhotos.get(v.jobId);
+    const url = photo ? jobPhotoUrl(photo.generation_id, "image") : null;
+    if (url) showPhotoViewerImage(url); else setPhotoViewerProblem(true);
+    return;
+  }
   await ensurePhotoUrls(v.gardenId, [v.itemId], true);
   if (!photoViewer || photoViewer.serial !== serial) return;
   const photo = itemPhotos.get(v.itemId);
@@ -4072,8 +4244,13 @@ function handlePhotoViewerClick(event) {
   if (event.target.closest("#close-photo-viewer")) { closePhotoViewer(); return; }
   if (event.target.closest("#photo-viewer-retry")) {
     const v = photoViewer;
-    const photo = v ? itemPhotos.get(v.itemId) : null;
-    if (photo) photoUrlCache.delete(photo.generation_id + ":image");
+    if (v && v.kind === "job") {
+      const photo = jobPhotos.get(v.jobId);
+      if (photo) photoUrlCache.delete(jobPhotoKey(photo.generation_id) + ":image");
+    } else {
+      const photo = v ? itemPhotos.get(v.itemId) : null;
+      if (photo) photoUrlCache.delete(photo.generation_id + ":image");
+    }
     if (v) loadPhotoViewerImage(v.serial);
     return;
   }
@@ -4203,6 +4380,37 @@ function identifyRetryTime(iso) {
 
 /* ---- Server call ------------------------------------------------------------ */
 
+/* The identification function accepts only structural/colour application
+ * segments (JFIF, ICC profile, Adobe) and refuses every EXIF block, even the
+ * harmless orientation-only one some encoders (iOS Safari) write after
+ * jpegMetadataProblems() has allowed it. Drop exactly the segments it would
+ * refuse; the pixels and everything from the scan onward are untouched. */
+async function jpegForIdentification(blob) {
+  const b = new Uint8Array(await blob.arrayBuffer());
+  if (!isJpegBytes(b)) return blob;
+  const keep = [b.subarray(0, 2)];
+  let i = 2;
+  let dropped = false;
+  while (i + 4 <= b.length && b[i] === 0xFF) {
+    const marker = b[i + 1];
+    if (marker === 0xDA) break;                                    // image data: keep the rest as is
+    if (marker === 0xFF || marker === 0x01 || (marker >= 0xD0 && marker <= 0xD9)) return blob;
+    const length = (b[i + 2] << 8) | b[i + 3];
+    if (length < 2 || i + 2 + length > b.length) return blob;
+    const start = i + 4;
+    const refused = (marker === 0xE0 && !["JFIF\0", "JFXX\0"].includes(photoAscii(b, start, 5)))
+      || (marker === 0xE2 && photoAscii(b, start, 12) !== "ICC_PROFILE\0")
+      || (marker === 0xEE && photoAscii(b, start, 5) !== "Adobe")
+      || (marker >= 0xE1 && marker <= 0xEF && marker !== 0xE2 && marker !== 0xEE)
+      || marker === 0xFE;
+    if (refused) dropped = true; else keep.push(b.subarray(i, i + 2 + length));
+    i += 2 + length;
+  }
+  if (!dropped || i + 4 > b.length || b[i + 1] !== 0xDA) return blob;
+  keep.push(b.subarray(i));
+  return new Blob(keep, { type: "image/jpeg" });
+}
+
 async function callPlantIdentification(blob) {
   const form = new FormData();
   form.append("image", blob, "plant.jpg");
@@ -4312,7 +4520,10 @@ async function handleIdentifyFileChosen(event) {
     return;
   }
   if (!identifyCurrent(token)) return;
-  j.photo = processed;
+  let upload = processed.main;
+  try { upload = await jpegForIdentification(processed.main); } catch (e) { /* send as processed */ }
+  if (!identifyCurrent(token)) return;
+  j.photo = Object.assign({}, processed, { upload });
   j.previewUrl = URL.createObjectURL(processed.main);
   j.step = "preview";
   renderIdentify(true);
@@ -4334,7 +4545,7 @@ async function runIdentification() {
   renderIdentify();
 
   const started = Date.now();
-  const res = await callPlantIdentification(j.photo.main);
+  const res = await callPlantIdentification(j.photo.upload || j.photo.main);
   if (!identifyCurrent(token)) return;
   j.latencyMs = Date.now() - started;
 
@@ -4356,6 +4567,10 @@ async function runIdentification() {
   }
   j.step = "problem";
   j.problem = { kind, retryAt: res.data && res.data.retry_at };
+  if (kind === "photo" && photoDiagnosticsWanted()) {
+    j.problem.message = "That photo couldn’t be used. Try another photo. (Server: " + String((res.data && res.data.error) || res.status)
+      + (res.data && res.data.message ? ": " + String(res.data.message).slice(0, 120) : "") + ")";
+  }
   renderIdentify(true);
 }
 
@@ -4749,10 +4964,1560 @@ function renderIdentify(focus = false) {
  *  SWIPE-TO-REVEAL "HIDE" GESTURE  (unchanged — purely visual)
  * ========================================================================== */
 
+/* ==========================================================================
+ *  YOUR JOBS (RM-025)
+ *
+ *  The database owns schedule arithmetic, entitlement and every transition.
+ *  This layer submits semantic choices, renders the returned read model and
+ *  refuses to paint responses into a different user or garden.
+ * ========================================================================== */
+
+function customJobsEntitled() {
+  return customJobEntitlement.known &&
+    customJobEntitlement.userId === currentUserId &&
+    customJobEntitlement.value;
+}
+
+function customJobById(jobId) {
+  return customJobs.find(job => String(job.id) === String(jobId)) || null;
+}
+
+function customJobHint(error) {
+  const hint = String((error && error.hint) || "");
+  const match = hint.match(/custom_job:([a-z_]+)/);
+  return match ? match[1] : "";
+}
+
+function isoDayOffset(iso, amount) {
+  const parts = String(iso || "").split("-").map(Number);
+  if (parts.length !== 3 || parts.some(Number.isNaN)) return "";
+  const date = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2] + amount));
+  return date.toISOString().slice(0, 10);
+}
+
+function formatJobDate(iso, options) {
+  const parts = String(iso || "").split("-").map(Number);
+  if (parts.length !== 3 || parts.some(Number.isNaN)) return "";
+  return new Intl.DateTimeFormat("en-GB", options || { day: "numeric", month: "short" })
+    .format(new Date(Date.UTC(parts[0], parts[1] - 1, parts[2])));
+}
+
+function customJobScheduleChoice(job) {
+  if (!job || !job.window_start) return { when: "none", date: "" };
+  const today = gardenCalendarDay();
+  const tomorrow = isoDayOffset(today, 1);
+  if (job.window_start === today && job.window_end === today) return { when: "today", date: "" };
+  if (job.window_start === tomorrow && job.window_end === tomorrow) return { when: "tomorrow", date: "" };
+
+  const parts = today.split("-").map(Number);
+  const day = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2])).getUTCDay() || 7;
+  const sunday = isoDayOffset(today, 7 - day);
+  const saturday = day === 7 ? today : isoDayOffset(today, 6 - day);
+  if (job.window_start === today && job.window_end === sunday) return { when: "this_week", date: "" };
+  if (job.window_start === saturday && job.window_end === sunday) return { when: "this_weekend", date: "" };
+  return { when: "date", date: job.window_start };
+}
+
+function customJobScheduleLabel(job) {
+  if (!job || !job.window_start) return "No date";
+  const choice = customJobScheduleChoice(job);
+  const labels = {
+    today: "Today",
+    tomorrow: "Tomorrow",
+    this_week: "This week",
+    this_weekend: "This weekend"
+  };
+  const label = labels[choice.when] || formatJobDate(job.window_start, {
+    weekday: "short", day: "numeric", month: "short", year: "numeric"
+  });
+  return job.schedule_state === "outstanding" ? "Planned for " + label + " · Still to do" : label;
+}
+
+function customJobDurationLabel(minutes) {
+  return Number(minutes) === 60 ? "1 hour" : minutes ? minutes + " min" : "Not set";
+}
+
+function customJobRecurrenceLabel(job) {
+  if (!job || !job.recurrence_unit) return "Never";
+  const amount = Number(job.recurrence_every);
+  const unit = job.recurrence_unit;
+  return amount === 1
+    ? "Every " + unit
+    : "Every " + amount + " " + unit + "s";
+}
+
+function customJobItemLabel(itemId) {
+  const item = inventoryItem(itemId);
+  return item ? itemIdentity(item).label : "None";
+}
+
+async function loadCustomJobEntitlement() {
+  const userAtRequest = currentUserId;
+  if (customJobEntitlement.known && customJobEntitlement.userId === userAtRequest) {
+    return customJobEntitlement.value;
+  }
+  try {
+    const { data, error } = await sb.rpc("custom_jobs_entitled");
+    if (currentUserId !== userAtRequest) return false;
+    customJobEntitlement = {
+      userId: userAtRequest,
+      known: !error,
+      value: !error && data === true
+    };
+    return error ? null : customJobEntitlement.value;
+  } catch (error) {
+    return null;
+  }
+}
+
+async function loadCustomJobs(gardenId, options = {}) {
+  if (!gardenId) return false;
+  const requestSerial = ++customJobsRequestSerial;
+  const gardenAtRequest = gardenId;
+  const userAtRequest = currentUserId;
+  const list = document.getElementById("your-jobs-list");
+  const status = document.getElementById("your-jobs-status");
+  const hasCurrent = customJobsLoadedFor === gardenAtRequest;
+  if (!options.quiet && list && !hasCurrent) {
+    list.innerHTML = '<div class="garden-local-status">Finding your jobs…</div>';
+  }
+  if (status) status.classList.add("hidden");
+
+  try {
+    const [{ data, error }] = await Promise.all([
+      sb.rpc("list_custom_jobs", { p_garden_id: gardenAtRequest }),
+      loadCustomJobEntitlement()
+    ]);
+    if (requestSerial !== customJobsRequestSerial ||
+        gardenAtRequest !== currentGardenId || userAtRequest !== currentUserId) return false;
+    if (error) throw error;
+    customJobs = data || [];
+    customJobsLoadedFor = gardenAtRequest;
+    renderCustomJobSurfaces();
+    refreshJobPhotosForList(gardenAtRequest);
+    return true;
+  } catch (error) {
+    if (requestSerial !== customJobsRequestSerial ||
+        gardenAtRequest !== currentGardenId || userAtRequest !== currentUserId) return false;
+    console.error("Your jobs load failed:", error);
+    if (await sessionHasGone(error, 0)) { await recoverFromSessionLoss(); return false; }
+    if (customJobHint(error) === "garden_unavailable") { await handleGardenGone(); return false; }
+    if (list && !document.getElementById("your-jobs-modal").classList.contains("hidden")) {
+      list.innerHTML = `
+        <div class="jobs-first-empty">
+          <h3>Couldn’t show Your jobs</h3>
+          <p>Check your connection, then try again.</p>
+          <button type="button" class="secondary-action-btn" data-job-action="retry-list">Try again</button>
+        </div>`;
+    }
+    renderItemCustomJobs(true);
+    return false;
+  }
+}
+
+function customJobRowMarkup(job, itemContext) {
+  const meta = job.section === "completed"
+    ? "Completed " + formatJobDate(String(job.completed_at || "").slice(0, 10), { day: "numeric", month: "short", year: "numeric" })
+    : customJobScheduleLabel(job);
+  return `
+    <button type="button" class="${itemContext ? "item-job-row" : "job-row"}" data-job-id="${escapeHtml(job.id)}">
+      <span class="job-row-copy">
+        <span class="job-row-name">${escapeHtml(job.name)}</span>
+        <span class="job-row-meta">${escapeHtml(meta)}</span>
+      </span>
+      ${jobRowPhotoMarkup(job.id)}
+      <span class="job-row-chevron" aria-hidden="true">›</span>
+    </button>`;
+}
+
+function renderYourJobs() {
+  const list = document.getElementById("your-jobs-list");
+  if (!list || customJobsLoadedFor !== currentGardenId) return;
+  if (customJobs.length === 0) {
+    list.innerHTML = `
+      <div class="jobs-first-empty">
+        <h3>No jobs here yet</h3>
+        <p>Add a job when there’s something you want to remember for this garden.</p>
+      </div>`;
+    return;
+  }
+
+  const definitions = [
+    { key: "planned", title: "Planned", empty: "No jobs are planned." },
+    { key: "no_date", title: "No date", empty: "No jobs are waiting without a date." },
+    { key: "completed", title: "Completed", empty: "No completed jobs are being kept.", note: "Completed one-off jobs are kept for 90 days so they can be restored." }
+  ];
+  list.innerHTML = definitions.map(section => {
+    const rows = customJobs.filter(job => job.section === section.key);
+    return `
+      <section class="jobs-section" aria-labelledby="jobs-${section.key}-title">
+        <h3 id="jobs-${section.key}-title" class="jobs-section-title">${section.title}</h3>
+        ${section.note ? `<p class="jobs-section-note">${section.note}</p>` : ""}
+        <div class="jobs-section-list">
+          ${rows.length ? rows.map(job => customJobRowMarkup(job, false)).join("") : `<p class="jobs-section-empty">${section.empty}</p>`}
+        </div>
+      </section>`;
+  }).join("");
+}
+
+function renderItemCustomJobs(loadFailed = false) {
+  const list = document.getElementById("item-jobs-list");
+  if (!list || !photoDetail || photoDetail.gardenId !== currentGardenId) return;
+  if (loadFailed) {
+    list.innerHTML = '<p class="item-jobs-empty">Couldn’t show linked jobs. Close this item and try again.</p>';
+    return;
+  }
+  if (customJobsLoadedFor !== currentGardenId) {
+    list.innerHTML = '<p class="item-jobs-empty">Finding linked jobs…</p>';
+    return;
+  }
+  const rows = customJobs.filter(job =>
+    Number(job.garden_item_id) === Number(photoDetail.itemId) && job.section !== "completed"
+  );
+  list.innerHTML = rows.length
+    ? rows.map(job => customJobRowMarkup(job, true)).join("")
+    : '<p class="item-jobs-empty">No jobs are linked to this item.</p>';
+}
+
+function renderCustomJobSurfaces() {
+  renderYourJobs();
+  renderItemCustomJobs();
+  if (customJobDetail) renderCustomJobDetail();
+}
+
+function openYourJobs() {
+  closeSettingsModal(false);
+  showAccessibleModal("your-jobs-modal", "close-your-jobs-modal");
+  loadCustomJobs(currentGardenId);
+}
+
+function closeYourJobs(restoreFocus = true) {
+  hideAccessibleModal("your-jobs-modal", restoreFocus);
+}
+
+function openCustomJobPremium(parentModalId) {
+  showAccessibleModal("job-premium-modal", "job-premium-close-btn", parentModalId || null);
+}
+
+function closeCustomJobPremium(restoreFocus = true) {
+  hideAccessibleModal("job-premium-modal", restoreFocus);
+}
+
+async function startAddCustomJob(itemId, parentModalId) {
+  const gardenAtRequest = currentGardenId;
+  const userAtRequest = currentUserId;
+  const entitled = await loadCustomJobEntitlement();
+  if (gardenAtRequest !== currentGardenId || userAtRequest !== currentUserId) return;
+  if (entitled === null) {
+    showToast("Couldn’t check Premium access. Check your connection and try again.", false);
+    return;
+  }
+  if (!entitled) { openCustomJobPremium(parentModalId); return; }
+  openCustomJobEditor("create", null, { itemId: itemId || null, parentModalId: parentModalId || null });
+}
+
+function populateCustomJobItemOptions(selectedItemId) {
+  const select = document.getElementById("job-item");
+  select.innerHTML = '<option value="">None</option>' + userInventory.map(item => {
+    const id = Number(item.item_id);
+    return `<option value="${id}">${escapeHtml(itemIdentity(item).label)}</option>`;
+  }).join("");
+  select.value = selectedItemId ? String(selectedItemId) : "";
+}
+
+function populateCustomJobMoveOptions(job) {
+  const field = document.getElementById("job-move-field");
+  const select = document.getElementById("job-move-garden");
+  const source = currentGarden();
+  const destinations = gardens.filter(g => g.id !== currentGardenId);
+  const offered = !!job && source && source.role === "owner" && destinations.length > 0 && customJobsEntitled();
+  field.classList.toggle("hidden", !offered);
+  select.innerHTML = '<option value="">Keep in this garden</option>' + destinations.map(g =>
+    `<option value="${escapeHtml(g.id)}">${escapeHtml(g.name)}</option>`
+  ).join("");
+  select.value = "";
+  updateCustomJobMoveNote();
+}
+
+function setCustomJobDetailsExpanded(expanded) {
+  document.getElementById("job-details-fields").classList.toggle("hidden", !expanded);
+  const toggle = document.getElementById("job-details-toggle");
+  toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+  toggle.textContent = expanded ? "Hide details" : "Add details";
+}
+
+function setCustomJobRepeat(job) {
+  const repeat = document.getElementById("job-repeat");
+  const custom = document.getElementById("job-repeat-custom");
+  if (!job || !job.recurrence_unit) {
+    repeat.value = "never";
+    document.getElementById("job-repeat-every").value = "1";
+    document.getElementById("job-repeat-unit").value = "day";
+  } else if (Number(job.recurrence_every) === 1) {
+    repeat.value = job.recurrence_unit;
+  } else {
+    repeat.value = "custom";
+    document.getElementById("job-repeat-every").value = String(job.recurrence_every);
+    document.getElementById("job-repeat-unit").value = job.recurrence_unit;
+  }
+  custom.classList.toggle("hidden", repeat.value !== "custom");
+}
+
+function openCustomJobEditor(mode, job, options = {}) {
+  const token = ++customJobJourneySerial;
+  const itemId = options.itemId || (job && job.garden_item_id) || null;
+  const choice = job ? customJobScheduleChoice(job) : { when: "today", date: "" };
+  customJobJourney = {
+    token,
+    mode,
+    gardenId: currentGardenId,
+    userId: currentUserId,
+    jobId: job ? job.id : null,
+    expectedRevision: job ? Number(job.revision) : null,
+    parentModalId: options.parentModalId || null,
+    photo: { step: "none", pending: null, message: "", isError: false, token: ++jobPhotoOpSerial },
+    initial: job ? {
+      name: job.name,
+      estimated: job.estimated_minutes === null ? null : Number(job.estimated_minutes),
+      recurrenceEvery: job.recurrence_every === null ? null : Number(job.recurrence_every),
+      recurrenceUnit: job.recurrence_unit || null,
+      itemId: job.garden_item_id === null ? null : Number(job.garden_item_id),
+      when: choice.when,
+      date: choice.date
+    } : null
+  };
+
+  document.getElementById("job-editor-title").textContent =
+    mode === "create" ? "Add a job" : mode === "reschedule" ? "Do later" : "Edit job";
+  document.getElementById("job-name-field").classList.toggle("hidden", mode === "reschedule");
+  document.getElementById("job-structural-fields").classList.toggle("hidden", mode === "reschedule");
+  document.getElementById("job-details-toggle").classList.toggle("hidden", mode !== "create");
+  document.getElementById("job-name").value = job ? job.name : "";
+  document.getElementById("job-duration").value = job && job.estimated_minutes ? String(job.estimated_minutes) : "";
+  document.getElementById("job-when").value = choice.when;
+  document.getElementById("job-date").value = choice.date;
+  document.getElementById("job-date").min = gardenCalendarDay();
+  setCustomJobRepeat(job);
+  populateCustomJobItemOptions(itemId);
+  populateCustomJobMoveOptions(mode === "edit" ? job : null);
+
+  const context = document.getElementById("job-context-note");
+  context.textContent = itemId ? "For " + customJobItemLabel(itemId) : "";
+  context.classList.toggle("hidden", !itemId || mode !== "create");
+  document.getElementById("job-editor-error").textContent = "";
+  document.getElementById("job-editor-error").classList.add("hidden");
+  document.getElementById("job-save-btn").textContent = mode === "create" ? "Add job" : "Save";
+  document.getElementById("job-save-btn").disabled = false;
+  setCustomJobDetailsExpanded(mode !== "create");
+  updateCustomJobEditorFields();
+  updateCustomJobNameCount();
+  renderEditorJobPhoto();
+  showAccessibleModal("job-editor-modal", mode === "reschedule" ? "job-when" : "job-name", customJobJourney.parentModalId);
+}
+
+function closeCustomJobEditor(restoreFocus = true) {
+  if (customJobJourney) discardPendingJobPhoto(customJobJourney.photo);
+  customJobJourney = null;
+  customJobJourneySerial += 1;
+  hideAccessibleModal("job-editor-modal", restoreFocus);
+}
+
+function updateCustomJobNameCount() {
+  const input = document.getElementById("job-name");
+  const count = document.getElementById("job-name-count");
+  if (input && count) count.textContent = input.value.length + " of 200 characters";
+}
+
+function updateCustomJobEditorFields() {
+  const when = document.getElementById("job-when").value;
+  const repeat = document.getElementById("job-repeat").value;
+  document.getElementById("job-date-field").classList.toggle("hidden", when !== "date");
+  document.getElementById("job-repeat-custom").classList.toggle("hidden", repeat !== "custom");
+  updateCustomJobMoveNote();
+}
+
+function updateCustomJobMoveNote() {
+  const note = document.getElementById("job-move-note");
+  const destination = document.getElementById("job-move-garden").value;
+  const itemId = Number(document.getElementById("job-item").value || 0);
+  if (destination && itemId) {
+    note.textContent = "Moving this job will remove its link to " + customJobItemLabel(itemId) + ".";
+    note.classList.remove("hidden");
+  } else {
+    note.textContent = "";
+    note.classList.add("hidden");
+  }
+}
+
+function readCustomJobForm() {
+  const mode = customJobJourney.mode;
+  const name = document.getElementById("job-name").value.trim();
+  const when = document.getElementById("job-when").value;
+  const date = when === "date" ? document.getElementById("job-date").value : null;
+  let recurrenceEvery = null;
+  let recurrenceUnit = null;
+  if (mode !== "reschedule") {
+    const repeat = document.getElementById("job-repeat").value;
+    if (repeat === "custom") {
+      recurrenceEvery = Number(document.getElementById("job-repeat-every").value);
+      recurrenceUnit = document.getElementById("job-repeat-unit").value;
+    } else if (repeat !== "never") {
+      recurrenceEvery = 1;
+      recurrenceUnit = repeat;
+    }
+  }
+  return {
+    name,
+    when,
+    date,
+    estimated: mode === "reschedule" || !document.getElementById("job-duration").value
+      ? null : Number(document.getElementById("job-duration").value),
+    itemId: mode === "reschedule" || !document.getElementById("job-item").value
+      ? null : Number(document.getElementById("job-item").value),
+    recurrenceEvery,
+    recurrenceUnit,
+    destinationGardenId: mode === "edit" ? (document.getElementById("job-move-garden").value || null) : null
+  };
+}
+
+function customJobFormProblem(values) {
+  if (customJobJourney.mode !== "reschedule") {
+    if (!values.name) return "Say what needs doing.";
+    if (values.name.length > 200) return "Keep the job name to 200 characters.";
+    if (values.recurrenceUnit &&
+        (!Number.isInteger(values.recurrenceEvery) || values.recurrenceEvery < 1 || values.recurrenceEvery > 365)) {
+      return "Repeat every 1 to 365 days, weeks or months.";
+    }
+  }
+  if (values.when === "date" && !values.date) return "Choose a date.";
+  if (values.when === "date" && values.date < gardenCalendarDay()) return "Choose today or a later date.";
+  return "";
+}
+
+function setCustomJobEditorError(message) {
+  const error = document.getElementById("job-editor-error");
+  error.textContent = message || "";
+  error.classList.toggle("hidden", !message);
+}
+
+function structuralCustomJobChange(values, initial) {
+  return !initial || values.name !== initial.name ||
+    values.estimated !== initial.estimated ||
+    values.recurrenceEvery !== initial.recurrenceEvery ||
+    values.recurrenceUnit !== initial.recurrenceUnit ||
+    values.itemId !== initial.itemId;
+}
+
+function scheduleCustomJobChange(values, initial) {
+  return !initial || values.when !== initial.when || (values.when === "date" && values.date !== initial.date);
+}
+
+async function recoverStaleCustomJob(jobId, messageTarget) {
+  await loadCustomJobs(currentGardenId, { quiet: true });
+  const latest = customJobById(jobId);
+  if (customJobJourney && latest) customJobJourney.expectedRevision = Number(latest.revision);
+  if (customJobDetail && !latest) closeCustomJobDetail();
+  if (messageTarget === "editor") {
+    setCustomJobEditorError("This job changed while you were editing it. Review your changes, then try again.");
+  } else if (messageTarget === "delete") {
+    const error = document.getElementById("job-delete-error");
+    error.textContent = "This job changed. Close this message and open the latest version before deleting it.";
+    error.classList.remove("hidden");
+  } else {
+    setCustomJobDetailStatus("This job changed. The latest version is shown.");
+  }
+}
+
+function customJobErrorMessage(error) {
+  switch (customJobHint(error)) {
+    case "not_entitled": return "Premium is needed to create a job or change its details. Your other changes have not been lost.";
+    case "garden_ceiling": return "This garden has reached its technical job limit. Delete a job before adding another.";
+    case "invalid_name": return "Say what needs doing.";
+    case "name_too_long": return "Keep the job name to 200 characters.";
+    case "invalid_recurrence": return "Repeat every 1 to 365 days, weeks or months.";
+    case "invalid_date": return "Choose today or a later date.";
+    case "item_unavailable": return "That garden item is no longer available. Choose another item or None.";
+    case "not_source_owner": return "Only an owner of this garden can move its jobs.";
+    case "destination_unavailable": return "That destination garden is no longer available.";
+    case "completed": return "This job is completed. Restore it before changing it.";
+    case "deleted": return "This job has been deleted.";
+    default: return "That change wasn’t saved. Check your connection, then Retry or Cancel.";
+  }
+}
+
+async function handleCustomJobSubmit(event) {
+  event.preventDefault();
+  const journey = customJobJourney;
+  if (!journey) return;
+  const values = readCustomJobForm();
+  const problem = customJobFormProblem(values);
+  if (problem) { setCustomJobEditorError(problem); return; }
+
+  if (values.destinationGardenId && values.itemId) {
+    const itemName = customJobItemLabel(values.itemId);
+    if (!window.confirm("Moving this job will remove its link to " + itemName + ". The link won’t be restored automatically. Move it?")) return;
+  }
+
+  if (journey.mode === "create" && journey.photo.step === "processing") return;
+
+  const button = document.getElementById("job-save-btn");
+  button.disabled = true;
+  button.textContent = "Saving…";
+  setCustomJobEditorError("");
+  let revision = journey.expectedRevision;
+  let partial = false;
+  let createdJobId = null;
+  // The prepared photo travels with this attempt. It is uploaded only after
+  // the job exists, and from then on belongs to that job, not to the editor.
+  const pendingPhoto = journey.mode === "create" ? journey.photo.pending : null;
+
+  try {
+    if (journey.mode === "create") {
+      const result = await sb.rpc("create_custom_job", {
+        p_garden_id: journey.gardenId,
+        p_name: values.name,
+        p_when: values.when,
+        p_date: values.date,
+        p_estimated_minutes: values.estimated,
+        p_recurrence_every: values.recurrenceEvery,
+        p_recurrence_unit: values.recurrenceUnit,
+        p_garden_item_id: values.itemId
+      });
+      if (result.error) throw result.error;
+      createdJobId = result.data && result.data.job ? result.data.job.id : null;
+      if (pendingPhoto) journey.photo.pending = null;
+    } else {
+      if (journey.mode === "edit" && structuralCustomJobChange(values, journey.initial)) {
+        const result = await sb.rpc("update_custom_job", {
+          p_job_id: journey.jobId,
+          p_expected_revision: revision,
+          p_name: values.name,
+          p_estimated_minutes: values.estimated,
+          p_recurrence_every: values.recurrenceEvery,
+          p_recurrence_unit: values.recurrenceUnit,
+          p_garden_item_id: values.itemId
+        });
+        if (result.error) throw result.error;
+        revision = Number(result.data.job.revision);
+        journey.expectedRevision = revision;
+        journey.initial = Object.assign({}, journey.initial, {
+          name: values.name,
+          estimated: values.estimated,
+          recurrenceEvery: values.recurrenceEvery,
+          recurrenceUnit: values.recurrenceUnit,
+          itemId: values.itemId
+        });
+        partial = true;
+      }
+      if (journey.mode === "reschedule" || scheduleCustomJobChange(values, journey.initial)) {
+        const result = await sb.rpc("reschedule_custom_job", {
+          p_job_id: journey.jobId,
+          p_expected_revision: revision,
+          p_when: values.when,
+          p_date: values.date
+        });
+        if (result.error) throw result.error;
+        revision = Number(result.data.job.revision);
+        journey.expectedRevision = revision;
+        journey.initial = Object.assign({}, journey.initial, { when: values.when, date: values.date });
+        partial = true;
+      }
+      if (journey.mode === "edit" && values.destinationGardenId) {
+        const result = await sb.rpc("move_custom_job", {
+          p_job_id: journey.jobId,
+          p_expected_revision: revision,
+          p_destination_garden_id: values.destinationGardenId
+        });
+        if (result.error) throw result.error;
+        partial = true;
+      }
+    }
+
+    const movedTo = values.destinationGardenId
+      ? gardens.find(g => g.id === values.destinationGardenId) : null;
+    // A moved job's photo stays with it, but its links were signed for this
+    // garden; the destination's membership signs them afresh.
+    if (movedTo && journey.gardenId === currentGardenId) forgetJobPhoto(journey.jobId);
+    if (!customJobJourney || customJobJourney.token !== journey.token ||
+        journey.gardenId !== currentGardenId || journey.userId !== currentUserId) {
+      if (pendingPhoto && createdJobId) {
+        discardPendingJobPhoto({ pending: pendingPhoto });
+        if (journey.gardenId === currentGardenId && journey.userId === currentUserId) {
+          showToast("Job added, but the photo wasn’t saved. Open the job to add it again.", false);
+        }
+      }
+      return;
+    }
+    closeCustomJobEditor(false);
+    if (movedTo) closeCustomJobDetail(false);
+    await loadCustomJobs(journey.gardenId, { quiet: true });
+    refreshTodayAfterCustomJobChange(journey.gardenId);
+    showToast(movedTo ? "Job moved to " + movedTo.name + "." : journey.mode === "create" ? "Job added." : "Job saved.", false);
+    if (pendingPhoto && createdJobId) saveCreatedJobPhoto(createdJobId, pendingPhoto, journey.parentModalId, journey.gardenId);
+  } catch (error) {
+    if (!customJobJourney || customJobJourney.token !== journey.token ||
+        journey.gardenId !== currentGardenId || journey.userId !== currentUserId) return;
+    console.error("Custom job save failed:", error);
+    if (await sessionHasGone(error, 0)) { await recoverFromSessionLoss(); return; }
+    const hint = customJobHint(error);
+    if (hint === "garden_unavailable" || hint === "unavailable") {
+      await loadCustomJobs(journey.gardenId, { quiet: true });
+      if (journey.gardenId !== currentGardenId || journey.userId !== currentUserId) return;
+    }
+    if (partial) refreshTodayAfterCustomJobChange(journey.gardenId);
+    if (hint === "stale_revision") {
+      await recoverStaleCustomJob(journey.jobId, "editor");
+    } else {
+      if (hint === "not_entitled") customJobEntitlement = { userId: currentUserId, known: true, value: false };
+      const prefix = partial ? "Some changes were saved, but the remaining change wasn’t. " : "";
+      setCustomJobEditorError(prefix + customJobErrorMessage(error));
+    }
+    button.disabled = false;
+    button.textContent = journey.mode === "create" ? "Retry" : "Retry save";
+  }
+}
+
+function openCustomJobDetail(jobId, parentModalId) {
+  const job = customJobById(jobId);
+  if (!job) return;
+  if (customJobDetail) discardPendingJobPhoto(customJobDetail.photo);
+  customJobDetail = {
+    jobId: job.id,
+    gardenId: currentGardenId,
+    parentModalId: parentModalId || null,
+    failedAction: null,
+    photo: newJobPhotoState()
+  };
+  renderCustomJobDetail();
+  showAccessibleModal("job-detail-modal", "close-job-detail-modal", parentModalId || null);
+  loadJobDetailImage();
+}
+
+function closeCustomJobDetail(restoreFocus = true) {
+  if (customJobDetail) discardPendingJobPhoto(customJobDetail.photo);
+  customJobDetail = null;
+  jobPhotoOpSerial += 1;
+  if (photoViewer && photoViewer.kind === "job") closePhotoViewer(false);
+  if (photoRemoveFor === "job") closePhotoRemoveModal(false);
+  hideAccessibleModal("job-detail-modal", restoreFocus);
+}
+
+function setCustomJobDetailStatus(message) {
+  const status = document.getElementById("job-detail-status");
+  if (!status) return;
+  status.textContent = message || "";
+  status.classList.toggle("hidden", !message);
+}
+
+function renderCustomJobDetail() {
+  if (!customJobDetail || customJobDetail.gardenId !== currentGardenId) return;
+  const job = customJobById(customJobDetail.jobId);
+  if (!job) { closeCustomJobDetail(false); return; }
+  document.getElementById("job-detail-title").textContent = job.name;
+  renderJobDetailPhoto(job);
+  const lines = [];
+  if (job.section === "completed") {
+    lines.push(["Status", "Completed " + formatJobDate(String(job.completed_at).slice(0, 10), { day: "numeric", month: "long", year: "numeric" })]);
+  } else {
+    lines.push(["When", customJobScheduleLabel(job)]);
+  }
+  if (job.recurrence_unit) lines.push(["Repeats", customJobRecurrenceLabel(job)]);
+  if (job.estimated_minutes) lines.push(["Approximate duration", customJobDurationLabel(job.estimated_minutes)]);
+  if (job.garden_item_id) lines.push(["Garden item", customJobItemLabel(job.garden_item_id)]);
+  document.getElementById("job-detail-body").innerHTML = lines.map(line =>
+    `<p class="job-detail-line"><strong>${escapeHtml(line[0])}</strong>${escapeHtml(line[1])}</p>`
+  ).join("");
+
+  const failed = customJobDetail.failedAction;
+  const actions = job.section === "completed"
+    ? `
+      <button type="button" class="primary-action-btn job-action-restore" data-job-action="restore">${failed === "restore" ? "Retry" : "Restore"}</button>
+      <button type="button" class="job-action-delete" data-job-action="delete">Delete</button>`
+    : `
+      <button type="button" class="primary-action-btn job-action-done" data-job-action="done">${failed === "done" ? "Retry" : "Done"}</button>
+      <button type="button" class="secondary-action-btn" data-job-action="edit">Edit</button>
+      <button type="button" class="secondary-action-btn" data-job-action="reschedule">Do later</button>
+      <button type="button" class="job-action-delete" data-job-action="delete">Delete</button>`;
+  document.getElementById("job-detail-actions").innerHTML = actions;
+}
+
+async function runCustomJobTransition(action, job) {
+  const detail = customJobDetail;
+  if (!detail || !job) return;
+  const button = document.querySelector(`#job-detail-actions [data-job-action="${action}"]`);
+  if (button) { button.disabled = true; button.textContent = action === "done" ? "Saving…" : "Restoring…"; }
+  setCustomJobDetailStatus("");
+  try {
+    const result = action === "done"
+      ? await sb.rpc("complete_custom_job", { p_job_id: job.id, p_expected_revision: Number(job.revision) })
+      : await sb.rpc("restore_custom_job", { p_job_id: job.id, p_expected_revision: Number(job.revision) });
+    if (result.error) throw result.error;
+    if (!customJobDetail || detail.gardenId !== currentGardenId || detail.gardenId !== customJobDetail.gardenId) return;
+    await loadCustomJobs(detail.gardenId, { quiet: true });
+    refreshTodayAfterCustomJobChange(detail.gardenId);
+    if (action === "done") {
+      closeCustomJobDetail(false);
+      showUndoToast({
+        type: "custom-job-completion",
+        gardenId: detail.gardenId,
+        jobId: job.id,
+        jobName: job.name,
+        undoToken: result.data.undo.token
+      });
+    } else {
+      customJobDetail.failedAction = null;
+      renderCustomJobDetail();
+      showToast("Job restored.", false);
+    }
+  } catch (error) {
+    if (!customJobDetail || detail.gardenId !== currentGardenId) return;
+    console.error("Custom job transition failed:", error);
+    if (await sessionHasGone(error, 0)) { await recoverFromSessionLoss(); return; }
+    const hint = customJobHint(error);
+    if (hint === "garden_unavailable" || hint === "unavailable") {
+      await loadCustomJobs(detail.gardenId, { quiet: true });
+      if (detail.gardenId !== currentGardenId) return;
+    }
+    if (hint === "stale_revision") await recoverStaleCustomJob(job.id, "detail");
+    else {
+      customJobDetail.failedAction = action;
+      setCustomJobDetailStatus(customJobErrorMessage(error));
+      renderCustomJobDetail();
+    }
+  }
+}
+
+async function handleCustomJobDetailAction(event) {
+  const control = event.target.closest("[data-job-action]");
+  if (!control || !customJobDetail) return;
+  const job = customJobById(customJobDetail.jobId);
+  if (!job) return;
+  const action = control.dataset.jobAction;
+  if (action === "done" || action === "restore") { runCustomJobTransition(action, job); return; }
+  if (action === "reschedule") { openCustomJobEditor("reschedule", job, { parentModalId: "job-detail-modal" }); return; }
+  if (action === "delete") { openCustomJobDelete(job); return; }
+  if (action === "edit") {
+    const entitled = await loadCustomJobEntitlement();
+    if (!customJobDetail || !job || customJobDetail.gardenId !== currentGardenId) return;
+    if (entitled === null) {
+      setCustomJobDetailStatus("Couldn’t check Premium access. Check your connection and try again.");
+      return;
+    }
+    if (!entitled) { openCustomJobPremium("job-detail-modal"); return; }
+    openCustomJobEditor("edit", job, { parentModalId: "job-detail-modal" });
+  }
+}
+
+function openCustomJobDelete(job) {
+  customJobDeleteState = { jobId: job.id, gardenId: currentGardenId, revision: Number(job.revision), recurring: !!job.recurrence_unit, name: job.name };
+  document.getElementById("job-delete-copy").textContent = job.recurrence_unit
+    ? "Deleting this job will stop all future repetition."
+    : "This removes the job from this garden. You’ll have a brief chance to undo it.";
+  document.getElementById("job-delete-error").textContent = "";
+  document.getElementById("job-delete-error").classList.add("hidden");
+  document.getElementById("job-delete-confirm-btn").textContent = "Delete job";
+  document.getElementById("job-delete-confirm-btn").disabled = false;
+  showAccessibleModal("job-delete-modal", "job-delete-cancel-btn", "job-detail-modal");
+}
+
+function closeCustomJobDelete(restoreFocus = true) {
+  customJobDeleteState = null;
+  hideAccessibleModal("job-delete-modal", restoreFocus);
+}
+
+async function confirmCustomJobDelete() {
+  const state = customJobDeleteState;
+  if (!state) return;
+  const button = document.getElementById("job-delete-confirm-btn");
+  button.disabled = true;
+  button.textContent = "Deleting…";
+  try {
+    const { data, error } = await sb.rpc("delete_custom_job", {
+      p_job_id: state.jobId,
+      p_expected_revision: state.revision
+    });
+    if (error) throw error;
+    if (!customJobDeleteState || state.gardenId !== currentGardenId) return;
+    forgetJobPhoto(state.jobId);   // a tombstoned job's photo is no longer signed
+    closeCustomJobDelete(false);
+    closeCustomJobDetail(false);
+    await loadCustomJobs(state.gardenId, { quiet: true });
+    refreshTodayAfterCustomJobChange(state.gardenId);
+    if (state.recurring) showToast("Recurring job deleted.", false);
+    else showUndoToast({ type: "custom-job-delete", gardenId: state.gardenId, jobId: state.jobId, jobName: state.name });
+  } catch (error) {
+    if (!customJobDeleteState || state.gardenId !== currentGardenId) return;
+    console.error("Custom job delete failed:", error);
+    if (await sessionHasGone(error, 0)) { await recoverFromSessionLoss(); return; }
+    const hint = customJobHint(error);
+    if (hint === "garden_unavailable" || hint === "unavailable") {
+      await loadCustomJobs(state.gardenId, { quiet: true });
+      if (state.gardenId !== currentGardenId) return;
+    }
+    if (hint === "stale_revision") await recoverStaleCustomJob(state.jobId, "delete");
+    else {
+      const problem = document.getElementById("job-delete-error");
+      problem.textContent = customJobErrorMessage(error);
+      problem.classList.remove("hidden");
+    }
+    button.disabled = false;
+    button.textContent = "Retry";
+  }
+}
+
+/* --- Your job photos (RM-025, issue #50) ----------------------------------
+ * At most one optional reference photo per job: context for the job, never a
+ * feed. The custom-job-photos function and the database decide membership,
+ * the RM-025 entitlement, the current generation and job state; nothing here
+ * is a security boundary. Add/Change are offered only with live RM-025
+ * entitlement. View and Remove need membership only, so a photo is never
+ * hidden or trapped after Premium ends. A job photo is independent of any
+ * linked garden item's photo: neither is copied to, read for or replaces the
+ * other. Processing is the same processItemPhoto() used by item photos and
+ * identification, so only the re-encoded derivatives are ever uploaded. */
+
+const JOB_PHOTO = {
+  BUCKET: "custom-job-photos",
+  FUNCTION: "custom-job-photos"
+};
+
+let jobPhotos = new Map();             // custom_job_id -> { generation_id, width, height }, current garden only
+let jobPhotosLoadedFor = null;         // which garden jobPhotos describes
+let jobPhotosEpoch = 0;                // bumped by every local photo change: older sign replies are stale
+let jobPhotoOpSerial = 0;              // stale-response guard for detail and editor photo work
+
+function callJobPhotos(body) {
+  return callPhotoFunction(JOB_PHOTO.FUNCTION, body);
+}
+
+/* Job links share the memory-only signed-URL cache with item photos under
+ * their own prefix, so the two kinds can never answer for each other. */
+function jobPhotoKey(generationId) {
+  return "job:" + generationId;
+}
+
+function jobPhotoUrl(generationId, variant) {
+  return photoUrl(jobPhotoKey(generationId), variant);
+}
+
+function forgetJobPhoto(jobId) {
+  const photo = jobPhotos.get(String(jobId));
+  if (photo) forgetPhotoUrls(jobPhotoKey(photo.generation_id));
+  jobPhotos.delete(String(jobId));
+  jobPhotosEpoch += 1;
+}
+
+function resetJobPhotoState() {
+  jobPhotos = new Map();
+  jobPhotosLoadedFor = null;
+  jobPhotosEpoch += 1;
+  jobPhotoOpSerial += 1;
+}
+
+/* Asks the function which of this garden's jobs have a photo and signs their
+ * links. jobIds null means every job in the garden and replaces what was
+ * known; a list merges just those jobs. A link that is still fresh is kept,
+ * so a refresh never makes an on-screen image reload. Returns true when
+ * anything visible changed. */
+async function loadJobPhotos(gardenId, jobIds, includeImage) {
+  if (!gardenId) return false;
+  const ids = Array.isArray(jobIds) ? jobIds.map(String) : null;
+  if (ids && ids.length === 0) return false;
+  const epoch = jobPhotosEpoch;
+  const userAtRequest = currentUserId;
+  const res = await callJobPhotos({
+    action: "sign",
+    garden_id: gardenId,
+    custom_job_ids: ids,
+    include_image: !!includeImage
+  });
+  if (gardenId !== currentGardenId || userAtRequest !== currentUserId || epoch !== jobPhotosEpoch) return false;
+  if (!res.ok) {
+    if (res.status === 401 && await sessionHasGone(null, 401)) await recoverFromSessionLoss();
+    return false;
+  }
+
+  const expiresAt = Date.now() + (Number(res.data.expires_in) || 3600) * 1000 - PHOTO.URL_REFRESH_MARGIN_MS;
+  const before = jobPhotosLoadedFor === gardenId ? jobPhotos : new Map();
+  const next = ids ? new Map(before) : new Map();
+  if (ids) ids.forEach(id => next.delete(id));
+  let changed = false;
+  for (const p of (res.data.photos || [])) {
+    const id = String(p.custom_job_id);
+    next.set(id, { generation_id: p.generation_id, width: p.width, height: p.height });
+    const key = jobPhotoKey(p.generation_id);
+    if (p.thumb_url && !photoUrl(key, "thumb")) {
+      photoUrlCache.set(key + ":thumb", { url: p.thumb_url, expiresAt });
+      changed = true;
+    }
+    if (p.image_url && !photoUrl(key, "image")) {
+      photoUrlCache.set(key + ":image", { url: p.image_url, expiresAt });
+      changed = true;
+    }
+  }
+  if (next.size !== before.size) changed = true;
+  for (const [id, photo] of next) {
+    const old = before.get(id);
+    if (!old || old.generation_id !== photo.generation_id) changed = true;
+  }
+  jobPhotos = next;
+  jobPhotosLoadedFor = gardenId;
+  return changed;
+}
+
+/* After Your jobs loads: one call for the whole garden, and none at all when
+ * the garden has no jobs. */
+async function refreshJobPhotosForList(gardenId) {
+  if (gardenId !== currentGardenId) return;
+  if (customJobs.length === 0) {
+    if (jobPhotos.size > 0) { jobPhotos = new Map(); rerenderJobPhotoSurfaces(); }
+    jobPhotosLoadedFor = gardenId;
+    return;
+  }
+  if (await loadJobPhotos(gardenId, null, false)) rerenderJobPhotoSurfaces();
+}
+
+/* After Today loads: sign only the jobs Today is showing. */
+async function refreshTodayJobPhotos(gardenId) {
+  const ids = todayTasks.filter(isCustomTodayItem).map(item => String(item.custom_job_id));
+  if (ids.length === 0) return;
+  if (await loadJobPhotos(gardenId, ids, false)) applyTodayJobPhotos();
+}
+
+function rerenderJobPhotoSurfaces() {
+  renderYourJobs();
+  renderItemCustomJobs();
+  if (customJobDetail) renderCustomJobDetail();
+  applyTodayJobPhotos();
+}
+
+/* Today keeps its card grammar: the photo only takes the illustration's own
+ * place and size, so it never becomes the card's principal content, never
+ * changes order or the hero, and its absence leaves the ordinary art. Cards
+ * are patched in place rather than re-rendered. */
+function todayJobArt(jobId) {
+  const photo = jobPhotos.get(String(jobId));
+  const thumb = photo ? jobPhotoUrl(photo.generation_id, "thumb") : null;
+  return thumb
+    ? { src: thumb, className: "task-art custom-job-photo" }
+    : { src: taskArtPath(null), className: "task-art" };
+}
+
+function applyTodayJobPhotos() {
+  const container = document.getElementById("task-container");
+  if (!container || todayLoadedFor !== currentGardenId) return;
+  container.querySelectorAll("img[data-job-art]").forEach(img => {
+    const art = todayJobArt(img.dataset.jobArt);
+    if (img.getAttribute("src") !== art.src) img.setAttribute("src", art.src);
+    img.className = art.className;
+  });
+}
+
+function jobRowPhotoMarkup(jobId) {
+  const photo = jobPhotos.get(String(jobId));
+  const thumb = photo ? jobPhotoUrl(photo.generation_id, "thumb") : null;
+  return thumb
+    ? `<img class="job-row-photo" src="${escapeHtml(thumb)}" alt="" width="40" height="40" decoding="async">`
+    : "";
+}
+
+/* A broken signed link falls back calmly — the ordinary art on Today, nothing
+ * in a row, Try again in the detail — and is forgotten so it is re-signed.
+ * Listened for in the capture phase, because image errors do not bubble. */
+function handleJobPhotoImageError(event) {
+  const img = event.target;
+  if (!img || img.tagName !== "IMG") return;
+  const forgetSrc = () => {
+    for (const [key, hit] of photoUrlCache) {
+      if (key.startsWith("job:") && hit.url === img.getAttribute("src")) photoUrlCache.delete(key);
+    }
+  };
+  if (img.classList.contains("custom-job-photo")) {
+    forgetSrc();
+    img.setAttribute("src", taskArtPath(null));
+    img.className = "task-art";
+  } else if (img.classList.contains("job-row-photo")) {
+    forgetSrc();
+    img.remove();
+  } else if (img.classList.contains("job-detail-img") && customJobDetail) {
+    forgetSrc();
+    customJobDetail.photo.imageFailed = true;
+    renderCustomJobDetail();
+  }
+}
+
+/* ---- Detail sheet ------------------------------------------------------------- */
+
+function newJobPhotoState() {
+  return {
+    step: "idle",            // idle | choosing | processing | confirming | saving | failed
+    mode: null,              // add | change
+    pickerReturnState: null, // restore the current view if the native picker is cancelled
+    pending: null,           // { main, thumb, width, height, previewUrl? } kept for Retry
+    createdNow: false,       // the job was just created and this photo came with it
+    message: "",
+    isError: false,
+    imageFailed: false,
+    token: ++jobPhotoOpSerial
+  };
+}
+
+function discardPendingJobPhoto(state) {
+  if (state && state.pending && state.pending.previewUrl) URL.revokeObjectURL(state.pending.previewUrl);
+  if (state) state.pending = null;
+}
+
+function isCurrentJobPhotoOp(token, jobId) {
+  return !!customJobDetail && customJobDetail.photo.token === token &&
+    String(customJobDetail.jobId) === String(jobId) && customJobDetail.gardenId === currentGardenId;
+}
+
+function setJobPhotoMessage(state, message, isError) {
+  state.message = message;
+  state.isError = !!isError;
+}
+
+/* Fetches the full-size link for the open job, and re-learns whether it has a
+ * photo at all, so a photo added or removed elsewhere appears correctly. */
+async function loadJobDetailImage() {
+  const d = customJobDetail;
+  if (!d) return;
+  const jobId = String(d.jobId);
+  const known = jobPhotos.get(jobId);
+  if (known && jobPhotoUrl(known.generation_id, "image")) return;
+  const changed = await loadJobPhotos(d.gardenId, [jobId], true);
+  if (customJobDetail !== d || d.gardenId !== currentGardenId) return;
+  const photo = jobPhotos.get(jobId);
+  if (photo && !jobPhotoUrl(photo.generation_id, "image")) d.photo.imageFailed = true;
+  if (changed) rerenderJobPhotoSurfaces(); else renderCustomJobDetail();
+}
+
+function renderJobDetailPhoto(job) {
+  const d = customJobDetail;
+  const p = d.photo;
+  const jobId = String(job.id);
+  const photo = jobPhotos.get(jobId) || null;
+  const completed = job.section === "completed";
+  const canAdd = customJobsEntitled() && !completed;
+  const viewStep = p.step === "choosing" && p.pickerReturnState ? p.pickerReturnState.step : p.step;
+
+  // A replacement is previewed before it is used; the current photo stays
+  // until a new one has been safely saved.
+  const area = document.getElementById("job-detail-photo");
+  if (viewStep === "confirming" && p.pending && p.pending.previewUrl) {
+    area.innerHTML = `<img class="item-detail-preview" src="${escapeHtml(p.pending.previewUrl)}" alt="The new photo for ${escapeHtml(job.name)}">`;
+    area.style.removeProperty("--photo-ratio");
+  } else if (photo) {
+    const image = p.imageFailed ? null : jobPhotoUrl(photo.generation_id, "image");
+    const shown = image || jobPhotoUrl(photo.generation_id, "thumb");
+    area.innerHTML = `
+      <button type="button" class="item-detail-photo-btn" data-job-photo-action="view" aria-label="View photo for ${escapeHtml(job.name)}">
+        ${shown ? `<img class="item-detail-img job-detail-img" src="${escapeHtml(shown)}" alt="" decoding="async">` : ""}
+      </button>
+      ${p.imageFailed ? `
+        <div class="item-detail-photo-problem">
+          <p>Photo unavailable</p>
+          <button type="button" class="secondary-action-btn" data-job-photo-action="retry-image">Try again</button>
+        </div>` : ""}`;
+    area.style.setProperty("--photo-ratio", photo.width && photo.height ? photo.width + " / " + photo.height : "4 / 3");
+  } else {
+    area.innerHTML = "";
+  }
+  area.classList.toggle("hidden", area.innerHTML.trim() === "");
+
+  const status = document.getElementById("job-photo-status");
+  status.textContent = p.message;
+  status.classList.toggle("is-error", p.isError);
+  status.classList.toggle("hidden", !p.message);
+
+  const buttons = [];
+  const button = (action, label, kind) =>
+    `<button type="button" class="${kind}" data-job-photo-action="${action}">${label}</button>`;
+  if (viewStep === "idle") {
+    if (photo) {
+      if (canAdd) buttons.push(button("change", "Change photo", "secondary-action-btn"));
+      buttons.push(button("remove", "Remove photo", "photo-remove-btn"));
+    } else if (canAdd) {
+      buttons.push(button("add", "Add photo", "secondary-action-btn"));
+    }
+  } else if (viewStep === "confirming") {
+    buttons.push(button("use", "Use this photo", "primary-action-btn"));
+    buttons.push(button("another", "Try another photo", "secondary-action-btn"));
+    buttons.push(button("cancel", "Cancel", "photo-text-btn"));
+  } else if (viewStep === "failed") {
+    if (p.pending) buttons.push(button("retry", "Retry photo", "primary-action-btn"));
+    if (canAdd) buttons.push(button("another", "Try another photo", p.pending ? "secondary-action-btn" : "primary-action-btn"));
+    buttons.push(button("cancel", p.pending ? "Don’t add a photo" : "Cancel", "photo-text-btn"));
+  }
+  const actions = document.getElementById("job-photo-actions");
+  actions.innerHTML = buttons.join("");
+  actions.classList.toggle("hidden", buttons.length === 0);
+}
+
+function focusJobPhotoControls() {
+  requestAnimationFrame(() => {
+    const target = document.querySelector("#job-photo-actions button") ||
+      document.querySelector("#job-detail-actions button");
+    if (target && document.contains(target)) target.focus();
+  });
+}
+
+function openJobPhotoPicker(inputId) {
+  // Open inside the tap: the device/browser owns camera, library and file choices.
+  const input = document.getElementById(inputId);
+  input.value = "";
+  input.click();
+}
+
+function handleJobPhotoAction(control) {
+  const d = customJobDetail;
+  if (!d) return;
+  const job = customJobById(d.jobId);
+  if (!job) return;
+  const p = d.photo;
+  const action = control.dataset.jobPhotoAction;
+
+  if (action === "view") { openJobPhotoViewer(job.id); return; }
+  if (action === "retry-image") {
+    const photo = jobPhotos.get(String(job.id));
+    if (photo) photoUrlCache.delete(jobPhotoKey(photo.generation_id) + ":image");
+    p.imageFailed = false;
+    renderCustomJobDetail();
+    loadJobDetailImage();
+    return;
+  }
+  if (action === "add" || action === "change" || action === "another") {
+    if (!customJobsEntitled() || job.section === "completed") return;
+    if (p.step !== "choosing") p.pickerReturnState = { step: p.step, mode: p.mode };
+    if (action !== "another") p.mode = action;
+    p.step = "choosing";
+    openJobPhotoPicker("job-photo-input");
+    return;
+  }
+  if (action === "cancel") {
+    discardPendingJobPhoto(p);
+    p.step = "idle";
+    p.mode = null;
+    p.pickerReturnState = null;
+    p.createdNow = false;
+    p.token = ++jobPhotoOpSerial;
+    setJobPhotoMessage(p, "", false);
+    renderCustomJobDetail();
+    focusJobPhotoControls();
+    return;
+  }
+  if (action === "use" || action === "retry") { saveJobDetailPhoto(); return; }
+  if (action === "remove") openJobPhotoRemove();
+}
+
+function handleJobPhotoPickerCancelled() {
+  const d = customJobDetail;
+  if (!d || d.photo.step !== "choosing" || !d.photo.pickerReturnState) return;
+  const p = d.photo;
+  p.step = p.pickerReturnState.step;
+  p.mode = p.pickerReturnState.mode;
+  p.pickerReturnState = null;
+  renderCustomJobDetail();
+  focusJobPhotoControls();
+}
+
+async function handleJobPhotoFileChosen(event) {
+  const input = event.target;
+  const file = input.files && input.files[0];
+  input.value = "";
+  const d = customJobDetail;
+  if (!file) { handleJobPhotoPickerCancelled(); return; }
+  if (!d || d.photo.step !== "choosing" || !customJobsEntitled()) return;
+  const p = d.photo;
+  const jobId = d.jobId;
+  p.pickerReturnState = null;
+  const token = p.token = ++jobPhotoOpSerial;
+  discardPendingJobPhoto(p);
+  p.createdNow = false;
+  p.step = "processing";
+  setJobPhotoMessage(p, "Preparing photo…", false);
+  renderCustomJobDetail();
+
+  let processed;
+  try {
+    processed = await processItemPhoto(file);
+  } catch (error) {
+    if (!isCurrentJobPhotoOp(token, jobId)) return;
+    if (!(error instanceof PhotoProblem)) console.error("Job photo processing failed:", error);
+    p.step = "failed";
+    setJobPhotoMessage(p, photoProblemMessage(error, photoDiagnosticsWanted()), true);
+    renderCustomJobDetail();
+    focusJobPhotoControls();
+    return;
+  }
+  if (!isCurrentJobPhotoOp(token, jobId)) return;
+  p.pending = processed;
+  p.pending.previewUrl = URL.createObjectURL(processed.main);
+  p.step = "confirming";
+  setJobPhotoMessage(p, "", false);
+  renderCustomJobDetail();
+  focusJobPhotoControls();
+}
+
+function recordSavedJobPhoto(gardenId, jobId, photo, before) {
+  jobPhotosEpoch += 1;
+  if (before) forgetPhotoUrls(jobPhotoKey(before.generation_id));
+  if (gardenId !== currentGardenId) return;
+  jobPhotos.set(String(jobId), photo);
+  jobPhotosLoadedFor = gardenId;
+}
+
+/* Detail Add/Change/Retry. Once the uploads have started the save is carried
+ * through even if the sheet is closed; only a garden switch or sign-out
+ * abandons it (an uncommitted upload is swept up later). The sheet is updated
+ * only while it still shows the same job and attempt. */
+async function saveJobDetailPhoto() {
+  const d = customJobDetail;
+  if (!d || !d.photo.pending || !customJobsEntitled()) return;
+  const p = d.photo;
+  const token = p.token = ++jobPhotoOpSerial;
+  const pending = p.pending;
+  const gardenId = d.gardenId;
+  const jobId = String(d.jobId);
+  const userAtStart = currentUserId;
+  const before = jobPhotos.get(jobId) || null;
+  const expected = before ? before.generation_id : null;
+  const stillHere = () => currentGardenId === gardenId && currentUserId === userAtStart;
+
+  p.step = "saving";
+  setJobPhotoMessage(p, "Saving photo…", false);
+  renderCustomJobDetail();
+
+  const res = await uploadPhotoGeneration(callJobPhotos, JOB_PHOTO.BUCKET, { custom_job_id: jobId }, pending, expected, stillHere);
+  if (res.abandoned) return;
+  if (!res.ok) { jobPhotoSaveFailed(token, jobId, gardenId, res); return; }
+  recordSavedJobPhoto(gardenId, jobId, res.photo, before);
+
+  if (isCurrentJobPhotoOp(token, jobId)) {
+    discardPendingJobPhoto(p);
+    p.step = "idle";
+    p.mode = null;
+    p.createdNow = false;
+    p.imageFailed = false;
+    setJobPhotoMessage(p, "Photo saved.", false);
+  }
+  rerenderJobPhotoSurfaces();
+  if (isCurrentJobPhotoOp(token, jobId)) focusJobPhotoControls();
+  if (await loadJobPhotos(gardenId, [jobId], true)) rerenderJobPhotoSurfaces();
+}
+
+/* The job itself is never touched here: a photo failure leaves a saved job
+ * saved, and Retry repeats only the photo. */
+function jobPhotoSaveFailed(token, jobId, gardenId, res) {
+  if (res.status === 401) {
+    sessionHasGone(null, 401).then(gone => { if (gone) recoverFromSessionLoss(); });
+    return;
+  }
+  const reason = res.reason || "";
+  const current = isCurrentJobPhotoOp(token, jobId);
+  const lead = current && customJobDetail.photo.createdNow ? "Job added, but the photo wasn’t saved. " : "";
+  if (reason === "job_unavailable" || reason === "not_member" || reason === "job_deleted") {
+    if (current) closeCustomJobDetail(false);
+    showToast(reason === "job_deleted"
+      ? "That job has been deleted, so the photo wasn’t saved."
+      : "That job is no longer in this garden, so the photo wasn’t saved.", false);
+    if (gardenId === currentGardenId) loadCustomJobs(gardenId, { quiet: true });
+    return;
+  }
+  if (!current) {
+    if (gardenId === currentGardenId) showToast("A job photo wasn’t saved. Open the job to try again.", false);
+    return;
+  }
+  const p = customJobDetail.photo;
+  const settle = message => {
+    discardPendingJobPhoto(p);
+    p.step = "idle";
+    p.mode = null;
+    p.createdNow = false;
+    setJobPhotoMessage(p, message, true);
+  };
+
+  if (reason === "not_entitled") {
+    customJobEntitlement = { userId: currentUserId, known: true, value: false };
+    settle(lead + "Premium is needed to add or change a job’s photo.");
+  } else if (reason === "photo_exists" || reason === "stale_generation" || reason === "generation_in_use") {
+    settle(lead + "This job’s photo was just changed somewhere else, so this one wasn’t saved.");
+    loadJobPhotos(gardenId, [jobId], true).then(changed => { if (changed) rerenderJobPhotoSurfaces(); });
+  } else if (reason === "account_ceiling") {
+    settle(lead + "This account has reached its photo limit.");
+  } else {
+    // Anything else — connection, Storage, an expired upload — is worth a retry
+    // with the photo already prepared.
+    p.step = "failed";
+    setJobPhotoMessage(p, (lead || "Photo not saved. ") + "Check your connection, then Retry photo.", true);
+  }
+  renderCustomJobDetail();
+  focusJobPhotoControls();
+}
+
+/* ---- Remove ------------------------------------------------------------------- */
+
+function openJobPhotoRemove() {
+  const d = customJobDetail;
+  if (!d || !jobPhotos.has(String(d.jobId))) return;
+  preparePhotoRemoveModal("job", "This photo will be permanently removed from this job.");
+  showAccessibleModal("photo-remove-modal", "photo-remove-cancel-btn", "job-detail-modal");
+}
+
+/* Membership is enough to remove, whatever the entitlement. The photo stays
+ * on screen until the server confirms it is gone. */
+async function confirmJobPhotoRemove() {
+  const d = customJobDetail;
+  const jobId = d ? String(d.jobId) : "";
+  const photo = d ? jobPhotos.get(jobId) : null;
+  if (!d || !photo) { closePhotoRemoveModal(); return; }
+  const token = d.photo.token = ++jobPhotoOpSerial;
+  const gardenId = d.gardenId;
+  const confirm = document.getElementById("photo-remove-confirm-btn");
+  const errorEl = document.getElementById("photo-remove-error");
+  confirm.disabled = true;
+  confirm.textContent = "Removing…";
+  errorEl.classList.add("hidden");
+
+  const res = await callJobPhotos({ action: "remove", custom_job_id: jobId, expected_generation_id: photo.generation_id });
+  if (gardenId !== currentGardenId) return;
+
+  if (res.ok || res.reason === "no_photo") {
+    forgetJobPhoto(jobId);
+    closePhotoRemoveModal(false);
+    if (isCurrentJobPhotoOp(token, jobId)) {
+      customJobDetail.photo.imageFailed = false;
+      setJobPhotoMessage(customJobDetail.photo, "Photo removed.", false);
+    }
+    rerenderJobPhotoSurfaces();
+    if (isCurrentJobPhotoOp(token, jobId)) focusJobPhotoControls();
+    return;
+  }
+  if (res.status === 401 && await sessionHasGone(null, 401)) { await recoverFromSessionLoss(); return; }
+  if (res.reason === "stale_generation") {
+    closePhotoRemoveModal(false);
+    if (isCurrentJobPhotoOp(token, jobId)) {
+      setJobPhotoMessage(customJobDetail.photo, "This job’s photo was just changed somewhere else. Check it before removing it.", true);
+    }
+    if (await loadJobPhotos(gardenId, [jobId], true)) rerenderJobPhotoSurfaces(); else if (customJobDetail) renderCustomJobDetail();
+    return;
+  }
+  if (res.reason === "job_unavailable" || res.reason === "not_member") {
+    closePhotoRemoveModal(false);
+    jobPhotoSaveFailed(token, jobId, gardenId, res);
+    return;
+  }
+  confirm.disabled = false;
+  confirm.textContent = "Remove photo";
+  errorEl.textContent = "Couldn’t remove this photo. Check your connection and try again.";
+  errorEl.classList.remove("hidden");
+}
+
+/* ---- Viewer ------------------------------------------------------------------- */
+
+function openJobPhotoViewer(jobId) {
+  const job = customJobById(jobId);
+  const photo = jobPhotos.get(String(jobId));
+  if (!job || !photo) return;
+  const serial = ++photoViewerSerial;
+  photoViewer = { kind: "job", jobId: String(jobId), gardenId: currentGardenId, serial };
+  document.getElementById("photo-viewer-title").textContent = "Photo for " + job.name;
+  document.getElementById("photo-viewer-stage").classList.remove("zoomed");
+  setPhotoViewerProblem(false);
+  showPhotoViewerImage(jobPhotoUrl(photo.generation_id, "image") || jobPhotoUrl(photo.generation_id, "thumb"));
+  showAccessibleModal("photo-viewer", "close-photo-viewer", "job-detail-modal");
+  if (!jobPhotoUrl(photo.generation_id, "image")) loadPhotoViewerImage(serial);
+}
+
+/* ---- Add a job with a photo ---------------------------------------------------- */
+
+/* The editor holds a prepared photo only until the job exists. Nothing is
+ * uploaded before then: a job that fails to save never leaves a photo behind. */
+function renderEditorJobPhoto() {
+  const journey = customJobJourney;
+  const field = document.getElementById("job-photo-field");
+  if (!field) return;
+  const offered = !!journey && journey.mode === "create" && customJobsEntitled();
+  field.classList.toggle("hidden", !offered);
+  const save = document.getElementById("job-save-btn");
+  if (!offered) return;
+  const p = journey.photo;
+  const preview = document.getElementById("job-editor-photo");
+  const ready = p.pending && p.pending.previewUrl;
+  preview.innerHTML = ready
+    ? `<img class="job-editor-preview" src="${escapeHtml(p.pending.previewUrl)}" alt="The photo for this job">`
+    : "";
+  preview.classList.toggle("hidden", !ready);
+  const status = document.getElementById("job-editor-photo-status");
+  status.textContent = p.message;
+  status.classList.toggle("is-error", p.isError);
+  status.classList.toggle("hidden", !p.message);
+  const actions = document.getElementById("job-editor-photo-actions");
+  actions.innerHTML = p.step === "processing" ? "" : ready
+    ? `<button type="button" class="secondary-action-btn" data-editor-photo-action="choose">Choose another photo</button>
+       <button type="button" class="photo-remove-btn" data-editor-photo-action="clear">Remove photo</button>`
+    : `<button type="button" class="secondary-action-btn" data-editor-photo-action="choose">Add a photo</button>`;
+  if (save && p.step === "processing") save.disabled = true;
+  else if (save && save.textContent !== "Saving…") save.disabled = false;
+}
+
+function handleEditorPhotoAction(control) {
+  const journey = customJobJourney;
+  if (!journey || journey.mode !== "create") return;
+  const action = control.dataset.editorPhotoAction;
+  if (action === "choose") {
+    if (!customJobsEntitled()) return;
+    openJobPhotoPicker("job-editor-photo-input");
+    return;
+  }
+  if (action === "clear") {
+    discardPendingJobPhoto(journey.photo);
+    journey.photo.token = ++jobPhotoOpSerial;
+    journey.photo.step = "none";
+    setJobPhotoMessage(journey.photo, "", false);
+    renderEditorJobPhoto();
+    requestAnimationFrame(() => {
+      const next = document.querySelector('#job-editor-photo-actions button');
+      if (next) next.focus();
+    });
+  }
+}
+
+async function handleEditorPhotoFileChosen(event) {
+  const input = event.target;
+  const file = input.files && input.files[0];
+  input.value = "";
+  const journey = customJobJourney;
+  if (!file || !journey || journey.mode !== "create" || !customJobsEntitled()) return;
+  const p = journey.photo;
+  const token = p.token = ++jobPhotoOpSerial;
+  p.step = "processing";
+  setJobPhotoMessage(p, "Preparing photo…", false);
+  renderEditorJobPhoto();
+  const stillHere = () => customJobJourney === journey && journey.photo.token === token &&
+    journey.gardenId === currentGardenId && journey.userId === currentUserId;
+
+  let processed;
+  try {
+    processed = await processItemPhoto(file);
+  } catch (error) {
+    if (!stillHere()) return;
+    if (!(error instanceof PhotoProblem)) console.error("Job photo processing failed:", error);
+    p.step = p.pending ? "ready" : "none";
+    setJobPhotoMessage(p, photoProblemMessage(error, photoDiagnosticsWanted()), true);
+    renderEditorJobPhoto();
+    return;
+  }
+  if (!stillHere()) return;
+  discardPendingJobPhoto(p);
+  p.pending = processed;
+  p.pending.previewUrl = URL.createObjectURL(processed.main);
+  p.step = "ready";
+  setJobPhotoMessage(p, "", false);
+  renderEditorJobPhoto();
+}
+
+/* Called once the job exists. The photo is saved from the new job's own
+ * detail sheet, so a failure shows there with a photo-only Retry and the
+ * create step can never run twice. */
+async function saveCreatedJobPhoto(jobId, pending, parentModalId, gardenId) {
+  if (gardenId !== currentGardenId) { discardPendingJobPhoto({ pending }); return; }
+  if (customJobById(jobId)) {
+    openCustomJobDetail(jobId, parentModalId);
+    if (customJobDetail && String(customJobDetail.jobId) === String(jobId)) {
+      customJobDetail.photo.pending = pending;
+      customJobDetail.photo.createdNow = true;
+      saveJobDetailPhoto();
+      return;
+    }
+  }
+  // The list couldn't be read back: save the photo without the sheet.
+  const userAtStart = currentUserId;
+  const stillHere = () => currentGardenId === gardenId && currentUserId === userAtStart;
+  const res = await uploadPhotoGeneration(callJobPhotos, JOB_PHOTO.BUCKET, { custom_job_id: String(jobId) }, pending, null, stillHere);
+  discardPendingJobPhoto({ pending });
+  if (res.abandoned) return;
+  if (!res.ok) {
+    if (res.status === 401 && await sessionHasGone(null, 401)) { await recoverFromSessionLoss(); return; }
+    showToast("Job added, but the photo wasn’t saved. Open the job to add it again.", false);
+    return;
+  }
+  recordSavedJobPhoto(gardenId, jobId, res.photo, null);
+  rerenderJobPhotoSurfaces();
+}
+
+/* --- Your jobs on Today -------------------------------------------------- */
+
+/* A Custom Job changed — added, done, undone, moved later, edited, restored or
+ * deleted. If Today is on screen for that garden, ask for it again through
+ * loadToday(), so a burst of changes still produces at most one trailing call.
+ * Off screen nothing is fetched: returning to Today reloads it anyway. */
+function refreshTodayAfterCustomJobChange(gardenId) {
+  if (!gardenId || gardenId !== currentGardenId || todayLoadedFor !== gardenId) return;
+  const view = document.getElementById("view-today");
+  if (!view || !view.classList.contains("active-view")) return;
+  loadToday();
+}
+
+/* A change made from Today leaves any already-loaded management copy behind,
+ * so refresh that copy too. Nothing is loaded that was not already wanted. */
+function refreshLoadedCustomJobs(gardenId) {
+  if (gardenId && gardenId === currentGardenId && customJobsLoadedFor === gardenId) {
+    loadCustomJobs(gardenId, { quiet: true });
+  }
+}
+
+/* The card on Today opens the same detail sheet as Your jobs. The sheet reads
+ * the management copy, so make sure it describes this garden and this job's
+ * current revision before opening; a job that has gone since Today loaded
+ * refreshes Today rather than opening a stale sheet. */
+async function openTodayCustomJob(jobId) {
+  const gardenAtOpen = currentGardenId;
+  const userAtOpen = currentUserId;
+  const todayItem = todayTasks.find(item => todayItemKey(item) === "custom:" + jobId);
+  const known = customJobsLoadedFor === gardenAtOpen ? customJobById(jobId) : null;
+  if (!known || (todayItem && Number(known.revision) !== Number(todayItem.revision))) {
+    const loaded = await loadCustomJobs(gardenAtOpen, { quiet: true });
+    if (gardenAtOpen !== currentGardenId || userAtOpen !== currentUserId) return;
+    if (!loaded) {
+      showTaskStatus("We couldn’t open that job. Check your connection and try again.", true);
+      return;
+    }
+  }
+  const job = customJobById(jobId);
+  if (!job || job.section === "completed") {
+    showTaskStatus("That job changed elsewhere. Today has been refreshed.", false);
+    loadToday();
+    return;
+  }
+  openCustomJobDetail(job.id, null);
+}
+
+function resetCustomJobState() {
+  customJobsRequestSerial += 1;
+  customJobJourneySerial += 1;
+  customJobs = [];
+  customJobsLoadedFor = null;
+  resetJobPhotoState();
+  closeCustomJobPremium(false);
+  closeCustomJobDelete(false);
+  closeCustomJobEditor(false);
+  closeCustomJobDetail(false);
+  closeYourJobs(false);
+}
+
+function forgetCustomJobSession() {
+  resetCustomJobState();
+  customJobEntitlement = { userId: null, known: false, value: false };
+}
+
 function onCardPointerDown(e) {
   const wrapper = e.target.closest(".task-card-wrapper");
   if (!wrapper) return;
   if (wrapper.classList.contains("completed")) return; // completed cards don't swipe
+  // A Custom Job has no Hide to reveal: hiding is a preference about WGT's
+  // own recommendations, and a job the gardener wrote is Done, moved or deleted.
+  if (wrapper.classList.contains("custom-job-wrapper")) return;
   // Completion and explicit Hide are ordinary controls, not drag handles.
   // Ignoring their pointerdown avoids a small sideways finger movement from
   // priming the swipe state or suppressing the intended click.
@@ -4856,11 +6621,12 @@ async function handleHideTaskClick(event) {
   const taskName = nameEl ? nameEl.textContent : "Task";
   const gardenAtHide = currentGardenId;
   invalidateTodayRequestForLocalMutation();
-  const removed = removeTodayTaskFromClient(taskId);
+  const removed = removeTodayTaskFromClient(generatedTaskKey(taskId));
   const task = removed.task;
 
   if (currentlyRevealedWrapper === wrapper) currentlyRevealedWrapper = null;
   if (wrapper) wrapper.remove();
+  renderTodayIfNoCardsRemain();
 
   const hideState = {
     type: "hide",
@@ -4919,8 +6685,10 @@ function hideToast() {
 
 function showUndoToast(state) {
   undoToastState = state;
-  const message = state.type === "completion"
-    ? '“' + state.taskName + '” completed.'
+  const message = state.type === "completion" || state.type === "custom-job-completion"
+    ? '“' + (state.taskName || state.jobName) + '” completed.'
+    : state.type === "custom-job-delete"
+      ? '“' + state.jobName + '” deleted.'
     : state.type === "frost-banner"
       ? "Frost warning dismissed."
       : '“' + state.taskName + '” hidden.';
@@ -4942,6 +6710,28 @@ async function handleUndoAction() {
   if (state.type === "frost-banner") {
     writeFrostDismissedSpell(state.slot, null);
     renderFrostBanner();
+    return;
+  }
+
+  if (state.type === "custom-job-completion" || state.type === "custom-job-delete") {
+    try {
+      const result = state.type === "custom-job-completion"
+        ? await sb.rpc("undo_custom_job_completion", {
+            p_job_id: state.jobId,
+            p_undo_token: state.undoToken
+          })
+        : await sb.rpc("undo_delete_custom_job", { p_job_id: state.jobId });
+      if (result.error) throw result.error;
+      if (gardenAtUndo !== currentGardenId) return;
+      refreshLoadedCustomJobs(gardenAtUndo);
+      refreshTodayAfterCustomJobChange(gardenAtUndo);
+      showToast(state.type === "custom-job-completion" ? "Completion undone." : "Job restored.", false);
+    } catch (error) {
+      console.error("Custom job undo failed:", error);
+      if (gardenAtUndo !== currentGardenId) return;
+      if (await sessionHasGone(error, 0)) { await recoverFromSessionLoss(); return; }
+      showTaskStatus("We couldn’t undo that change. Open Your jobs to see the latest version.", true);
+    }
     return;
   }
 
@@ -5023,6 +6813,11 @@ function closeSettingsModal(restoreFocus = true) {
 }
 
 function closeAllModals() {
+  closeCustomJobPremium(false);
+  closeCustomJobDelete(false);
+  closeCustomJobEditor(false);
+  closeCustomJobDetail(false);
+  closeYourJobs(false);
   closeIdentify({ forced: true });
   closePhotoViewer(false);
   closePhotoRemoveModal(false);
@@ -5148,11 +6943,12 @@ async function handleRestoreTask(event) {
 async function handleTaskCompletion(event) {
   const checkbox = event.target.closest(".task-check");
   if (!checkbox) return;
+  if (checkbox.dataset.jobId) { completeTodayCustomJob(checkbox); return; }
 
   const card = checkbox.closest(".task-card");
   const wrapper = checkbox.closest(".task-card-wrapper");
   const taskId = parseInt(checkbox.getAttribute("data-task-id"), 10);
-  const task = todayTasks.find(item => Number(item.task_id) === taskId);
+  const task = todayTasks.find(item => todayItemKey(item) === generatedTaskKey(taskId));
   const taskName = task ? task.name : "Task";
   const gardenAtCompletion = currentGardenId;
 
@@ -5169,36 +6965,20 @@ async function handleTaskCompletion(event) {
     if (gardenAtCompletion !== currentGardenId) return;
 
     invalidateTodayRequestForLocalMutation();
-    const removed = removeTodayTaskFromClient(taskId);
+    const removed = removeTodayTaskFromClient(generatedTaskKey(taskId));
     const completedTask = removed.task || task;
 
-    checkbox.classList.add("completed");
-    checkbox.setAttribute("aria-label", taskName + " completed");
-    card.classList.add("completing");
-    if (wrapper) {
-      wrapper.classList.add("completed");
-      if (currentlyRevealedWrapper === wrapper) currentlyRevealedWrapper = null;
-      card.style.transform = "translateX(0)";
-    }
-
-    const reducedMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    setTimeout(() => {
-      if (gardenAtCompletion !== currentGardenId) return;
-      if (wrapper) wrapper.classList.add("removing");
-      setTimeout(() => {
-        if (gardenAtCompletion !== currentGardenId) return;
-        if (wrapper) wrapper.remove();
-        showUndoToast({
-          type: "completion",
-          taskId,
-          taskName,
-          task: completedTask,
-          taskIndex: removed.index,
-          gardenId: gardenAtCompletion,
-          completionId: data.id
-        });
-      }, reducedMotion ? 0 : 180);
-    }, reducedMotion ? 80 : 420);
+    animateTodayCardCompletion(checkbox, card, wrapper, taskName, gardenAtCompletion, () => {
+      showUndoToast({
+        type: "completion",
+        taskId,
+        taskName,
+        task: completedTask,
+        taskIndex: removed.index,
+        gardenId: gardenAtCompletion,
+        completionId: data.id
+      });
+    });
   } catch (error) {
     console.error("Completion error:", error);
     if (gardenAtCompletion !== currentGardenId) return;
@@ -5206,6 +6986,91 @@ async function handleTaskCompletion(event) {
     checkbox.disabled = false;
     checkbox.setAttribute("aria-label", "Mark " + taskName + " as done");
     showTaskStatus("We couldn’t mark “" + taskName + "” as done. Please try again.", true);
+  }
+}
+
+/* The shared completion feedback: tick, settle, close the card, then offer
+ * Undo. If that was the last job visible under the current time choice, the
+ * list re-renders so the right empty or no-fit state appears instead of a
+ * blank space. */
+function animateTodayCardCompletion(checkbox, card, wrapper, name, gardenAtCompletion, onRemoved) {
+  checkbox.classList.add("completed");
+  checkbox.setAttribute("aria-label", name + " completed");
+  if (card) card.classList.add("completing");
+  if (wrapper) {
+    wrapper.classList.add("completed");
+    if (currentlyRevealedWrapper === wrapper) currentlyRevealedWrapper = null;
+    if (card) card.style.transform = "translateX(0)";
+  }
+
+  const reducedMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  setTimeout(() => {
+    if (gardenAtCompletion !== currentGardenId) return;
+    if (wrapper) wrapper.classList.add("removing");
+    setTimeout(() => {
+      if (gardenAtCompletion !== currentGardenId) return;
+      if (wrapper) wrapper.remove();
+      renderTodayIfNoCardsRemain();
+      onRemoved();
+    }, reducedMotion ? 0 : 180);
+  }, reducedMotion ? 80 : 420);
+}
+
+function renderTodayIfNoCardsRemain() {
+  if (orderTasksForDisplay(todayTasks, selectedTimeMinutes, todayHeroKey).eligible.length === 0) {
+    renderCurrentTaskList({ preservePosition: true });
+  }
+}
+
+/* Done on a Custom Job from Today goes through the RM-025 lifecycle RPC and
+ * nothing else: no task_completion row is ever written, so completing "Mow the
+ * back lawn" cannot mark, cool down or suppress WGT's own mowing task. */
+async function completeTodayCustomJob(checkbox) {
+  const jobId = checkbox.dataset.jobId;
+  const key = "custom:" + jobId;
+  const job = todayTasks.find(item => todayItemKey(item) === key);
+  if (!job) return;
+  const card = checkbox.closest(".task-card");
+  const wrapper = checkbox.closest(".task-card-wrapper");
+  const gardenAtCompletion = currentGardenId;
+
+  checkbox.disabled = true;
+  checkbox.setAttribute("aria-label", "Marking " + job.name + " as done");
+
+  try {
+    const { data, error } = await sb.rpc("complete_custom_job", {
+      p_job_id: jobId,
+      p_expected_revision: Number(job.revision)
+    });
+    if (error) throw error;
+    if (gardenAtCompletion !== currentGardenId) return;
+
+    invalidateTodayRequestForLocalMutation();
+    removeTodayTaskFromClient(key);
+    refreshLoadedCustomJobs(gardenAtCompletion);
+    animateTodayCardCompletion(checkbox, card, wrapper, job.name, gardenAtCompletion, () => {
+      showUndoToast({
+        type: "custom-job-completion",
+        gardenId: gardenAtCompletion,
+        jobId,
+        jobName: job.name,
+        undoToken: data && data.undo ? data.undo.token : null
+      });
+    });
+  } catch (error) {
+    console.error("Custom job completion from Today failed:", error);
+    if (gardenAtCompletion !== currentGardenId) return;
+    if (await sessionHasGone(error, 0)) { await recoverFromSessionLoss(); return; }
+    const hint = customJobHint(error);
+    if (hint === "garden_unavailable") { await handleGardenGone(); return; }
+    if (hint === "stale_revision" || hint === "unavailable" || hint === "deleted" || hint === "completed") {
+      showTaskStatus("“" + job.name + "” changed elsewhere. Today has been refreshed.", false);
+      loadToday();
+      return;
+    }
+    checkbox.disabled = false;
+    checkbox.setAttribute("aria-label", "Mark " + job.name + ", your job, as done");
+    showTaskStatus("We couldn’t mark “" + job.name + "” as done. Please try again.", true);
   }
 }
 
@@ -5267,7 +7132,8 @@ document.addEventListener("DOMContentLoaded", () => {
     gardenModal.addEventListener("click", (e) => { if (e.target === gardenModal) closeGardenModal(); });
   }
   ["garden-modal", "settings-modal", "garden-danger-modal", "delete-account-modal", "feedback-modal",
-   "item-detail-modal", "photo-remove-modal", "photo-viewer", "identify-modal"]
+   "item-detail-modal", "photo-remove-modal", "photo-viewer", "identify-modal", "your-jobs-modal",
+   "job-detail-modal", "job-editor-modal", "job-delete-modal", "job-premium-modal"]
     .forEach(id => {
       const modal = document.getElementById(id);
       if (modal) modal.addEventListener("keydown", handleAccessibleModalKeydown);
@@ -5290,9 +7156,12 @@ document.addEventListener("DOMContentLoaded", () => {
     taskContainer.addEventListener("pointermove", onCardPointerMove);
     taskContainer.addEventListener("pointerup", onCardPointerUp);
     taskContainer.addEventListener("pointercancel", onCardPointerUp);
+    taskContainer.addEventListener("error", handleJobPhotoImageError, true);
   }
   const timeFilterGroup = document.getElementById("time-filter-group");
   if (timeFilterGroup) timeFilterGroup.addEventListener("click", handleTimeFilter);
+  const todayAddJob = document.getElementById("today-add-job-btn");
+  if (todayAddJob) todayAddJob.addEventListener("click", () => startAddCustomJob(null, null));
 
   // --- Today view: the frost warning's dismiss ---
   // Its own listener rather than a line in handleTaskContainerAction, because
@@ -5323,9 +7192,13 @@ document.addEventListener("DOMContentLoaded", () => {
   if (itemDetailModal) {
     itemDetailModal.addEventListener("click", event => {
       if (event.target === itemDetailModal || event.target.closest("#close-item-detail-modal")) { closeItemDetail(); return; }
+      if (event.target.closest("#item-add-job-btn")) { startAddCustomJob(photoDetail && photoDetail.itemId, "item-detail-modal"); return; }
+      const jobRow = event.target.closest("[data-job-id]");
+      if (jobRow) { openCustomJobDetail(jobRow.dataset.jobId, "item-detail-modal"); return; }
       handleItemDetailAction(event);
     });
     itemDetailModal.addEventListener("error", handlePhotoImageError, true);
+    itemDetailModal.addEventListener("error", handleJobPhotoImageError, true);
   }
   const photoInput = document.getElementById("photo-input");
   if (photoInput) {
@@ -5349,7 +7222,9 @@ document.addEventListener("DOMContentLoaded", () => {
         closePhotoRemoveModal();
         return;
       }
-      if (event.target.closest("#photo-remove-confirm-btn")) confirmPhotoRemove();
+      if (event.target.closest("#photo-remove-confirm-btn")) {
+        if (photoRemoveFor === "job") confirmJobPhotoRemove(); else confirmPhotoRemove();
+      }
     });
   }
   const photoViewerEl = document.getElementById("photo-viewer");
@@ -5401,6 +7276,70 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   const signOutBtn = document.getElementById("signout-btn");
   if (signOutBtn) signOutBtn.addEventListener("click", handleSignOut);
+
+  // --- RM-025 Your jobs ---
+  const yourJobsBtn = document.getElementById("your-jobs-btn");
+  if (yourJobsBtn) yourJobsBtn.addEventListener("click", openYourJobs);
+  const yourJobsModal = document.getElementById("your-jobs-modal");
+  if (yourJobsModal) {
+    yourJobsModal.addEventListener("error", handleJobPhotoImageError, true);
+    yourJobsModal.addEventListener("click", event => {
+      if (event.target === yourJobsModal || event.target.closest("#close-your-jobs-modal")) { closeYourJobs(); return; }
+      if (event.target.closest("#management-add-job-btn")) { startAddCustomJob(null, "your-jobs-modal"); return; }
+      if (event.target.closest('[data-job-action="retry-list"]')) { loadCustomJobs(currentGardenId); return; }
+      const row = event.target.closest("[data-job-id]");
+      if (row) openCustomJobDetail(row.dataset.jobId, "your-jobs-modal");
+    });
+  }
+  const jobDetailModal = document.getElementById("job-detail-modal");
+  if (jobDetailModal) {
+    jobDetailModal.addEventListener("click", event => {
+      if (event.target === jobDetailModal || event.target.closest("#close-job-detail-modal")) { closeCustomJobDetail(); return; }
+      const photoControl = event.target.closest("[data-job-photo-action]");
+      if (photoControl) { handleJobPhotoAction(photoControl); return; }
+      handleCustomJobDetailAction(event);
+    });
+    jobDetailModal.addEventListener("error", handleJobPhotoImageError, true);
+  }
+  const jobPhotoInput = document.getElementById("job-photo-input");
+  if (jobPhotoInput) {
+    jobPhotoInput.addEventListener("change", handleJobPhotoFileChosen);
+    jobPhotoInput.addEventListener("cancel", handleJobPhotoPickerCancelled);
+  }
+  const jobEditorPhotoInput = document.getElementById("job-editor-photo-input");
+  if (jobEditorPhotoInput) jobEditorPhotoInput.addEventListener("change", handleEditorPhotoFileChosen);
+  const jobEditorModal = document.getElementById("job-editor-modal");
+  if (jobEditorModal) {
+    jobEditorModal.addEventListener("click", event => {
+      if (event.target === jobEditorModal || event.target.closest("#close-job-editor-modal, #job-editor-cancel-btn")) { closeCustomJobEditor(); return; }
+      const photoControl = event.target.closest("[data-editor-photo-action]");
+      if (photoControl) handleEditorPhotoAction(photoControl);
+    });
+  }
+  const jobForm = document.getElementById("job-editor-form");
+  if (jobForm) jobForm.addEventListener("submit", handleCustomJobSubmit);
+  const jobDetailsToggle = document.getElementById("job-details-toggle");
+  if (jobDetailsToggle) jobDetailsToggle.addEventListener("click", () =>
+    setCustomJobDetailsExpanded(jobDetailsToggle.getAttribute("aria-expanded") !== "true"));
+  ["job-when", "job-repeat", "job-item", "job-move-garden"].forEach(id => {
+    const field = document.getElementById(id);
+    if (field) field.addEventListener("change", updateCustomJobEditorFields);
+  });
+  const jobName = document.getElementById("job-name");
+  if (jobName) jobName.addEventListener("input", updateCustomJobNameCount);
+  const jobDeleteModal = document.getElementById("job-delete-modal");
+  if (jobDeleteModal) {
+    jobDeleteModal.addEventListener("click", event => {
+      if (event.target === jobDeleteModal || event.target.closest("#close-job-delete-modal, #job-delete-cancel-btn")) { closeCustomJobDelete(); return; }
+      if (event.target.closest("#job-delete-confirm-btn")) confirmCustomJobDelete();
+    });
+  }
+  const jobPremiumModal = document.getElementById("job-premium-modal");
+  if (jobPremiumModal) {
+    jobPremiumModal.addEventListener("click", event => {
+      if (event.target === jobPremiumModal || event.target.closest("#close-job-premium-modal, #job-premium-close-btn")) closeCustomJobPremium();
+    });
+  }
 
   // --- Send feedback ---
   const feedbackBtn = document.getElementById("feedback-btn");

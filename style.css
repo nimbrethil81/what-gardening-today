@@ -1409,8 +1409,19 @@ h1, h2, h3, h4,
 
 #main-content { padding-bottom: 14px; }
 
-.page-heading { margin: 10px 0 22px; }
+.page-heading { margin: 10px 0 22px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .page-heading h1 { font-size: clamp(30px, 8vw, 38px); line-height: 1.08; }
+.quiet-add-job-btn {
+  min-height: 44px;
+  padding: 8px 5px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--action-green);
+  font: 700 15px/1.2 var(--font-body);
+  white-space: nowrap;
+  cursor: pointer;
+}
 
 /* --- THE FROST WARNING ----------------------------------------------------
 
@@ -1656,6 +1667,16 @@ h1, h2, h3, h4,
 .task-summary { margin: 6px 0 0; color: var(--ink-blue); font-size: 15px; line-height: 1.35; }
 .task-meta { display: inline-flex; align-items: center; gap: 5px; margin-top: 7px; color: var(--ink-blue-muted); font-size: 14px; font-weight: 600; }
 .task-meta svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+/* RM-025: a Custom Job's only visual difference on Today. Quiet text in the
+   meta line, in the same muted ink — not a badge or colour block — so the
+   gardener's own job reads as theirs without outranking WGT's advice. A job's
+   reference photo (issue #50) may only take the illustration's own slot and
+   size; it never enlarges the card or becomes its main content. */
+.task-art.custom-job-photo { object-fit: cover; border-radius: 10px; background: #E3E9E3; }
+.custom-job-card .task-meta { flex-wrap: wrap; row-gap: 2px; }
+.task-provenance { color: var(--ink-blue-muted); font-weight: 600; white-space: nowrap; }
+.task-provenance::after { content: "·"; margin-left: 5px; }
+.task-duration { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 
 .task-action-btn {
   grid-column: 2;
@@ -2267,6 +2288,101 @@ h1, h2, h3, h4,
 .photo-remove-btn { color: #8D2E2E; }
 .photo-text-btn { color: var(--ink-blue); }
 .photo-file-input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+
+/* --- RM-025 YOUR JOBS: quiet management, reusable detail and editor --- */
+.item-jobs { margin-top: 20px; padding-top: 18px; border-top: 1px solid rgba(7, 63, 53, 0.14); }
+.item-jobs-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.item-jobs-heading h3 { color: var(--ink-blue); font: 700 20px/1.2 var(--font-heading); }
+.item-jobs-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.item-jobs-empty { margin: 2px 0 0; color: var(--text-muted); font-size: 15px; line-height: 1.4; }
+
+.jobs-add-btn { width: 100%; margin: 0 0 16px; }
+.jobs-list { display: flex; flex-direction: column; gap: 18px; }
+.jobs-first-empty { padding: 18px 2px; }
+.jobs-first-empty h3 { margin: 0 0 5px; color: var(--ink-blue); font: 700 21px/1.25 var(--font-heading); }
+.jobs-first-empty p,
+.jobs-section-empty { margin: 0; color: var(--text-muted); font-size: 16px; line-height: 1.45; }
+.jobs-section-title { margin: 0 0 4px; color: var(--ink-blue); font: 700 20px/1.2 var(--font-heading); }
+.jobs-section-note { margin: 0 0 8px; color: var(--text-muted); font-size: 14px; line-height: 1.4; }
+.jobs-section-list { display: flex; flex-direction: column; gap: 8px; }
+.job-row,
+.item-job-row {
+  width: 100%;
+  min-height: 58px;
+  padding: 12px 13px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid rgba(7, 63, 53, 0.16);
+  border-radius: 12px;
+  background: var(--bg-card);
+  color: var(--ink-blue);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.job-row-copy { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.job-row-name { font: 700 17px/1.25 var(--font-heading); overflow-wrap: anywhere; }
+.job-row-meta { color: var(--text-muted); font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; }
+.job-row-chevron { flex: 0 0 auto; font-size: 22px; color: var(--action-green); }
+/* A recognition aid only: smaller than the name and never ahead of it. */
+.job-row-photo { flex: 0 0 auto; width: 40px; height: 40px; margin-left: auto; border-radius: 8px; object-fit: cover; background: #E3E9E3; }
+
+.job-photo-actions { margin-bottom: 14px; }
+.job-photo-field { margin-top: 16px; }
+.job-editor-photo { margin: 6px 0 8px; }
+.job-editor-preview { display: block; max-width: 100%; max-height: 40dvh; border-radius: 12px; background: #E3E9E3; }
+.job-editor-photo-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.job-editor-photo-actions .secondary-action-btn { min-height: 44px; margin: 0; }
+
+.job-eyebrow { margin: 0 0 3px; color: var(--action-green); font-size: 13px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.job-detail-body { display: grid; gap: 12px; }
+.job-detail-line { margin: 0; padding-bottom: 10px; border-bottom: 1px solid rgba(7, 63, 53, 0.12); color: var(--text-main); font-size: 16px; line-height: 1.4; }
+.job-detail-line strong { display: block; margin-bottom: 2px; color: var(--ink-blue); font-size: 14px; }
+.job-detail-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 18px; }
+.job-detail-actions button { min-height: 48px; margin: 0; }
+.job-detail-actions .job-action-done,
+.job-detail-actions .job-action-restore { grid-column: 1 / -1; }
+.job-detail-actions .job-action-delete { border: 0; background: transparent; color: #8D2E2E; font: 600 15px/1.2 var(--font-body); }
+
+.job-field-label { display: block; margin: 16px 0 7px; color: var(--ink-blue); font-size: 16px; font-weight: 700; line-height: 1.3; }
+.job-editor-panel textarea,
+.job-editor-panel select,
+.job-editor-panel input[type="date"],
+.job-editor-panel input[type="number"] {
+  width: 100%;
+  min-height: 48px;
+  box-sizing: border-box;
+  border: 1.5px solid rgba(7, 63, 53, 0.28);
+  border-radius: 11px;
+  background: var(--bg-card);
+  color: var(--ink-blue);
+  font: 400 16px/1.4 var(--font-body);
+}
+.job-editor-panel textarea { min-height: 92px; padding: 11px 12px; resize: vertical; }
+.job-editor-panel select,
+.job-editor-panel input { padding: 10px 12px; }
+.job-field-help { margin: 5px 0 0; color: var(--text-muted); font-size: 14px; line-height: 1.35; }
+.job-context-note { margin: 10px 0 0; color: var(--text-main); font-size: 15px; line-height: 1.4; }
+.job-details-toggle { min-height: 44px; margin-top: 10px; padding: 8px 2px; border: 0; background: transparent; color: var(--action-green); font: 700 15px/1.2 var(--font-body); cursor: pointer; }
+.job-details-toggle::after { content: " +"; }
+.job-details-toggle[aria-expanded="true"]::after { content: " −"; }
+.job-details-fields { margin-top: 2px; }
+.job-repeat-row { display: grid; grid-template-columns: minmax(92px, 0.7fr) minmax(0, 1.3fr); gap: 10px; }
+.job-repeat-custom { margin-top: 2px; }
+.job-editor-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 18px; }
+.job-editor-actions .primary-action-btn { width: 100%; margin: 0; }
+.job-premium-copy { margin: 0 0 12px; color: var(--text-main); font-size: 16px; line-height: 1.45; }
+#job-premium-close-btn { margin-top: 6px; }
+
+@media (max-width: 370px) {
+  .page-heading { align-items: flex-start; }
+  .quiet-add-job-btn { padding-inline: 2px; font-size: 14px; }
+  .job-detail-actions { grid-template-columns: 1fr; }
+  .job-detail-actions .job-action-done,
+  .job-detail-actions .job-action-restore { grid-column: auto; }
+}
 
 /* --- RM-015 IDENTIFY FROM PHOTO: entry in Add, and its one sheet --- */
 .identify-entry { position: relative; margin: 0 0 22px; }
