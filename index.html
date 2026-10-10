@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700&amp;family=Source+Sans+3:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=gardening-v62-jobs-closeout">
+  <link rel="stylesheet" href="style.css?v=gardening-v66-add-cutover">
 </head>
 <body>
 
@@ -207,93 +207,77 @@
             <h1>My Garden</h1>
           </div>
 
-          <section class="garden-add-section" aria-labelledby="garden-add-title">
-            <h2 id="garden-add-title" class="garden-section-title">Add to My Garden</h2>
-            <!-- RM-015 (issue #41): offered only to an account holding the
-                 identification entitlement. Opens the device's own photo
-                 picker directly; app.js runs the journey in #identify-modal. -->
-            <div id="identify-entry" class="identify-entry hidden">
-              <button type="button" id="identify-btn" class="secondary-action-btn identify-btn">
-                <svg class="identify-btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8.5h3.2l1.6-2.2h6.4l1.6 2.2H20v10.2H4z"/><circle cx="12" cy="13.4" r="3.4"/></svg>
-                <span>Identify from photo</span>
-              </button>
-              <input id="identify-input" class="photo-file-input" type="file" accept="image/*" tabindex="-1" aria-hidden="true">
-            </div>
-            <h3 class="garden-field-title">Choose a category</h3>
-
-            <div class="category-tiles-grid">
-              <button class="tile-btn" type="button" data-category="Plants &amp; flowers" aria-pressed="false" onclick="selectCategory('Plants &amp; flowers', this)">
-                <img class="tile-icon" src="assets/wgt/category-plants-flowers.svg" alt="">
-                <span class="tile-label">Plants &amp; flowers</span>
-              </button>
-              <button class="tile-btn" type="button" data-category="Veg &amp; herbs" aria-pressed="false" onclick="selectCategory('Veg &amp; herbs', this)">
-                <img class="tile-icon" src="assets/wgt/category-veg-herbs.svg" alt="">
-                <span class="tile-label">Veg &amp; herbs</span>
-              </button>
-              <button class="tile-btn" type="button" data-category="Trees &amp; shrubs" aria-pressed="false" onclick="selectCategory('Trees &amp; shrubs', this)">
-                <img class="tile-icon" src="assets/wgt/category-trees-shrubs.svg" alt="">
-                <span class="tile-label">Trees &amp; shrubs</span>
-              </button>
-              <button class="tile-btn" type="button" data-category="Lawn" aria-pressed="false" onclick="selectCategory('Lawn', this)">
-                <img class="tile-icon" src="assets/wgt/category-lawn.svg" alt="">
-                <span class="tile-label">Lawn</span>
-              </button>
-              <button class="tile-btn" type="button" data-category="Beds" aria-pressed="false" onclick="selectCategory('Beds', this)">
-                <img class="tile-icon" src="assets/wgt/category-beds.svg" alt="">
-                <span class="tile-label">Beds</span>
-              </button>
-              <button class="tile-btn" type="button" data-category="Garden structures" aria-pressed="false" onclick="selectCategory('Garden structures', this)">
-                <img class="tile-icon" src="assets/wgt/category-structures.svg" alt="">
-                <span class="tile-label">Structures</span>
-              </button>
-              <button class="tile-btn" type="button" data-category="Tools" aria-pressed="false" onclick="selectCategory('Tools', this)">
-                <img class="tile-icon" src="assets/wgt/category-tools.svg" alt="">
-                <span class="tile-label">Tools</span>
-              </button>
-            </div>
-
-            <!-- Searches the whole catalogue, not just the selected tile, so you
-                 don't have to know which category something lives under. -->
-            <label class="garden-field-title garden-search-label" for="pill-search">Search the whole catalogue</label>
-            <div class="pill-search-wrapper">
-              <svg class="pill-search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 4 4"/></svg>
-              <input type="text" id="pill-search" class="pill-search-input"
-                     placeholder="Search all plants, tools and structures"
-                     autocomplete="off" autocorrect="off" autocapitalize="off"
-                     spellcheck="false" inputmode="search"
-                     aria-label="Search the catalogue">
-              <button type="button" id="pill-search-clear" class="pill-search-clear hidden" aria-label="Clear search">
-                <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg>
-              </button>
-            </div>
-
-            <h3 class="garden-field-title garden-items-title">Items</h3>
-            <div id="catalogue-status" class="garden-local-status hidden" role="status" aria-live="polite"></div>
-            <div id="pill-box" class="pill-cloud" aria-live="polite">
-              <div class="pill-placeholder">Select a category above, or search.</div>
-            </div>
-
-            <label class="garden-field-title garden-reference-label" for="custom-name">My reference <span>(optional)</span></label>
-            <div class="modern-input-wrapper">
-              <input type="text" id="custom-name" placeholder="e.g. next to the front door" oninput="validateForm()">
-            </div>
-
-            <button id="add-asset-btn" class="primary-action-btn garden-add-btn" disabled>
-              <span id="add-asset-label">Add to My Garden</span>
-              <span class="planting-growth" aria-hidden="true">
-                <img class="planting-seed" src="assets/wgt/planting-seed.svg" alt="">
-                <img class="planting-shoot" src="assets/wgt/planting-shoot.svg" alt="">
-                <img class="planting-flower" src="assets/wgt/planting-flower.svg" alt="">
-              </span>
-            </button>
-            <p id="garden-add-error" class="garden-inline-error hidden" role="alert"></p>
-            <div id="garden-add-status" class="sr-only" role="status" aria-live="polite"></div>
-          </section>
+          <!-- My Garden's one way to add: a compact entry that opens the
+               full-screen Add flow (#garden-add-flow) below. -->
+          <div class="garden-add-section">
+            <button type="button" id="add-flow-open-btn" class="primary-action-btn add-flow-open-btn">Add to My Garden</button>
+          </div>
 
           <section class="garden-inventory-section" aria-labelledby="garden-inventory-title">
             <h2 id="garden-inventory-title" class="garden-section-title">What’s in My Garden</h2>
             <div id="inventory-list" class="garden-container">
               <div class="garden-local-status">Seeing what’s growing…</div>
+            </div>
+          </section>
+
+          <!-- Issue #53: the Add flow, an internal My Garden screen rather than a
+               sheet or a third destination. While it is open app.js hides the
+               rest of this view; the bottom navigation stays visible and the
+               footer sits above it. app.js fills #add-flow-body. -->
+          <section id="garden-add-flow" class="add-flow hidden" aria-labelledby="add-flow-title">
+            <div class="add-flow-header">
+              <button type="button" id="add-flow-back-btn" class="add-flow-icon-btn" aria-label="Back">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5.5-6.5 6.5 6.5 6.5"/></svg>
+              </button>
+              <h1 id="add-flow-title" class="add-flow-title" tabindex="-1">Add to My Garden</h1>
+              <button type="button" id="add-flow-close-btn" class="add-flow-icon-btn" aria-label="Close">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6.5 6.5 11 11M17.5 6.5l-11 11"/></svg>
+              </button>
+            </div>
+            <div id="add-flow-identify-slot" class="add-flow-identify-slot">
+              <!-- RM-015 (issue #41): offered only to an account holding the
+                   identification entitlement, on the Add flow's home. Opens
+                   the device's own photo picker directly; app.js runs the
+                   journey in #identify-modal. -->
+              <div id="identify-entry" class="identify-entry hidden">
+                <button type="button" id="identify-btn" class="secondary-action-btn identify-btn">
+                  <svg class="identify-btn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8.5h3.2l1.6-2.2h6.4l1.6 2.2H20v10.2H4z"/><circle cx="12" cy="13.4" r="3.4"/></svg>
+                  <span>Identify from photo</span>
+                </button>
+                <input id="identify-input" class="photo-file-input" type="file" accept="image/*" tabindex="-1" aria-hidden="true">
+              </div>
+            </div>
+            <div id="add-flow-search-area" class="add-flow-search">
+              <label class="garden-field-title garden-search-label" for="add-flow-search">Search the whole catalogue</label>
+              <div class="pill-search-wrapper">
+                <svg class="pill-search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 4 4"/></svg>
+                <input type="text" id="add-flow-search" class="pill-search-input"
+                       placeholder="Search all plants, tools and structures"
+                       autocomplete="off" autocorrect="off" autocapitalize="off"
+                       spellcheck="false" inputmode="search"
+                       aria-label="Search the catalogue">
+                <button type="button" id="add-flow-search-clear" class="pill-search-clear hidden" aria-label="Clear search">
+                  <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg>
+                </button>
+              </div>
+            </div>
+            <div id="add-flow-body" class="add-flow-body"></div>
+            <!-- Issue #55: selection counts, removals and Undo, read out. -->
+            <div id="add-flow-status" class="sr-only" role="status" aria-live="polite"></div>
+            <!-- Issue #55: Review's photo picker. Only the processed derivatives
+                 are kept, on this device, until the items exist (issue #56
+                 then attaches them to the saved items). -->
+            <input id="add-flow-photo-input" class="photo-file-input" type="file" accept="image/*" tabindex="-1" aria-hidden="true">
+            <div id="add-flow-footer" class="add-flow-footer">
+              <button type="button" id="add-flow-review-btn" class="primary-action-btn add-flow-review-btn" disabled>Review 0 items</button>
+              <button type="button" id="add-flow-add-btn" class="primary-action-btn garden-add-btn add-flow-add-btn hidden" disabled>
+                <span id="add-flow-add-label">Add 0 items</span>
+                <span class="planting-growth" aria-hidden="true">
+                  <img class="planting-seed" src="assets/wgt/planting-seed.svg" alt="">
+                  <img class="planting-shoot" src="assets/wgt/planting-shoot.svg" alt="">
+                  <img class="planting-flower" src="assets/wgt/planting-flower.svg" alt="">
+                </span>
+              </button>
             </div>
           </section>
 
@@ -363,6 +347,23 @@
       </div>
     </div>
 
+    <!-- Issue #53: leaving the Add flow (Back, Close, a tab or a garden
+         switch) while items are still selected. Keep editing comes first and
+         takes focus; Escape and native Back mean Keep editing too. -->
+    <div id="add-discard-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="add-discard-title" aria-describedby="add-discard-copy">
+      <div class="modal-panel remove-item-panel">
+        <div class="modal-header">
+          <h2 class="section-title" id="add-discard-title">Discard selected items?</h2>
+          <button id="close-add-discard-modal" class="modal-close-btn" type="button" aria-label="Close">✕</button>
+        </div>
+        <p id="add-discard-copy" class="delete-lede">Your selected items haven’t been added to My Garden yet.</p>
+        <div class="delete-actions">
+          <button id="add-discard-keep-btn" class="primary-action-btn" type="button">Keep editing</button>
+          <button id="add-discard-confirm-btn" class="destructive-action-btn" type="button">Discard</button>
+        </div>
+      </div>
+    </div>
+
     <!-- ============================================================= -->
     <!--  ITEM DETAIL AND ITS PHOTO (RM-026)                           -->
     <!--                                                               -->
@@ -383,6 +384,8 @@
         <div id="item-detail-photo" class="item-detail-photo hidden"></div>
         <p id="item-detail-status" class="item-detail-status hidden" role="status" aria-live="polite"></p>
         <div id="item-detail-actions" class="item-detail-actions hidden"></div>
+        <!-- Issue #56: add, change or clear My reference after saving. -->
+        <div id="item-detail-reference-editor" class="item-reference-editor"></div>
         <section class="item-jobs" aria-labelledby="item-jobs-title">
           <div class="item-jobs-heading">
             <h3 id="item-jobs-title">Your jobs</h3>
@@ -785,6 +788,6 @@
   <!-- Your Supabase URL + anon key. Create this file from config.example.js. -->
   <script src="config.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js?v=gardening-v62-jobs-closeout"></script>
+  <script src="app.js?v=gardening-v66-add-cutover"></script>
 </body>
 </html>

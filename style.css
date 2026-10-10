@@ -357,9 +357,7 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.tile-btn.full-width { grid-column: 1 / -1; }
 .tile-btn:active { transform: scale(0.97); }
-.tile-btn.selected { border-color: var(--brand-green); background-color: var(--brand-light); }
 .tile-icon { font-size: 26px; }
 .tile-label { font-size: 13px; font-weight: 600; color: var(--text-main); }
 
@@ -412,32 +410,10 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
 }
 
 /* --- MY GARDEN: SUB ITEM PILLS --- */
-/* A block container, not a flex row: it now holds heading groups, each of which
-   wraps its own pills. */
-.pill-cloud {
-  min-height: 40px;
-  background: #F2F2F7;
-  padding: 12px 10px;
-  border-radius: 12px;
-  border: 1px solid var(--border-color);
-  box-sizing: border-box;
-}
-
 .pill-row {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-}
-
-.pill-group + .pill-group { margin-top: 16px; }
-
-.pill-group-title {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-  margin: 0 0 8px 2px;
 }
 
 .pill-placeholder {
@@ -1718,7 +1694,7 @@ h1, h2, h3, h4,
   to { opacity: 0; transform: translateY(-4px); max-height: 0; margin-bottom: -12px; }
 }
 
-/* --- MY GARDEN: locked category-first add and open inventory grammar --- */
+/* --- MY GARDEN: the Add entry and open inventory grammar --- */
 .garden-add-section,
 .garden-inventory-section {
   margin: 0;
@@ -1750,7 +1726,6 @@ h1, h2, h3, h4,
   font: 500 15px/1.25 var(--font-body);
 }
 
-.garden-add-section > h3.garden-field-title:first-of-type { margin-top: 0; }
 .garden-search-label { margin-top: var(--space-section-break); }
 
 .category-tiles-grid {
@@ -1759,8 +1734,7 @@ h1, h2, h3, h4,
   gap: 12px;
 }
 
-.tile-btn,
-.tile-btn.full-width {
+.tile-btn {
   position: relative;
   grid-column: auto;
   min-width: 0;
@@ -1786,32 +1760,8 @@ h1, h2, h3, h4,
 .tile-btn[data-category="Tools"] { background: #E3ECE9; }
 .tile-btn[data-category="Plants & flowers"] { background: #F4E1DE; }
 
-.tile-btn::after {
-  content: "✓";
-  position: absolute;
-  top: 9px;
-  right: 10px;
-  width: 23px;
-  height: 23px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--action-green);
-  color: var(--bg-app);
-  font: 700 14px/1 var(--font-body);
-  opacity: 0;
-}
-
-.tile-btn.selected {
-  border: 2px solid var(--action-green);
-  padding: 13px 11px 11px;
-  background-color: var(--brand-light);
-}
-
-.tile-btn.selected::after { opacity: 1; }
 .tile-icon { width: 52px; height: 52px; object-fit: contain; }
 .tile-label { color: var(--text-main); font-size: 16px; font-weight: 600; line-height: 1.15; text-align: center; overflow-wrap: anywhere; }
-.tile-btn.selected .tile-label { color: var(--brand-green); font-weight: 700; }
 
 .pill-search-wrapper { position: relative; margin: 0; }
 
@@ -1861,28 +1811,7 @@ h1, h2, h3, h4,
 
 .pill-search-clear svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
 
-.garden-items-title { margin-top: var(--space-section-break); }
-
-.pill-cloud {
-  min-height: 52px;
-  padding: 2px 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-}
-
 .pill-row { display: flex; flex-wrap: wrap; gap: 8px; }
-.pill-group + .pill-group { margin-top: 18px; }
-
-.pill-group-title {
-  margin: 0 0 8px 2px;
-  color: var(--text-muted);
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  text-transform: none;
-}
-
 .pill-placeholder { padding: 13px 2px; color: var(--text-muted); font-size: 15px; text-align: left; }
 
 .item-pill,
@@ -2273,6 +2202,15 @@ h1, h2, h3, h4,
 .item-detail-status { margin: 0 0 12px; color: var(--text-main); font-size: 16px; line-height: 1.4; }
 .item-detail-status.is-error { color: #7E2727; font-weight: 600; }
 .item-detail-actions { display: flex; flex-direction: column; gap: 10px; }
+/* Issue #56: the small My reference editor in item detail. */
+.item-reference-editor { margin-top: 12px; }
+.item-reference-editor:empty { display: none; }
+.item-reference-editor .garden-reference-label { margin-top: 0; }
+.item-reference-editor input { font-size: 16px; }   /* 16px keeps iOS from zooming on focus */
+.item-reference-editor .item-detail-status { margin: 10px 0 0; }
+.item-reference-edit { min-height: 44px; }
+.item-reference-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 12px; }
+.item-reference-actions .primary-action-btn { width: auto; min-height: 44px; margin: 0; padding: 0 22px; }
 .item-detail-actions .primary-action-btn,
 .item-detail-actions .secondary-action-btn { width: 100%; min-height: 48px; margin: 0; }
 .photo-remove-btn,
@@ -2476,6 +2414,168 @@ h1, h2, h3, h4,
 .photo-viewer-problem .secondary-action-btn { width: auto; padding-inline: 20px; }
 .photo-viewer :focus-visible { outline: 3px solid #FFFFFF; outline-offset: 2px; }
 .photo-viewer-stage:focus { outline: none; }
+
+/* --- MY GARDEN: the Add flow (issues #53, #55-#57) ---
+   An internal My Garden screen: the rest of the view steps aside, the bottom
+   navigation stays, and the footer action sits directly above it. The search
+   field scrolls with the page rather than sticking. */
+#view-garden.add-flow-open > :not(#garden-add-flow) { display: none; }
+.add-flow-open-btn { min-height: 52px; margin: 0; background: var(--action-green); color: var(--bg-app); box-shadow: none; }
+
+.add-flow-header {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) 48px;
+  align-items: center;
+  gap: 4px;
+  margin: 6px -6px 18px;
+}
+.add-flow-title { margin: 0; color: var(--ink-blue); font: 700 clamp(24px, 6.5vw, 30px)/1.15 var(--font-heading); overflow-wrap: anywhere; }
+.add-flow-title:focus { outline: none; box-shadow: none; }
+.add-flow-icon-btn {
+  width: 48px;
+  height: 48px;
+  padding: 12px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--brand-green);
+  cursor: pointer;
+}
+.add-flow-icon-btn svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.add-flow-search { margin-bottom: 22px; }
+.add-flow-search .garden-search-label { margin-top: 0; }
+.add-flow-tiles { margin-top: 0; }
+.add-flow-subtitle { margin: 0 0 12px; color: var(--ink-blue); font: 700 18px/1.25 var(--font-body); overflow-wrap: anywhere; }
+
+.add-group-list { display: flex; flex-direction: column; border-top: 1px solid rgba(7, 63, 53, 0.13); }
+.add-group-btn {
+  min-height: 56px;
+  padding: 10px 4px 10px 2px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 0;
+  border-bottom: 1px solid rgba(7, 63, 53, 0.13);
+  background: transparent;
+  color: var(--text-main);
+  font: 600 17px/1.3 var(--font-body);
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.add-group-btn svg { flex: none; width: 20px; height: 20px; fill: none; stroke: var(--text-muted); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Already in My Garden: a small outlined check, quieter than — and never
+   confused with — the selected state's border and fill. */
+.item-pill-owned {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-right: 6px;
+  border: 1.5px solid rgba(7, 94, 75, 0.55);
+  border-radius: 50%;
+  color: var(--action-green);
+  font: 700 11px/1 var(--font-body);
+  vertical-align: 1px;
+}
+
+/* Review (issue #55): one quiet card per selection. Collapsed it shows only
+   the name, a thumbnail and the reference when there is one; nothing blank. */
+.add-review-list { margin: 0; padding: 0; list-style: none; border-top: 1px solid rgba(7, 63, 53, 0.13); }
+.add-review-card { border-bottom: 1px solid rgba(7, 63, 53, 0.13); }
+.add-review-card-head { display: flex; align-items: center; gap: 4px; }
+.add-review-heading { flex: 1; min-width: 0; margin: 0; font: inherit; }
+.add-review-toggle {
+  width: 100%;
+  min-height: 60px;
+  padding: 10px 2px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text-main);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.add-review-thumb { flex: none; width: 44px; height: 44px; border-radius: 8px; object-fit: cover; background: #E3E9E3; }
+.add-review-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.add-review-name { color: var(--text-main); font: 600 17px/1.3 var(--font-body); overflow-wrap: anywhere; }
+.add-review-owned { color: var(--text-muted); font-size: 14px; line-height: 1.3; }
+.add-review-ref-hint { overflow: hidden; color: var(--text-muted); font-size: 14px; line-height: 1.3; white-space: nowrap; text-overflow: ellipsis; }
+.add-review-chevron { flex: none; width: 20px; height: 20px; fill: none; stroke: var(--text-muted); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.add-review-card.is-expanded .add-review-chevron { transform: rotate(180deg); }
+.add-review-remove {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  padding: 10px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.add-review-remove svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; }
+.add-review-panel { padding: 2px 2px 18px; scroll-margin-bottom: calc(92px + 74px + env(safe-area-inset-bottom)); }
+.add-review-panel .garden-reference-label { margin-top: 0; }
+.add-review-panel input { font-size: 16px; }   /* 16px keeps iOS from zooming on focus */
+.add-review-photo { margin-top: 14px; }
+.add-review-photo .item-detail-status { margin: 10px 0 0; }
+.add-review-preview { display: block; max-width: 100%; max-height: 40dvh; border-radius: 12px; background: #E3E9E3; }
+.add-review-photo-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+.add-review-photo-actions .secondary-action-btn,
+.add-review-photo-actions .photo-remove-btn { width: auto; min-height: 44px; margin: 0; }
+
+/* Issue #56: what a save left to say, and each saved item's photo status. */
+.add-review-notice {
+  margin: 0 0 16px;
+  padding: 14px 16px;
+  border: 1px solid rgba(168, 50, 50, 0.38);
+  border-radius: 12px;
+  background: #FFF;
+  color: var(--text-main);
+  font-size: 16px;
+  line-height: 1.45;
+}
+.add-review-notice p { margin: 0 0 6px; }
+.add-review-notice .add-review-notice-title { color: #7E2727; font-weight: 600; }
+.add-review-finish { min-height: 44px; margin-top: 4px; }
+.add-review-photo-state { color: var(--text-muted); font-size: 14px; line-height: 1.3; }
+.add-review-photo-state.is-error { color: #7E2727; font-weight: 600; }
+
+.add-flow-footer {
+  position: fixed;
+  left: 50%;
+  bottom: calc(64px + max(8px, env(safe-area-inset-bottom)));
+  z-index: 990;
+  width: min(100%, 720px);
+  padding: 10px 16px;
+  transform: translateX(-50%);
+  border-top: 1px solid rgba(7, 63, 53, 0.12);
+  background: rgba(247, 245, 240, 0.96);
+}
+.add-flow-footer .add-flow-review-btn {
+  display: block;
+  max-width: 440px;
+  min-height: 52px;
+  margin: 0 auto;
+  background: var(--action-green);
+  color: var(--bg-app);
+  box-shadow: none;
+}
+.add-flow-footer .add-flow-review-btn:disabled { border: 1px solid rgba(7, 63, 53, 0.15); background: #DDE4DF; color: #667771; }
+.add-flow-footer .add-flow-add-btn { width: 100%; max-width: 440px; margin: 0 auto; }
+/* A reference field's keyboard is up on a touch screen: the Add button steps
+   aside until it closes, so it never covers the field (issue #55). */
+@media (pointer: coarse) {
+  body.add-flow-typing .add-flow-footer { display: none; }
+}
+body.add-flow-active { padding-bottom: calc(92px + 74px + env(safe-area-inset-bottom)); }
+body.add-flow-active .undo-toast { bottom: calc(82px + 74px + env(safe-area-inset-bottom)); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

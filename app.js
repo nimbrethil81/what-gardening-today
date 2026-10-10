@@ -89,7 +89,7 @@ const sb = configLooksValid ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : nu
  * from. It must match CACHE_NAME in sw.js, and both must be bumped in the same
  * commit — a report labelled with a version that was never deployed is worse
  * than no label at all. */
-const APP_VERSION = "gardening-v62-jobs-closeout";
+const APP_VERSION = "gardening-v66-add-cutover";
 
 /* ---- Small helpers ------------------------------------------------------- */
 
@@ -130,9 +130,9 @@ let gardens = [];                  // [{id, name, latitude, longitude, timezone,
 let routedUserId = undefined;      // guards against redundant re-routing on focus
 let sessionRecoveryPromise = null;
 
-// Picker catalogue. One entry per (blueprint, category) pair, so a blueprint
-// listed under two tiles appears twice — which is correct: the tile it is added
-// under decides how it is grouped in My Garden.
+// The Add flow's catalogue. One entry per (blueprint, category) pair, so a
+// blueprint listed under two tiles appears twice — which is correct: the tile it
+// is added under decides how it is grouped in My Garden.
 //   {Category, Suggested_Name, blueprint_id, browseGroup, browseSort, botanical}
 // browseGroup is null for anything the workbook has not assigned a heading to;
 // those are shown under "Other" at the bottom rather than being hidden.
@@ -141,8 +141,6 @@ let sessionRecoveryPromise = null;
 let globalDictionary = [];
 let userInventory = [];            // {item_id, friendly_name, category, blueprint_name}
 let inventoryLoadedFor = null;     // which garden userInventory actually describes
-let selectedCategoryRef = null;
-let selectedSubItemObj = null;
 
 // Sort key used for blueprints with no browse group, so "Other" always lands at
 // the bottom regardless of what Sort_Order values the workbook uses.
@@ -173,7 +171,8 @@ let mayCreateGarden = true;
 // a persistent 403 cannot spin route() and loadToday() against each other.
 let missingGardenRecovery = false;
 
-// Display order for inventory category groups (mirrors the picker tiles)
+// Display order for inventory category groups (the Add flow's tiles have their
+// own order: ADD_FLOW_CATEGORIES)
 const CATEGORY_ORDER = [
   "Lawn", "Beds", "Trees & shrubs", "Plants & flowers",
   "Veg & herbs", "Garden structures", "Tools"
@@ -254,8 +253,8 @@ const frostDismissMemory = new Map();
 // --- MY GARDEN ASYNC / MODAL STATE ---
 let inventoryRequestSerial = 0;
 let catalogueRequestSerial = 0;
+let catalogueLoadFailed = false;
 let hiddenTasksRequestSerial = 0;
-let gardenAddResetTimer = null;
 let removeItemState = null;
 let removeItemReturnFocus = null;
 const modalFocusReturn = new Map();
@@ -566,6 +565,7 @@ function closeModalFromKeyboard(modalId) {
   if (modalId === "job-editor-modal") closeCustomJobEditor();
   if (modalId === "job-delete-modal") closeCustomJobDelete();
   if (modalId === "job-premium-modal") closeCustomJobPremium();
+  if (modalId === "add-discard-modal") keepAddEditing();
 }
 
 function handleAccessibleModalKeydown(event) {
@@ -605,6 +605,7 @@ async function route() {
     currentUserId = null;
     gardens = [];
     closeAllModals();
+    forgetAddSession();
     forgetPhotoSession();
     forgetIdentifySession();
     forgetCustomJobSession();
@@ -825,7 +826,15 @@ function handleAddGardenClick() {
 function handleGardenListClick(event) {
   const row = event.target.closest(".garden-row");
   if (!row) return;
-  switchGarden(row.getAttribute("data-garden-id"));
+  const gardenId = row.getAttribute("data-garden-id");
+  // A switch discards an Add session (issue #53), so ask first if it holds
+  // anything; switchGarden() itself always discards without asking.
+  if (gardenId !== currentGardenId && addSessionPending(currentAddSession())) {
+    closeGardenModal(false);
+    requestAddFlowExit(() => switchGarden(gardenId));
+    return;
+  }
+  switchGarden(gardenId);
 }
 
 function switchGarden(gardenId) {
@@ -882,21 +891,10 @@ function resetPerGardenUiState() {
     inventoryList.innerHTML = '<div class="garden-local-status">Seeing what’s growing…</div>';
   }
 
-  selectedCategoryRef = null;
-  selectedSubItemObj = null;
-  document.querySelectorAll(".tile-btn").forEach(tile => {
-    tile.classList.remove("selected");
-    tile.setAttribute("aria-pressed", "false");
-  });
-  const custom = document.getElementById("custom-name");
-  if (custom) custom.value = "";
-  if (gardenAddResetTimer) { clearTimeout(gardenAddResetTimer); gardenAddResetTimer = null; }
-  setAddButtonState("idle");
-  setGardenAddError("");
   closeRemoveItemModal(false);
-  clearPillSearch();
   resetItemPhotoState();
   closeIdentify({ forced: true, gardenSwitch: true });
+  forgetAddSession();
   resetCustomJobState();
 }
 
@@ -1780,6 +1778,10 @@ async function recoverFromSessionLoss() {
  * ========================================================================== */
 
 function switchTab(viewId, element) {
+  // Leaving the Add flow by either tab asks first when something is selected
+  // (issue #53). Programmatic switches have already discarded the session.
+  if (addFlowIsOpen()) { requestAddFlowExit(() => switchTab(viewId, element)); return; }
+
   document.querySelectorAll(".nav-item").forEach(btn => {
     btn.classList.remove("active");
     btn.removeAttribute("aria-current");
@@ -2545,7 +2547,7 @@ async function loadInventory() {
   try {
     const { data, error } = await sb
       .from("garden_item")
-      .select("id, friendly_name, legacy_category, blueprint:blueprint_id ( name )")
+      .select("id, friendly_name, legacy_category, blueprint_id, blueprint:blueprint_id ( name )")
       .eq("garden_id", gardenAtRequest)
       .is("removed_at", null)
       .order("id");
@@ -2557,11 +2559,14 @@ async function loadInventory() {
       item_id: r.id,
       friendly_name: r.friendly_name || "",
       category: r.legacy_category || "Other",
+      // Stable identity for the Add flow's already-owned check (issue #53).
+      blueprint_id: r.blueprint_id === null || r.blueprint_id === undefined ? null : Number(r.blueprint_id),
       blueprint_name: (r.blueprint && r.blueprint.name) ? r.blueprint.name : ""
     }));
     inventoryLoadedFor = gardenAtRequest;
     renderGroupedInventory();
     if (customJobsLoadedFor === gardenAtRequest) renderCustomJobSurfaces();
+    renderAddFlow({ keepFocus: true });
 
     // Today may already be showing its empty state, which could not choose the
     // right wording until this arrived. Now it can.
@@ -2607,7 +2612,7 @@ function renderGroupedInventory() {
     displayArea.innerHTML = `
       <div class="garden-inventory-empty">
         <h3>You haven’t added anything yet.</h3>
-        <p>Choose a category or search above to add something to your garden.</p>
+        <p>Use Add to My Garden above to add something to your garden.</p>
       </div>`;
     return;
   }
@@ -2677,16 +2682,13 @@ function renderGroupedInventory() {
 
 
 /* ==========================================================================
- *  MY GARDEN — the picker (catalogue) and adding an item
+ *  MY GARDEN — the catalogue the Add flow browses and searches
  * ========================================================================== */
 
 async function loadCatalogue() {
   const requestSerial = ++catalogueRequestSerial;
-  const statusEl = document.getElementById("catalogue-status");
-  if (statusEl) {
-    statusEl.textContent = "Finding plants, tools and structures…";
-    statusEl.className = "garden-local-status";
-  }
+  catalogueLoadFailed = false;
+  renderAddFlow({ keepFocus: true });
   try {
     const { data, error } = await sb
       .from("blueprint")
@@ -2716,173 +2718,33 @@ async function loadCatalogue() {
         });
       });
     });
-    if (statusEl) {
-      statusEl.textContent = "";
-      statusEl.className = "garden-local-status hidden";
-    }
-    refreshPillBox();
+    renderAddFlow({ keepFocus: true });
   } catch (err) {
     if (requestSerial !== catalogueRequestSerial) return;
     console.error("Catalogue failed:", err);
     if (await sessionHasGone(err, 0)) { await recoverFromSessionLoss(); return; }
-    if (statusEl) {
-      statusEl.innerHTML = `We couldn’t load the catalogue. <button type="button" class="text-btn" data-action="retry-catalogue">Try again</button>`;
-      statusEl.className = "garden-local-status error";
-    }
-    setPillPlaceholder("Your saved garden is still available below.");
+    // The Add flow shows the failure with its own Try again; the saved
+    // garden behind it is unaffected.
+    catalogueLoadFailed = true;
+    renderAddFlow({ keepFocus: true });
   }
-}
-
-/* --- Building one pill ----------------------------------------------------
- * A pill always shows the common name. It additionally shows:
- *   - the botanical name, inline in brackets, when the workbook has set one
- *     (only for genuinely ambiguous common names, so most pills won't have it);
- *   - which tile it belongs to, on a second line, but ONLY in search results,
- *     where matches can come from a category other than the one you're looking
- *     at and tapping blind would file the item in the wrong place.
- */
-function createItemPill(item, showSource) {
-  const pill = document.createElement("button");
-  pill.type = "button";
-  pill.className = "item-pill" + (showSource ? " item-pill--result" : "");
-  pill.setAttribute("aria-pressed", "false");
-
-  const nameLine = document.createElement("span");
-  nameLine.className = "item-pill-name";
-  nameLine.appendChild(document.createTextNode(item.Suggested_Name));
-
-  if (item.botanical) {
-    const latin = document.createElement("span");
-    latin.className = "item-pill-latin";
-    latin.textContent = "(" + item.botanical + ")";
-    nameLine.appendChild(document.createTextNode(" "));
-    nameLine.appendChild(latin);
-  }
-  pill.appendChild(nameLine);
-
-  if (showSource) {
-    const source = document.createElement("span");
-    source.className = "item-pill-source";
-    source.textContent = item.Category;
-    pill.appendChild(source);
-  }
-
-  pill.onclick = () => {
-    document.querySelectorAll(".item-pill").forEach(p => {
-      p.classList.remove("selected");
-      p.setAttribute("aria-pressed", "false");
-    });
-    pill.classList.add("selected");
-    pill.setAttribute("aria-pressed", "true");
-    selectedSubItemObj = item;
-
-    // A search result may belong to a tile other than the one currently lit up.
-    // Follow it, so the item is filed under the category it was chosen from.
-    if (item.Category !== selectedCategoryRef) {
-      selectedCategoryRef = item.Category;
-      highlightCategoryTile(item.Category);
-    }
-    validateForm();
-  };
-
-  return pill;
-}
-
-function highlightCategoryTile(categoryKey) {
-  document.querySelectorAll(".tile-btn").forEach(tile => {
-    const selected = tile.dataset.category === categoryKey;
-    tile.classList.toggle("selected", selected);
-    tile.setAttribute("aria-pressed", selected ? "true" : "false");
-  });
-}
-
-function setPillPlaceholder(text) {
-  const pillBox = document.getElementById("pill-box");
-  pillBox.innerHTML = "";
-  const ph = document.createElement("div");
-  ph.className = "pill-placeholder";
-  ph.textContent = text;
-  pillBox.appendChild(ph);
-}
-
-/* --- Browsing: pills clustered under headings ------------------------------
- * Headings come from the workbook and appear in its Sort_Order. Anything with
- * no heading assigned collects under "Other" at the end — visible rather than
- * lost. A category where nothing has been assigned a heading renders as one
- * unlabelled block, exactly as the picker looked before.
- */
-function renderCategoryPills(categoryKey) {
-  const pillBox = document.getElementById("pill-box");
-  pillBox.innerHTML = "";
-
-  const items = globalDictionary.filter(item => item.Category === categoryKey);
-  if (items.length === 0) {
-    setPillPlaceholder("No items in this category yet.");
-    return;
-  }
-
-  // Bucket by heading, remembering each heading's sort position.
-  const buckets = new Map(); // label -> { sort, items: [] }
-  items.forEach(item => {
-    const label = item.browseGroup || UNGROUPED_LABEL;
-    if (!buckets.has(label)) {
-      buckets.set(label, { sort: item.browseGroup ? item.browseSort : UNGROUPED_SORT, items: [] });
-    }
-    buckets.get(label).items.push(item);
-  });
-
-  const groups = Array.from(buckets.entries())
-    .map(([label, v]) => ({ label: label, sort: v.sort, items: v.items }))
-    .sort((a, b) => (a.sort - b.sort) || a.label.localeCompare(b.label));
-
-  // Nothing in this category is grouped: render one plain block, no headings.
-  const anyGrouped = groups.some(g => g.label !== UNGROUPED_LABEL);
-
-  groups.forEach(group => {
-    group.items.sort((a, b) => a.Suggested_Name.localeCompare(b.Suggested_Name));
-
-    const wrap = document.createElement("div");
-    wrap.className = "pill-group";
-
-    if (anyGrouped) {
-      const title = document.createElement("div");
-      title.className = "pill-group-title";
-      title.textContent = group.label;
-      wrap.appendChild(title);
-    }
-
-    const row = document.createElement("div");
-    row.className = "pill-row";
-    group.items.forEach(item => row.appendChild(createItemPill(item, false)));
-    wrap.appendChild(row);
-
-    pillBox.appendChild(wrap);
-  });
 }
 
 /* --- Searching: a flat list across every category --------------------------
- * Deliberately not limited to the tile you're on: a beginner may not know
- * whether Lavender lives under Trees & shrubs or Plants & flowers, and a search
- * that finds nothing because they guessed the wrong tile reads as "the app
- * doesn't have it". Every result carries its category, so nothing is added
+ * Deliberately not limited to the category being browsed: a beginner may not
+ * know whether Lavender lives under Trees & shrubs or Plants & flowers, and a
+ * search that finds nothing because they guessed the wrong tile reads as "the
+ * app doesn't have it". Every result carries its category, so nothing is added
  * blind. Botanical names are matched too where one has been set, so typing
  * "Pelargonium" finds Geranium.
  */
-function renderSearchResults(rawQuery) {
+function catalogueSearchMatches(dictionary, rawQuery) {
   const q = rawQuery.trim().toLowerCase();
-  const pillBox = document.getElementById("pill-box");
-  pillBox.innerHTML = "";
-
-  const matches = globalDictionary.filter(item => {
+  const matches = dictionary.filter(item => {
     const name = item.Suggested_Name.toLowerCase();
     const latin = (item.botanical || "").toLowerCase();
     return name.indexOf(q) !== -1 || (latin && latin.indexOf(q) !== -1);
   });
-
-  if (matches.length === 0) {
-    setPillPlaceholder("Nothing matches “" + rawQuery.trim() + "”.");
-    return;
-  }
 
   // Names that START with what was typed are almost always what was meant, so
   // they come first; everything else falls in behind, alphabetically.
@@ -2893,156 +2755,1180 @@ function renderSearchResults(rawQuery) {
     return a.Suggested_Name.localeCompare(b.Suggested_Name) ||
            a.Category.localeCompare(b.Category);
   });
-
-  const row = document.createElement("div");
-  row.className = "pill-row";
-  matches.forEach(item => row.appendChild(createItemPill(item, true)));
-  pillBox.appendChild(row);
+  return matches;
 }
 
-/* --- What the pill box should be showing right now ------------------------ */
-function refreshPillBox() {
-  const searchInput = document.getElementById("pill-search");
-  const query = searchInput ? searchInput.value : "";
 
-  if (query.trim().length > 0) {
-    renderSearchResults(query);
-  } else if (selectedCategoryRef) {
-    renderCategoryPills(selectedCategoryRef);
-  } else {
-    setPillPlaceholder("Select a category above, or search.");
+/* ==========================================================================
+ *  MY GARDEN — the Add flow (issues #53, #55 and #57)
+ *
+ *  A full-screen journey inside My Garden: the seven categories, then a
+ *  category's browse groups, then its pills — or a search of the whole
+ *  catalogue — selecting as many items as wanted, then Review. #53 owns the
+ *  session, browsing and navigation; #55 owns Review: one collapsible card per
+ *  selection with an optional reference and a locally prepared photo, one-tap
+ *  removal with Undo, and the Add button's interlock. Saving itself (the #54
+ *  batch call, then photo attachment) is issue #56's, in its own section
+ *  below (saveAddFlowSelections), so nothing in this section writes to the
+ *  database or uploads anything: it hands the selection to addFlowSaveTarget
+ *  and shows what the save reports back.
+ *
+ *  It is My Garden's only way to add (issue #57 replaced the earlier
+ *  single-item picker with it), opened from the compact Add to My Garden entry
+ *  above the inventory. Identify from photo (RM-015) keeps its own journey but
+ *  is offered on this flow's home.
+ *
+ *  The session is one user's, in one garden, and deliberately separate from
+ *  userInventory and from Custom Job state: nothing selected here is saved,
+ *  closing ends it, and a garden switch or sign-out discards it outright.
+ *  Selections are keyed by blueprint id, so a blueprint listed under two
+ *  categories is chosen at most once per session, under the category it was
+ *  chosen from (that becomes garden_item.legacy_category). A later session may
+ *  add the same blueprint again: duplicates across sessions are valid, and
+ *  nothing here ever touches an item that is already saved.
+ *
+ *  Navigation is one level at a time — home, category, browse group — with
+ *  search and Review layered over it, never replacing it. Back undoes exactly
+ *  one step (Review, then search, then a level, then leaving); native Back
+ *  does the same through one history entry held while the flow is open.
+ * ========================================================================== */
+
+// The Add flow's tile order (the approved picker order), not CATEGORY_ORDER,
+// which orders the saved inventory.
+const ADD_FLOW_CATEGORIES = [
+  "Plants & flowers", "Veg & herbs", "Trees & shrubs", "Lawn",
+  "Beds", "Garden structures", "Tools"
+];
+const ADD_HISTORY_KEY = "wgtAddFlow";
+
+let addSession = null;              // see newAddSession(); null whenever the flow is closed
+let addSessionSerial = 0;
+let addHistoryPopsToIgnore = 0;     // our own history.back() calls, not the user's
+let addDiscardContinuation = null;  // what Discard goes on to do (close, switch tab, switch garden)
+let addRemovalSerial = 0;           // identifies each Review removal's Undo
+let addSaveSerial = 0;
+let addSavedTimer = null;           // the brief "Added!" before the session starts afresh
+// Where Add N items hands the selection: issue #55 built the interlock, and
+// issue #56 connects the #54 batch call and photo attachment. A variable
+// rather than a direct call only so the interlock can be tested on its own.
+let addFlowSaveTarget = saveAddFlowSelections;
+
+function isPublicAppAddress(location = window.location) {
+  const host = (location && location.hostname) || "";
+  return /(^|\.)whatgardeningtoday\.com$/.test(host) || /\.github\.io$/.test(host);
+}
+
+function categoryDisplayName(category) {
+  return category === "Garden structures" ? "Structures" : category;
+}
+
+/* A random (version 4) UUID: the session's identity and, separately, each
+ * batch's request id, which the #54 operation requires to be a UUID. */
+function newAddSessionKey() {
+  const c = globalThis.crypto;
+  if (c && typeof c.randomUUID === "function") return c.randomUUID();
+  const bytes = new Uint8Array(16);
+  if (c && typeof c.getRandomValues === "function") c.getRandomValues(bytes);
+  else for (let i = 0; i < 16; i += 1) bytes[i] = Math.floor(Math.random() * 256);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, b => b.toString(16).padStart(2, "0")).join("");
+  return hex.slice(0, 8) + "-" + hex.slice(8, 12) + "-" + hex.slice(12, 16) + "-" + hex.slice(16, 20) + "-" + hex.slice(20);
+}
+
+function newAddSession(userId, gardenId) {
+  return {
+    id: newAddSessionKey(),        // stable session identity
+    serial: ++addSessionSerial,
+    userId,
+    gardenId,
+    stage: "browse",               // browse | review | saving | added (the brief "Added!")
+    requestId: newAddSessionKey(), // the next #54 batch request; renewed only once a batch is finished with
+    outcome: null,                 // null | "unknown" (the batch may or may not have been saved) | "saved" (items exist)
+    frozen: null,                  // while "unknown": { requestId, selections, ids }, replayed exactly by Try again
+    notice: null,                  // Review's message after a save that saved nothing: { lines, retry }
+    nav: [],                       // [{ category, group, scrollY }]; empty = the category tiles
+    homeScrollY: 0,
+    search: { query: "", returnScrollY: 0 },
+    reviewReturnScrollY: 0,
+    selected: new Map(),           // blueprint id -> { blueprintId, name, botanical, category, details }, in selection order
+    retained: new Map(),           // blueprint id -> details kept after deselection, restored on reselect
+    lastRemoved: null,             // Review's one-step Undo: { token, entry, index }
+    reviewExpanded: null,          // the one expanded Review card's blueprint id; reset on every entry
+    photoPick: null,               // { details } while the native picker is open for a Review card
+    transition: 0                  // bumped by every navigation, for later async work to compare against
+  };
+}
+
+/* The open session, only while it still belongs to whoever is signed in and
+ * the garden on screen. Anything else is discarded, never reused. */
+function currentAddSession() {
+  if (!addSession) return null;
+  if (addSession.userId !== currentUserId || addSession.gardenId !== currentGardenId) {
+    forgetAddSession();
+    return null;
   }
-  validateForm();
+  return addSession;
 }
 
-function handlePillSearchInput() {
-  const searchInput = document.getElementById("pill-search");
-  const clearBtn = document.getElementById("pill-search-clear");
-  const hasText = !!(searchInput && searchInput.value.trim().length > 0);
-
-  if (clearBtn) clearBtn.classList.toggle("hidden", !hasText);
-
-  // Anything currently picked is no longer on screen once the list changes
-  // underneath it, so drop it rather than leaving Add enabled for something
-  // invisible.
-  selectedSubItemObj = null;
-  refreshPillBox();
+function addFlowIsOpen() {
+  return !!currentAddSession();
 }
 
-function clearPillSearch() {
-  const searchInput = document.getElementById("pill-search");
-  if (searchInput) searchInput.value = "";
-  const clearBtn = document.getElementById("pill-search-clear");
-  if (clearBtn) clearBtn.classList.add("hidden");
-  selectedSubItemObj = null;
-  refreshPillBox();
+function addSessionPending(s) {
+  return !!s && s.selected.size > 0;
 }
 
-function selectCategory(categoryKey, element) {
-  document.querySelectorAll(".tile-btn").forEach(tile => {
-    tile.classList.remove("selected");
-    tile.setAttribute("aria-pressed", "false");
+/* A save is running, or its "Added!" is showing: nothing may start or change. */
+function addFlowBusy(s) {
+  return !!s && (s.stage === "saving" || s.stage === "added");
+}
+
+/* After a save attempt that may have saved something, the selection is fixed:
+ * an uncertain batch is only ever replayed exactly, and saved items are saved. */
+function addFlowFrozen(s) {
+  return !!s && s.outcome !== null;
+}
+
+function addSessionSearching(s) {
+  return !!s && s.stage === "browse" && s.search.query.trim().length > 0;
+}
+
+/* Select, or deselect, one catalogue entry. A deselected item's optional
+ * details are kept for the rest of the session, so selecting it again brings
+ * them back; it rejoins the selection at the end. Returns the new state. */
+function addSessionToggle(s, item) {
+  const id = Number(item.blueprint_id);
+  if (s.selected.has(id)) {
+    s.retained.set(id, s.selected.get(id).details);
+    s.selected.delete(id);
+    return false;
+  }
+  const details = s.retained.get(id) || addSessionTakeRemoved(s, id) || newAddDetails();
+  s.retained.delete(id);
+  s.selected.set(id, {
+    blueprintId: id,
+    name: item.Suggested_Name,
+    botanical: item.botanical || null,
+    category: item.Category,
+    details
   });
-  element.classList.add("selected");
-  element.setAttribute("aria-pressed", "true");
+  return true;
+}
 
-  selectedCategoryRef = categoryKey;
-  selectedSubItemObj = null;
+/* One selection's optional details (issue #55). They follow the blueprint id
+ * through deselection, reselection and Review's Undo, so the same object is
+ * only ever in one place: selected, retained or lastRemoved. */
+function newAddDetails() {
+  return {
+    reference: "",          // as typed; trimmed only for submission
+    photo: null,            // { main, thumb, width, height, previewUrl, thumbUrl } from processItemPhoto
+    photoStep: "idle",      // idle | processing
+    photoMessage: "",
+    photoIsError: false,
+    photoToken: 0,          // bumped whenever a decode in flight stops being wanted
+    released: false,        // its session, or its Undo, has ended: late decodes are dropped
+    attach: null            // once the item exists (#56): { state, reason, progress }; see addFlowAttachPhotos
+  };
+}
 
-  // Tapping a tile is a browsing action, so any live search is stood down —
-  // otherwise the tile would light up while search results stayed on screen.
-  const searchInput = document.getElementById("pill-search");
-  if (searchInput && searchInput.value) {
-    searchInput.value = "";
-    const clearBtn = document.getElementById("pill-search-clear");
-    if (clearBtn) clearBtn.classList.add("hidden");
+function releaseAddPhoto(details) {
+  const photo = details && details.photo;
+  if (!photo) return;
+  if (photo.previewUrl) URL.revokeObjectURL(photo.previewUrl);
+  if (photo.thumbUrl) URL.revokeObjectURL(photo.thumbUrl);
+  details.photo = null;
+}
+
+/* Discarded, expired or consumed: free the prepared photo and make any decode
+ * still running for it land nowhere. */
+function releaseAddDetails(details) {
+  if (!details) return;
+  releaseAddPhoto(details);
+  details.photoToken += 1;
+  details.photoStep = "idle";
+  details.released = true;
+}
+
+function releaseAddSession(s) {
+  if (!s) return;
+  s.selected.forEach(entry => releaseAddDetails(entry.details));
+  s.retained.forEach(details => releaseAddDetails(details));
+  if (s.lastRemoved) releaseAddDetails(s.lastRemoved.entry.details);
+  s.lastRemoved = null;
+  s.photoPick = null;
+}
+
+/* Reselecting, from Browse, an item whose Review removal can still be undone
+ * brings its details back and uses up that Undo. */
+function addSessionTakeRemoved(s, id) {
+  if (!s.lastRemoved || s.lastRemoved.entry.blueprintId !== id) return null;
+  const details = s.lastRemoved.entry.details;
+  s.lastRemoved = null;
+  dismissAddUndoToast(s);
+  return details;
+}
+
+function addSessionExpireRemoval(s, token) {
+  if (!s || !s.lastRemoved) return;
+  if (token !== undefined && s.lastRemoved.token !== token) return;
+  releaseAddDetails(s.lastRemoved.entry.details);
+  s.lastRemoved = null;
+}
+
+/* Hide this session's "… removed" toast without treating it as an expiry. */
+function dismissAddUndoToast(s) {
+  if (!undoToastState || undoToastState.type !== "add-remove" || !s || undoToastState.sessionId !== s.id) return;
+  undoToastState = null;
+  hideToast();
+}
+
+/* The shared toast calls this whenever an Add removal's Undo stops being
+ * offered (timed out, replaced by another toast or dismissed). */
+function addRemovalUndoExpired(state) {
+  if (addSession && addSession.id === state.sessionId) addSessionExpireRemoval(addSession, state.token);
+}
+
+function addReferenceForSubmission(raw) {
+  const trimmed = String(raw === null || raw === undefined ? "" : raw).trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/* The ordered selection in the shape the #54 batch operation accepts. Photos
+ * are not part of it: they stay on the device until the items exist. */
+function addFlowBatchSelections(s) {
+  return Array.from(s.selected.values()).map(entry => ({
+    blueprint_id: entry.blueprintId,
+    category: entry.category,
+    friendly_name: addReferenceForSubmission(entry.details.reference)
+  }));
+}
+
+/* Garden-scoped and read-only: what this garden already holds, from the
+ * inventory loaded for it. Owned items stay selectable without asking. */
+function addOwnedBlueprintIds(s) {
+  const owned = new Set();
+  if (!s || inventoryLoadedFor !== s.gardenId) return owned;
+  userInventory.forEach(item => {
+    if (item.blueprint_id !== null && item.blueprint_id !== undefined) owned.add(Number(item.blueprint_id));
+  });
+  return owned;
+}
+
+function addReviewLabel(count) {
+  return "Review " + plural(count, "item", "items");
+}
+
+function addSaveLabel(count) {
+  return "Add " + plural(count, "item", "items");
+}
+
+/* The Review footer's resting label. After a failed or uncertain save it is
+ * the approved "Try again"; once the items exist and no photo is left to
+ * retry, it lets the person carry on. */
+function addFlowFooterLabel(s) {
+  if (!s) return addSaveLabel(0);
+  if (s.outcome === "saved") return addFlowPhotoCounts(s).retryable > 0 ? "Try again" : "Done";
+  if (s.outcome === "unknown" || (s.notice && s.notice.retry)) return "Try again";
+  return addSaveLabel(s.selected.size);
+}
+
+function addSelectionAnnouncement(count) {
+  return count === 0 ? "No items selected" : plural(count, "item", "items") + " selected";
+}
+
+/* What one browse level shows. A category with any browse groups shows them
+ * first — even when there is only one — with anything ungrouped collected
+ * under "Other"; a category with none shows its pills directly. */
+function addCatalogueLevel(dictionary, level) {
+  if (!level) return { kind: "home" };
+  const items = dictionary.filter(item => item.Category === level.category);
+  const byName = (a, b) => a.Suggested_Name.localeCompare(b.Suggested_Name);
+  const grouped = items.some(item => item.browseGroup);
+
+  if (level.group === null || level.group === undefined) {
+    if (!grouped) return { kind: "pills", category: level.category, group: null, items: items.slice().sort(byName) };
+    const buckets = new Map();
+    items.forEach(item => {
+      const label = item.browseGroup || UNGROUPED_LABEL;
+      if (!buckets.has(label)) buckets.set(label, item.browseGroup ? item.browseSort : UNGROUPED_SORT);
+    });
+    const groups = Array.from(buckets.entries())
+      .map(([label, sort]) => ({ label, sort }))
+      .sort((a, b) => (a.sort - b.sort) || a.label.localeCompare(b.label));
+    return { kind: "groups", category: level.category, groups };
   }
 
-  renderCategoryPills(categoryKey);
-  validateForm();
+  const groupItems = items.filter(item => (item.browseGroup || UNGROUPED_LABEL) === level.group);
+  return { kind: "pills", category: level.category, group: level.group, items: groupItems.sort(byName) };
 }
 
-function validateForm() {
-  const submitBtn = document.getElementById("add-asset-btn");
-  const busy = submitBtn.dataset.state === "planting" || submitBtn.dataset.state === "success";
-  submitBtn.disabled = busy || !(selectedCategoryRef && selectedSubItemObj);
+/* What Back does from here: exactly one step. */
+function addFlowBackStep(s) {
+  if (addFlowBusy(s)) return "none";
+  // Saved items are saved: leaving Review finishes with them. An uncertain
+  // batch can't go back to browsing, where its selection could change.
+  if (s.outcome === "saved") return "finish";
+  if (s.outcome === "unknown") return "exit";
+  if (s.stage === "review") return "review";
+  if (addSessionSearching(s)) return "search";
+  if (s.nav.length > 0) return "level";
+  return "exit";
 }
 
-function setAddButtonState(state) {
-  const btn = document.getElementById("add-asset-btn");
-  const label = document.getElementById("add-asset-label");
-  if (!btn || !label) return;
+/* ---- Rendering ------------------------------------------------------------- */
+
+function addPillMarkup(s, item, owned, showSource) {
+  const id = Number(item.blueprint_id);
+  const selected = s.selected.has(id);
+  const isOwned = owned.has(id);
+  const classes = "item-pill" + (showSource ? " item-pill--result" : "") +
+    (selected ? " selected" : "") + (isOwned ? " item-pill--owned" : "");
+  return `<button type="button" class="${classes}" aria-pressed="${selected ? "true" : "false"}"` +
+    ` data-add-pill="${id}" data-add-pill-category="${escapeHtml(item.Category)}"` +
+    ` data-add-focus="${escapeHtml("pill:" + id + ":" + item.Category)}">` +
+    `<span class="item-pill-name">` +
+      (isOwned ? `<span class="item-pill-owned" aria-hidden="true">✓</span>` : "") +
+      escapeHtml(item.Suggested_Name) +
+      (item.botanical ? ` <span class="item-pill-latin">(${escapeHtml(item.botanical)})</span>` : "") +
+      (isOwned ? `<span class="sr-only">, already in My Garden</span>` : "") +
+    `</span>` +
+    (showSource ? `<span class="item-pill-source">${escapeHtml(item.Category)}</span>` : "") +
+    `</button>`;
+}
+
+function addCatalogueStatusMarkup() {
+  if (catalogueLoadFailed) {
+    return `<div class="garden-local-status error">We couldn’t load the catalogue. <button type="button" class="text-btn" data-action="retry-catalogue">Try again</button></div>`;
+  }
+  if (globalDictionary.length === 0) {
+    return `<div class="garden-local-status">Finding plants, tools and structures…</div>`;
+  }
+  return "";
+}
+
+function addHomeMarkup() {
+  return `<div class="category-tiles-grid add-flow-tiles">` +
+    ADD_FLOW_CATEGORIES.map(category =>
+      `<button class="tile-btn" type="button" data-category="${escapeHtml(category)}" data-add-category="${escapeHtml(category)}" data-add-focus="${escapeHtml("category:" + category)}">` +
+        `<img class="tile-icon" src="${categoryArtPath(category)}" alt="">` +
+        `<span class="tile-label">${escapeHtml(categoryDisplayName(category))}</span>` +
+      `</button>`).join("") +
+    `</div>`;
+}
+
+function addLevelMarkup(s, level) {
+  const view = addCatalogueLevel(globalDictionary, level);
+  if (view.kind === "home") return addCatalogueStatusMarkup() + addHomeMarkup();
+  const status = addCatalogueStatusMarkup();
+  if (status) return status;
+
+  if (view.kind === "groups") {
+    return `<div class="add-group-list">` + view.groups.map(group =>
+      `<button type="button" class="add-group-btn" data-add-group="${escapeHtml(group.label)}" data-add-focus="${escapeHtml("group:" + group.label)}">` +
+        `<span>${escapeHtml(group.label)}</span>` +
+        `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 5.5 6.5 6.5-6.5 6.5"/></svg>` +
+      `</button>`).join("") + `</div>`;
+  }
+
+  const heading = view.group ? `<h2 class="add-flow-subtitle">${escapeHtml(view.group)}</h2>` : "";
+  if (view.items.length === 0) return heading + `<div class="pill-placeholder">No items in this category yet.</div>`;
+  const owned = addOwnedBlueprintIds(s);
+  return heading + `<div class="pill-row">` + view.items.map(item => addPillMarkup(s, item, owned, false)).join("") + `</div>`;
+}
+
+function addSearchMarkup(s) {
+  const status = addCatalogueStatusMarkup();
+  if (status) return status;
+  const matches = catalogueSearchMatches(globalDictionary, s.search.query);
+  if (matches.length === 0) {
+    return `<div class="pill-placeholder">${escapeHtml("Nothing matches “" + s.search.query.trim() + "”.")}</div>`;
+  }
+  const owned = addOwnedBlueprintIds(s);
+  return `<div class="pill-row">` + matches.map(item => addPillMarkup(s, item, owned, true)).join("") + `</div>`;
+}
+
+/* ---- Review (issue #55) ------------------------------------------------------ */
+
+const ADD_REFERENCE_MAX = 200;   // the #54 batch operation's limit for a reference
+
+/* A saved item's photo, as its attachment stands (issue #56). */
+function addReviewAttachText(d) {
+  const state = d.attach ? d.attach.state : null;
+  if (state === "uploading") return { short: "Adding photo…", note: "Adding photo…", isError: false };
+  if (state === "done") return { short: "Photo added", note: "Photo added.", isError: false };
+  if (state === "pending") return { short: "Photo not added", note: "Ready to try again.", isError: true };
+  if (state === "failed" || state === "refused") {
+    return { short: "Photo not added", note: identifyPhotoFailedNote(d.attach.reason), isError: true };
+  }
+  return null;
+}
+
+function addReviewPhotoMarkup(entry, entitled, disabled) {
+  const d = entry.details;
+  const off = disabled ? " disabled" : "";
+  const photo = d.photo && d.photo.previewUrl ? d.photo : null;
+  const preview = photo
+    ? `<img class="add-review-preview" src="${escapeHtml(photo.previewUrl)}" alt="${escapeHtml("Photo for " + entry.name)}" data-add-preview="${entry.blueprintId}">`
+    : "";
+  const attach = entry.itemId ? addReviewAttachText(d) : null;
+  const message = attach && !d.photoMessage ? attach.note : d.photoMessage;
+  const isError = attach && !d.photoMessage ? attach.isError : d.photoIsError;
+  const status = message
+    ? `<p class="item-detail-status${isError ? " is-error" : ""}" role="status">${escapeHtml(message)}</p>`
+    : "";
+  const buttons = [];
+  const button = (action, label, kind) =>
+    `<button type="button" class="${kind}" data-add-photo="${action}" data-add-photo-id="${entry.blueprintId}"` +
+    ` data-add-focus="${escapeHtml("photo-" + action + ":" + entry.blueprintId)}"${off}>${label}</button>`;
+  // Once the item exists, only a photo still waiting to be attached can be
+  // changed or let go here; anything else is done from the item in My Garden.
+  const editable = !entry.itemId || (d.attach && (d.attach.state === "failed" || d.attach.state === "pending"));
+  if (d.photoStep !== "processing" && editable) {
+    // Adding or changing needs the item-photo entitlement to be known and
+    // held; removing a photo that is only on this device never does.
+    if (photo && entitled) buttons.push(button("change", "Change photo", "secondary-action-btn"));
+    if (photo) buttons.push(button("remove", "Remove photo", "photo-remove-btn"));
+    if (!photo && entitled && !entry.itemId) buttons.push(button("add", "Add photo", "secondary-action-btn"));
+  }
+  if (!preview && !status && buttons.length === 0) return "";
+  return `<div class="add-review-photo">${preview}${status}` +
+    (buttons.length ? `<div class="add-review-photo-actions">${buttons.join("")}</div>` : "") +
+    `</div>`;
+}
+
+function addReviewCardMarkup(s, entry, owned, entitled, saving) {
+  const id = entry.blueprintId;
+  const d = entry.details;
+  const expanded = s.reviewExpanded === id;
+  const off = saving ? " disabled" : "";
+  const fixed = saving || addFlowFrozen(s) ? " disabled" : "";
+  const reference = addReferenceForSubmission(d.reference);
+  const thumb = d.photo && d.photo.thumbUrl
+    ? `<img class="add-review-thumb" src="${escapeHtml(d.photo.thumbUrl)}" alt="" width="44" height="44">`
+    : "";
+  const panelId = "add-review-panel-" + id;
+  const inputId = "add-review-ref-" + id;
+  const attach = entry.itemId ? addReviewAttachText(d) : null;
+
+  // Once saved, every card would read "Already in My Garden"; it says what
+  // actually happened instead.
+  const where = entry.itemId
+    ? `<span class="add-review-owned">Added to My Garden</span>`
+    : owned.has(id) ? `<span class="add-review-owned">Already in My Garden</span>` : "";
+  const summary =
+    `<span class="add-review-text">` +
+      `<span class="add-review-name">${escapeHtml(entry.name)}` +
+        (entry.botanical ? ` <span class="item-pill-latin">(${escapeHtml(entry.botanical)})</span>` : "") +
+      `</span>` +
+      where +
+      (attach ? `<span class="add-review-photo-state${attach.isError ? " is-error" : ""}">${escapeHtml(attach.short)}</span>` : "") +
+      (reference && !expanded ? `<span class="add-review-ref-hint"><span class="sr-only">My reference: </span>${escapeHtml(reference)}</span>` : "") +
+    `</span>`;
+
+  const panel = expanded
+    ? `<div class="add-review-panel" id="${panelId}">` +
+        `<label class="garden-field-title garden-reference-label" for="${inputId}">My reference <span>(optional)</span></label>` +
+        `<div class="modern-input-wrapper">` +
+          `<input type="text" id="${inputId}" data-add-ref="${id}" data-add-focus="${escapeHtml("ref:" + id)}"` +
+          ` placeholder="e.g. next to the front door" maxlength="${ADD_REFERENCE_MAX}" autocomplete="off"` +
+          ` value="${escapeHtml(d.reference)}"${fixed}>` +
+        `</div>` +
+        addReviewPhotoMarkup(entry, entitled, saving) +
+      `</div>`
+    : "";
+
+  // A saved item is removed, if at all, from My Garden, never from here.
+  const remove = entry.itemId ? "" :
+    `<button type="button" class="add-review-remove" data-add-remove="${id}" data-add-focus="${escapeHtml("remove:" + id)}"` +
+    ` aria-label="${escapeHtml("Remove " + entry.name)}"${fixed}>` +
+      `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg>` +
+    `</button>`;
+
+  return `<li class="add-review-card${expanded ? " is-expanded" : ""}" data-add-card="${id}">` +
+    `<div class="add-review-card-head">` +
+      `<h2 class="add-review-heading">` +
+        `<button type="button" class="add-review-toggle" data-add-toggle="${id}" data-add-focus="${escapeHtml("toggle:" + id)}"` +
+        ` aria-expanded="${expanded ? "true" : "false"}"${expanded ? ` aria-controls="${panelId}"` : ""}${off}>` +
+          thumb + summary +
+          `<svg class="add-review-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9.5 6 6 6-6"/></svg>` +
+        `</button>` +
+      `</h2>` +
+      remove +
+    `</div>` +
+    panel +
+  `</li>`;
+}
+
+/* What a save left to say (issue #56): the approved general wording, with the
+ * truthful detail of what is already saved and what still needs attention. */
+function addReviewNoticeMarkup(s) {
+  let lines;
+  let finish = false;
+  if (s.outcome === "saved") {
+    const counts = addFlowPhotoCounts(s);
+    const missing = counts.retryable + counts.refused;
+    if (missing === 0) return "";
+    lines = [(counts.saved === 1 ? "Your item is" : "Your items are") + " in My Garden, but " + addPhotosNotAdded(missing)];
+    if (counts.retryable > 0) {
+      lines.push("Your selections are still here. Please try again.");
+      finish = true;   // carrying on without the photos is always possible
+    }
+  } else if (s.notice) {
+    lines = s.notice.lines;
+  } else {
+    return "";
+  }
+  return `<div class="add-review-notice">` +
+    `<p class="add-review-notice-title">Couldn’t add everything</p>` +
+    lines.map(line => `<p>${escapeHtml(line)}</p>`).join("") +
+    (finish ? `<button type="button" class="photo-text-btn add-review-finish" data-add-finish="1" data-add-focus="finish"${addFlowBusy(s) ? " disabled" : ""}>Done</button>` : "") +
+  `</div>`;
+}
+
+function addPhotosNotAdded(count) {
+  return count === 1 ? "1 photo wasn’t added." : count + " photos weren’t added.";
+}
+
+/* One card per selection, in selection order, with no numbering, category or
+ * count heading: the footer already says how many. */
+function addReviewMarkup(s) {
+  const owned = addOwnedBlueprintIds(s);
+  const entitled = photoEntitled();
+  const saving = addFlowBusy(s);
+  const cards = Array.from(s.selected.values())
+    .map(entry => addReviewCardMarkup(s, entry, owned, entitled, saving)).join("");
+  return addReviewNoticeMarkup(s) + `<ul class="add-review-list">${cards}</ul>`;
+}
+
+function renderAddFlow(options = {}) {
+  const s = currentAddSession();
+  const body = document.getElementById("add-flow-body");
+  if (!s || !body) return;
+
+  // Rebuilding the body must never cost what is being typed or where the
+  // caret is: values live in the session, and focus and selection come back.
+  const active = document.activeElement;
+  const focusKey = options.keepFocus && active && active.dataset ? active.dataset.addFocus || null : null;
+  const caret = focusKey && typeof active.selectionStart === "number"
+    ? { start: active.selectionStart, end: active.selectionEnd } : null;
+  const level = s.nav[s.nav.length - 1] || null;
+  const searching = addSessionSearching(s);
+  const reviewing = s.stage !== "browse";
+  const saving = addFlowBusy(s);
+
+  const title = document.getElementById("add-flow-title");
+  if (title) title.textContent = reviewing ? "Review" : level ? categoryDisplayName(level.category) : "Add to My Garden";
+  const back = document.getElementById("add-flow-back-btn");
+  if (back) back.disabled = saving;
+  const close = document.getElementById("add-flow-close-btn");
+  if (close) close.disabled = saving;
+
+  const identifySlot = document.getElementById("add-flow-identify-slot");
+  if (identifySlot) identifySlot.classList.toggle("hidden", reviewing || searching || !!level);
+  const searchArea = document.getElementById("add-flow-search-area");
+  if (searchArea) searchArea.classList.toggle("hidden", reviewing);
+  const clear = document.getElementById("add-flow-search-clear");
+  if (clear) clear.classList.toggle("hidden", !searching);
+
+  body.innerHTML = reviewing ? addReviewMarkup(s) : searching ? addSearchMarkup(s) : addLevelMarkup(s, level);
+
+  const review = document.getElementById("add-flow-review-btn");
+  if (review) {
+    review.classList.toggle("hidden", reviewing);
+    review.textContent = addReviewLabel(s.selected.size);
+    review.disabled = s.selected.size === 0;
+  }
+  const add = document.getElementById("add-flow-add-btn");
+  if (add) {
+    add.classList.toggle("hidden", !reviewing);
+    if (!saving && add.dataset.state !== "success") setAddFlowAddState("idle");
+    // An uncertain batch refused on replay can't usefully be sent again.
+    const stuck = s.outcome === "unknown" && s.notice && s.notice.retry === false;
+    add.disabled = saving || s.selected.size === 0 || stuck;
+  }
+
+  if (focusKey && focusAddFlowControl(focusKey) && caret) {
+    const again = document.activeElement;
+    if (again && typeof again.setSelectionRange === "function") {
+      try { again.setSelectionRange(caret.start, caret.end); } catch (e) { /* not a text field */ }
+    }
+  }
+}
+
+/* The growing-flower Add button: Planting… while saving, then Added!. */
+function setAddFlowAddState(state) {
+  const btn = document.getElementById("add-flow-add-btn");
+  const label = document.getElementById("add-flow-add-label");
+  if (!btn) return;
+  const s = currentAddSession();
   btn.dataset.state = state;
   btn.classList.toggle("planting", state === "planting");
   btn.classList.toggle("success", state === "success");
-  label.textContent = state === "planting" ? "Planting…" : state === "success" ? "Added!" : "Add to My Garden";
-  validateForm();
+  if (label) {
+    label.textContent = state === "planting" ? "Planting…" : state === "success" ? "Added!"
+      : addFlowFooterLabel(s);
+  }
 }
 
-function setGardenAddError(message) {
-  const errorEl = document.getElementById("garden-add-error");
-  if (!errorEl) return;
-  errorEl.textContent = message || "";
-  errorEl.classList.toggle("hidden", !message);
+function announceAddFlow(message) {
+  const status = document.getElementById("add-flow-status");
+  if (!status) return;
+  // Cleared first so the same words twice in a row are still read out.
+  status.textContent = "";
+  status.textContent = message;
 }
 
-async function handleAddAsset() {
-  const customName = document.getElementById("custom-name").value.trim();
-  const btn = document.getElementById("add-asset-btn");
-  if (!selectedCategoryRef || !selectedSubItemObj) return;
-  const gardenAtAdd = currentGardenId;
-  const categoryAtAdd = selectedCategoryRef;
-  const itemAtAdd = selectedSubItemObj;
+function focusAddFlowControl(key) {
+  const body = document.getElementById("add-flow-body");
+  const match = body
+    ? Array.from(body.querySelectorAll("[data-add-focus]")).find(el => el.dataset.addFocus === key)
+    : null;
+  if (match) { match.focus({ preventScroll: true }); return true; }
+  return false;
+}
 
-  setGardenAddError("");
-  setAddButtonState("planting");
+function focusAddFlowTitle() {
+  const title = document.getElementById("add-flow-title");
+  if (title) title.focus({ preventScroll: true });
+}
+
+function addFlowScrollY() {
+  return window.scrollY || 0;
+}
+
+function addFlowScrollTo(y) {
+  if (typeof window.scrollTo === "function") window.scrollTo(0, y || 0);
+}
+
+/* ---- History: one entry, held while the flow is open -------------------- */
+
+function addHistoryArm(s) {
+  const h = window.history;
+  if (!s || !h || typeof h.pushState !== "function") return;
+  if (h.state && h.state[ADD_HISTORY_KEY] === s.id) return;
+  try { h.pushState({ [ADD_HISTORY_KEY]: s.id }, ""); } catch (e) { /* in-app Back still works */ }
+}
+
+function addHistoryRelease(sessionId) {
+  const h = window.history;
+  if (!h || typeof h.back !== "function" || !h.state || h.state[ADD_HISTORY_KEY] !== sessionId) return;
+  addHistoryPopsToIgnore += 1;
+  h.back();
+}
+
+/* The browser has already stepped off our entry. Do what in-app Back would,
+ * and put the entry back whenever the flow is still open afterwards. */
+function handleAddFlowPopState() {
+  if (addHistoryPopsToIgnore > 0) { addHistoryPopsToIgnore -= 1; return; }
+  const s = currentAddSession();
+  if (!s) return;
+  const discard = document.getElementById("add-discard-modal");
+  if (discard && !discard.classList.contains("hidden")) {
+    keepAddEditing();
+  } else if (!document.querySelector(".modal-overlay:not(.hidden), .photo-viewer:not(.hidden)")) {
+    addFlowBack();
+  }
+  if (addSession === s) addHistoryArm(s);
+}
+
+/* ---- Opening, moving and leaving ---------------------------------------- */
+
+function openAddFlow() {
+  if (!currentUserId || !currentGardenId) return;
+  if (currentAddSession()) return;
+  addSession = newAddSession(currentUserId, currentGardenId);
+
+  const search = document.getElementById("add-flow-search");
+  if (search) search.value = "";
+  document.getElementById("view-garden").classList.add("add-flow-open");
+  document.getElementById("garden-add-flow").classList.remove("hidden");
+  if (document.body) document.body.classList.add("add-flow-active");
+  addHistoryArm(addSession);
+  renderAddFlow();
+  addFlowScrollTo(0);
+  focusAddFlowTitle();
+}
+
+/* Ends the session: everything selected is dropped. Callers that need the
+ * person's agreement ask first (requestAddFlowExit). */
+function closeAddFlow(options = {}) {
+  const s = addSession;
+  addSession = null;
+  addDiscardContinuation = null;
+  if (addSavedTimer) { clearTimeout(addSavedTimer); addSavedTimer = null; }
+  hideAccessibleModal("add-discard-modal", false);
+  if (s) {
+    // Its Undo goes with it, and every prepared photo is freed.
+    dismissAddUndoToast(s);
+    releaseAddSession(s);
+  }
+  const flow = document.getElementById("garden-add-flow");
+  if (!s && (!flow || flow.classList.contains("hidden"))) return;
+
+  const search = document.getElementById("add-flow-search");
+  if (search) search.value = "";
+  const body = document.getElementById("add-flow-body");
+  if (body) body.innerHTML = "";
+  if (flow) flow.classList.add("hidden");
+  const view = document.getElementById("view-garden");
+  if (view) view.classList.remove("add-flow-open");
+  if (document.body) document.body.classList.remove("add-flow-active", "add-flow-typing");
+  setAddFlowAddState("idle");     // no session now: the label resets with it
+  const status = document.getElementById("add-flow-status");
+  if (status) status.textContent = "";
+  if (s) addHistoryRelease(s.id);
+  if (options.restoreFocus) {
+    addFlowScrollTo(0);
+    const open = document.getElementById("add-flow-open-btn");
+    if (open) open.focus({ preventScroll: true });
+  }
+}
+
+/* Garden switch, sign-out, session loss: no question, nothing carried over. */
+function forgetAddSession() {
+  closeAddFlow({ restoreFocus: false });
+}
+
+const ADD_DISCARD_COPY = "Your selected items haven’t been added to My Garden yet.";
+// When the last Add may have been saved without an answer arriving, the usual
+// words could be untrue; this follows the identify journey's uncertain step.
+const ADD_DISCARD_UNCERTAIN_COPY = "They may already have been added to My Garden. Check My Garden before adding them again, so they aren’t added twice.";
+
+/* Leaving with something selected asks first; leaving with nothing selected
+ * just leaves. `then` runs once the flow has closed. Items that are already
+ * saved need no question: leaving finishes with them (issue #56). */
+function requestAddFlowExit(then) {
+  const s = currentAddSession();
+  // Nothing leaves while a save is under way: its outcome must land here.
+  if (addFlowBusy(s)) return false;
+  if (s && s.outcome === "saved") {
+    addFlowFinishSaved(s, { exit: true, then });
+    return true;
+  }
+  if (addSessionPending(s)) {
+    addDiscardContinuation = then || null;
+    const copy = document.getElementById("add-discard-copy");
+    if (copy) copy.textContent = s.outcome === "unknown" ? ADD_DISCARD_UNCERTAIN_COPY : ADD_DISCARD_COPY;
+    showAccessibleModal("add-discard-modal", "add-discard-keep-btn");
+    return false;
+  }
+  closeAddFlow({ restoreFocus: !then });
+  if (then) then();
+  return true;
+}
+
+function keepAddEditing() {
+  addDiscardContinuation = null;
+  hideAccessibleModal("add-discard-modal");
+}
+
+function confirmAddDiscard() {
+  const then = addDiscardContinuation;
+  const s = currentAddSession();
+  const uncertain = !!s && s.outcome === "unknown";
+  const gardenId = s ? s.gardenId : null;
+  closeAddFlow({ restoreFocus: !then });
+  if (then) then();
+  // Show what really is in the garden before anything is added again.
+  if (uncertain && gardenId === currentGardenId) loadInventory();
+}
+
+function addFlowOpenCategory(category) {
+  const s = currentAddSession();
+  if (!s || s.stage !== "browse" || addSessionSearching(s) || s.nav.length !== 0) return;
+  if (ADD_FLOW_CATEGORIES.indexOf(category) === -1) return;
+  s.homeScrollY = addFlowScrollY();
+  s.nav.push({ category, group: null, scrollY: 0 });
+  s.transition += 1;
+  renderAddFlow();
+  addFlowScrollTo(0);
+  focusAddFlowTitle();
+}
+
+function addFlowOpenGroup(group) {
+  const s = currentAddSession();
+  const level = s && s.nav[s.nav.length - 1];
+  if (!level || s.stage !== "browse" || addSessionSearching(s) || level.group !== null) return;
+  level.scrollY = addFlowScrollY();
+  s.nav.push({ category: level.category, group, scrollY: 0 });
+  s.transition += 1;
+  renderAddFlow();
+  addFlowScrollTo(0);
+  focusAddFlowTitle();
+}
+
+function addFlowTogglePill(blueprintId, category) {
+  const s = currentAddSession();
+  if (!s || s.stage !== "browse") return;
+  const item = globalDictionary.find(entry =>
+    Number(entry.blueprint_id) === Number(blueprintId) && entry.Category === category);
+  if (!item) return;
+  addSessionToggle(s, item);
+  renderAddFlow({ keepFocus: true });
+  announceAddFlow(addSelectionAnnouncement(s.selected.size));
+}
+
+function addFlowOpenReview() {
+  const s = currentAddSession();
+  if (!s || s.stage !== "browse" || s.selected.size === 0) return;
+  s.reviewReturnScrollY = addFlowScrollY();
+  s.stage = "review";
+  s.reviewExpanded = null;       // every visit starts with all cards collapsed
+  s.transition += 1;
+  renderAddFlow();
+  addFlowScrollTo(0);
+  focusAddFlowTitle();
+}
+
+function addFlowBack() {
+  const s = currentAddSession();
+  if (!s) return;
+  const step = addFlowBackStep(s);
+  if (step === "none") return;
+  if (step === "exit") { requestAddFlowExit(null); return; }
+  if (step === "finish") { addFlowFinishSaved(s, { exit: false }); return; }
+  s.transition += 1;
+
+  if (step === "review") {
+    s.stage = "browse";
+    renderAddFlow();
+    addFlowScrollTo(s.reviewReturnScrollY);
+    focusAddFlowTitle();
+    return;
+  }
+  if (step === "search") { clearAddFlowSearch(); return; }
+
+  const left = s.nav.pop();
+  const back = s.nav[s.nav.length - 1] || null;
+  renderAddFlow();
+  addFlowScrollTo(back ? back.scrollY : s.homeScrollY);
+  const cameFrom = left.group !== null ? "group:" + left.group : "category:" + left.category;
+  if (!focusAddFlowControl(cameFrom)) focusAddFlowTitle();
+}
+
+function handleAddFlowSearchInput() {
+  const s = currentAddSession();
+  const input = document.getElementById("add-flow-search");
+  if (!s || !input) return;
+  const was = addSessionSearching(s);
+  if (!was && input.value.trim().length > 0) s.search.returnScrollY = addFlowScrollY();
+  s.search.query = input.value;
+  renderAddFlow();
+  if (was && !addSessionSearching(s)) addFlowScrollTo(s.search.returnScrollY);
+}
+
+function clearAddFlowSearch() {
+  const s = currentAddSession();
+  const input = document.getElementById("add-flow-search");
+  if (!s) return;
+  const was = addSessionSearching(s);
+  if (input) input.value = "";
+  s.search.query = "";
+  renderAddFlow();
+  if (was) addFlowScrollTo(s.search.returnScrollY);
+  if (input) input.focus({ preventScroll: true });
+}
+
+function handleAddFlowBodyClick(event) {
+  const finish = event.target.closest("[data-add-finish]");
+  if (finish) { addFlowFinishSaved(currentAddSession(), { exit: false }); return; }
+  const toggle = event.target.closest("[data-add-toggle]");
+  if (toggle) { addFlowToggleCard(Number(toggle.dataset.addToggle)); return; }
+  const remove = event.target.closest("[data-add-remove]");
+  if (remove) { addFlowRemoveItem(Number(remove.dataset.addRemove)); return; }
+  const photo = event.target.closest("[data-add-photo]");
+  if (photo) { addFlowPhotoAction(photo.dataset.addPhoto, Number(photo.dataset.addPhotoId)); return; }
+  const pill = event.target.closest("[data-add-pill]");
+  if (pill) { addFlowTogglePill(pill.dataset.addPill, pill.dataset.addPillCategory); return; }
+  const tile = event.target.closest("[data-add-category]");
+  if (tile) { addFlowOpenCategory(tile.dataset.addCategory); return; }
+  const group = event.target.closest("[data-add-group]");
+  if (group) addFlowOpenGroup(group.dataset.addGroup);
+}
+
+/* ---- Review: cards, removal and Undo (issue #55) ------------------------- */
+
+function addFlowReviewing(s) {
+  return !!s && s.stage === "review";
+}
+
+function prefersReducedMotion() {
+  return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+}
+
+/* One card open at a time; its heading closes it again. */
+function addFlowToggleCard(blueprintId) {
+  const s = currentAddSession();
+  if (!addFlowReviewing(s) || !s.selected.has(blueprintId)) return;
+  s.reviewExpanded = s.reviewExpanded === blueprintId ? null : blueprintId;
+  renderAddFlow({ keepFocus: true });
+  if (s.reviewExpanded === null) return;
+  const panel = document.getElementById("add-review-panel-" + blueprintId);
+  if (panel && typeof panel.scrollIntoView === "function") {
+    panel.scrollIntoView({ block: "nearest", behavior: prefersReducedMotion() ? "auto" : "smooth" });
+  }
+}
+
+/* One tap, no question: Undo is the safety net. The removed item keeps its
+ * details for as long as Undo is offered, and only then lets them go. */
+function addFlowRemoveItem(blueprintId) {
+  const s = currentAddSession();
+  if (!addFlowReviewing(s) || addFlowFrozen(s) || !s.selected.has(blueprintId)) return;
+  const order = Array.from(s.selected.keys());
+  const index = order.indexOf(blueprintId);
+  const entry = s.selected.get(blueprintId);
+
+  // Only the latest removal can be undone; an earlier one is let go now.
+  dismissAddUndoToast(s);
+  addSessionExpireRemoval(s);
+  s.selected.delete(blueprintId);
+  if (s.reviewExpanded === blueprintId) s.reviewExpanded = null;
+  if (s.photoPick && s.photoPick.details === entry.details) s.photoPick = null;
+  const token = ++addRemovalSerial;
+  s.lastRemoved = { token, entry, index };
+  s.transition += 1;
+
+  if (s.selected.size === 0) {
+    // The last one: back to browsing exactly where Review was opened from,
+    // with Undo still on offer there.
+    s.stage = "browse";
+    renderAddFlow();
+    addFlowScrollTo(s.reviewReturnScrollY);
+    focusAddFlowTitle();
+  } else {
+    renderAddFlow();
+    const next = order[index + 1] !== undefined ? order[index + 1] : order[index - 1];
+    if (!focusAddFlowControl("toggle:" + next)) focusAddFlowTitle();
+  }
+  showUndoToast({ type: "add-remove", sessionId: s.id, token, gardenId: s.gardenId, itemName: entry.name });
+  announceAddFlow(entry.name + " removed. " + addSelectionAnnouncement(s.selected.size) + ".");
+}
+
+/* Puts the item back where it was in the selection, details and all. Late or
+ * stale calls (another session, a later removal, a save) do nothing. */
+function addFlowUndoRemoval(state) {
+  const s = currentAddSession();
+  if (!s || !state || s.id !== state.sessionId || addFlowBusy(s) || addFlowFrozen(s)) return false;
+  const removed = s.lastRemoved;
+  if (!removed || removed.token !== state.token) return false;
+  s.lastRemoved = null;
+  const id = removed.entry.blueprintId;
+  if (s.selected.has(id)) return false;
+
+  const entries = Array.from(s.selected.entries());
+  entries.splice(Math.min(removed.index, entries.length), 0, [id, removed.entry]);
+  s.selected = new Map(entries);
+  s.transition += 1;
+  renderAddFlow();
+  if (addFlowReviewing(s)) focusAddFlowControl("toggle:" + id);
+  announceAddFlow(removed.entry.name + " restored. " + addSelectionAnnouncement(s.selected.size) + ".");
+  return true;
+}
+
+/* The value lives in the session as typed, so a re-render, a collapse or a
+ * trip back to Browse never loses it. No re-render here: the field keeps its
+ * own caret and the keyboard stays put. */
+function handleAddFlowReferenceInput(event) {
+  const input = event.target;
+  if (!input || !input.dataset || !input.dataset.addRef) return;
+  const s = currentAddSession();
+  if (!addFlowReviewing(s) || addFlowFrozen(s)) return;
+  const entry = s.selected.get(Number(input.dataset.addRef));
+  if (entry) entry.details.reference = String(input.value || "").slice(0, ADD_REFERENCE_MAX);
+}
+
+/* While a reference field has the keyboard, the sticky Add button steps
+ * aside (style.css, touch screens only) and the field is kept in view. */
+function handleAddFlowFocusIn(event) {
+  const target = event.target;
+  if (!target || !target.dataset || !target.dataset.addRef) return;
+  if (document.body) document.body.classList.add("add-flow-typing");
+  keepAddReferenceVisible();
+}
+
+function handleAddFlowFocusOut(event) {
+  const target = event.target;
+  if (!target || !target.dataset || !target.dataset.addRef) return;
+  if (document.body) document.body.classList.remove("add-flow-typing");
+}
+
+function keepAddReferenceVisible() {
+  const active = document.activeElement;
+  if (!active || !active.dataset || !active.dataset.addRef || typeof active.scrollIntoView !== "function") return;
+  active.scrollIntoView({ block: "nearest", behavior: "auto" });
+}
+
+/* ---- Review: a photo prepared on this device (issue #55) ------------------
+ *
+ * The same native picker and processItemPhoto() as item detail: only the
+ * processed JPEG and thumbnail are kept, in memory, and nothing is uploaded —
+ * there is no saved item to attach a photo to until the items exist (#56).
+ * Removing a photo that has only ever been on this device is immediate.
+ * Adding or changing one needs the RM-026 item-photo entitlement to be known
+ * and held for this user (never the Custom Job photo one); the server checks
+ * again when the photo is finally attached. */
+
+function addFlowPhotoAction(action, blueprintId) {
+  const s = currentAddSession();
+  if (!addFlowReviewing(s)) return;
+  const entry = s.selected.get(blueprintId);
+  if (!entry) return;
+  const d = entry.details;
+  // A saved item (issue #56) offers only Change or Remove, and only for a
+  // photo still waiting to be attached; removing it means going without.
+  if (entry.itemId && (action === "add" || !d.attach || (d.attach.state !== "failed" && d.attach.state !== "pending"))) return;
+
+  if (action === "remove") {
+    d.photoToken += 1;          // and any decode still running for it lands nowhere
+    d.photoStep = "idle";
+    d.photoMessage = "";
+    d.photoIsError = false;
+    releaseAddPhoto(d);
+    if (entry.itemId) d.attach = null;
+    renderAddFlow();
+    if (!focusAddFlowControl("photo-add:" + blueprintId) && !focusAddFlowControl("ref:" + blueprintId)) {
+      focusAddFlowControl("toggle:" + blueprintId);
+    }
+    return;
+  }
+  if ((action === "add" || action === "change") && photoEntitled() && d.photoStep !== "processing") {
+    s.photoPick = { details: d };
+    // Open inside the tap: the device owns camera, library and file choices.
+    const input = document.getElementById("add-flow-photo-input");
+    if (!input) return;
+    input.value = "";
+    input.click();
+  }
+}
+
+/* Cancelling the picker changes nothing. */
+function handleAddFlowPhotoCancelled() {
+  const s = addSession;
+  if (s) s.photoPick = null;
+}
+
+async function handleAddFlowPhotoChosen(event) {
+  const input = event.target;
+  const file = input && input.files && input.files[0];
+  if (input) input.value = "";
+  const s = currentAddSession();
+  const pick = s && s.photoPick;
+  if (s) s.photoPick = null;
+  if (!file || !pick || !addFlowReviewing(s) || !photoEntitled()) return;
+  const d = pick.details;
+  if (d.released) return;
+
+  const token = d.photoToken += 1;
+  d.photoStep = "processing";
+  d.photoMessage = "Preparing photo…";
+  d.photoIsError = false;
+  renderAddFlow({ keepFocus: true });
+
+  // Still wanted only by this session, for this item's details, and by the
+  // same person in the same garden. The details may meanwhile have been
+  // deselected or removed with Undo pending: the photo still follows them.
+  const stillWanted = () => addSession === s && currentAddSession() === s &&
+    !d.released && d.photoToken === token;
+
+  let processed;
+  try {
+    processed = await processItemPhoto(file);
+  } catch (error) {
+    if (!stillWanted()) return;
+    if (!(error instanceof PhotoProblem)) console.error("Add flow photo processing failed:", error);
+    // Any photo already prepared stays: a failed change keeps the old one.
+    d.photoStep = "idle";
+    d.photoMessage = photoProblemMessage(error, photoDiagnosticsWanted());
+    d.photoIsError = true;
+    renderAddFlow({ keepFocus: true });
+    return;
+  }
+  if (!stillWanted()) return;
+  releaseAddPhoto(d);
+  d.photo = {
+    main: processed.main,
+    thumb: processed.thumb,
+    width: processed.width,
+    height: processed.height,
+    previewUrl: URL.createObjectURL(processed.main),
+    thumbUrl: URL.createObjectURL(processed.thumb)
+  };
+  // A replacement for a saved item's unattached photo starts its attachment
+  // afresh, from a new generation. An earlier commit that never answered is
+  // still remembered, so its photo, if it landed, is recognised as this
+  // person's rather than mistaken for someone else's.
+  if (d.attach) {
+    const before = d.attach.progress;
+    d.attach = newAddAttach("pending");
+    d.attach.progress.priorGeneration = before.uploaded ? before.generationId : before.priorGeneration || null;
+  }
+  d.photoStep = "idle";
+  d.photoMessage = "";
+  d.photoIsError = false;
+  renderAddFlow({ keepFocus: true });
+}
+
+/* A preview that will not draw leaves no broken-image icon behind. */
+function handleAddFlowImageError(event) {
+  const img = event.target;
+  if (img && img.tagName === "IMG" && (img.classList.contains("add-review-preview") || img.classList.contains("add-review-thumb"))) {
+    img.remove();
+  }
+}
+
+/* ---- Review: Add N items (issue #55 interlock) ---------------------------
+ *
+ * The first tap wins, synchronously: the session moves to "saving" before
+ * anything is awaited, so a second tap, Back, X, a tab, a garden switch, an
+ * Undo or an edit cannot start or change anything until the save target
+ * answers. The target (issue #56) owns what success and failure then look
+ * like; whatever it does, a session it leaves in "saving" is returned to
+ * Review with everything still in place. The same tap is Try again after a
+ * failure: the target then replays an uncertain batch or retries photos. */
+async function addFlowBeginSave() {
+  const s = currentAddSession();
+  if (!addFlowReviewing(s) || s.selected.size === 0 || typeof addFlowSaveTarget !== "function") return false;
+  s.stage = "saving";
+  s.transition += 1;
+  const serial = ++addSaveSerial;
+  dismissAddUndoToast(s);
+  addSessionExpireRemoval(s);
+  const active = document.activeElement;
+  if (active && active.dataset && active.dataset.addRef && typeof active.blur === "function") active.blur();
+  setAddFlowAddState("planting");
+  renderAddFlow();
 
   try {
-    const { error } = await sb.from("garden_item").insert({
-      garden_id: gardenAtAdd,
-      blueprint_id: itemAtAdd.blueprint_id,
-      friendly_name: customName.length > 0 ? customName : null,
-      legacy_category: categoryAtAdd   // the tile it was added under -> grouping
+    await addFlowSaveTarget({
+      session: s,
+      sessionId: s.id,
+      gardenId: s.gardenId,
+      requestId: s.requestId,
+      selections: addFlowBatchSelections(s),
+      stillCurrent: () => addSession === s && currentAddSession() === s && serial === addSaveSerial
     });
-    if (error) throw error;
-    if (gardenAtAdd !== currentGardenId) return;
-
-    // A slow add must not erase a newer choice made while the request was in
-    // flight. When the original choice is still current, keep its category as
-    // approved but clear the item and optional reference for the next add.
-    const originalChoiceStillCurrent = selectedCategoryRef === categoryAtAdd &&
-      selectedSubItemObj && selectedSubItemObj.blueprint_id === itemAtAdd.blueprint_id;
-    if (originalChoiceStillCurrent) {
-      document.getElementById("custom-name").value = "";
-      // Stand the search down and return to browsing the category the item came
-      // from, so adding several things there does not mean retyping.
-      clearPillSearch();
-    }
-
-    setAddButtonState("success");
-    const liveStatus = document.getElementById("garden-add-status");
-    if (liveStatus) liveStatus.textContent = "Added to My Garden";
-    if (gardenAddResetTimer) clearTimeout(gardenAddResetTimer);
-    gardenAddResetTimer = setTimeout(() => {
-      setAddButtonState("idle");
-      if (liveStatus) liveStatus.textContent = "";
-      gardenAddResetTimer = null;
-    }, 850);
-
-    loadInventory();
-    loadToday();
   } catch (error) {
-    console.error("Add item error:", error);
-    if (gardenAtAdd !== currentGardenId) return;
-    if (await sessionHasGone(error, 0)) { await recoverFromSessionLoss(); return; }
-    // The per-garden item ceiling (db/11) is the one refusal worth naming: the
-    // generic "try again" would send someone round a loop that cannot succeed.
-    const full = String((error && error.message) || "").indexOf("maximum of") !== -1;
-    setAddButtonState("idle");
-    setGardenAddError(full
-      ? "This garden is full, so another item can’t be added."
-      : "We couldn’t add " + itemAtAdd.Suggested_Name + ". Please try again.");
+    console.error("Add flow save failed:", error);
   }
+  if (addSession !== s || currentAddSession() !== s || serial !== addSaveSerial) return true;
+  if (s.stage === "saving") {
+    s.stage = "review";
+    setAddFlowAddState("idle");
+    renderAddFlow();
+  }
+  return true;
+}
+
+/* The footer button: Add N items / Try again start a save; Done, once every
+ * item is saved and no photo is left to retry, carries on without asking. */
+function addFlowFooterAction() {
+  const s = currentAddSession();
+  if (s && s.stage === "review" && s.outcome === "saved" && addFlowPhotoCounts(s).retryable === 0) {
+    addFlowFinishSaved(s, { exit: false });
+    return Promise.resolve(true);
+  }
+  return addFlowBeginSave();
 }
 
 
@@ -3437,8 +4323,7 @@ class PhotoProblem extends Error {
 /* The DEV pilot shows what a refused photo still carried, so a device test can
  * say exactly what an encoder wrote. Never on the public addresses. */
 function photoDiagnosticsWanted(location = window.location) {
-  const host = (location && location.hostname) || "";
-  return !/(^|\.)whatgardeningtoday\.com$/.test(host) && !/\.github\.io$/.test(host);
+  return !isPublicAppAddress(location);
 }
 
 function photoProblemMessage(error, withDetails = false) {
@@ -3715,6 +4600,8 @@ async function ensurePhotoUrls(gardenId, itemIds, includeImage) {
 function rerenderPhotoSurfaces() {
   if (inventoryLoadedFor === currentGardenId) renderGroupedInventory();
   if (photoDetail) renderItemDetail();
+  // Review's Add photo follows the entitlement as soon as it is known.
+  if (addFlowReviewing(currentAddSession())) renderAddFlow({ keepFocus: true });
 }
 
 /* ---- My Garden thumbnail ---------------------------------------------------- */
@@ -3761,7 +4648,8 @@ function openItemDetail(itemId, trigger) {
     message: "",
     messageIsError: false,
     imageFailed: false,
-    token: ++photoOpSerial
+    token: ++photoOpSerial,
+    ref: newItemReferenceState()   // the My reference editor (issue #56)
   };
   renderItemDetail();
   showAccessibleModal("item-detail-modal", "close-item-detail-modal");
@@ -3872,6 +4760,7 @@ function renderItemDetail(focusFirstAction = false) {
   const actions = document.getElementById("item-detail-actions");
   actions.innerHTML = buttons.join("");
   actions.classList.toggle("hidden", buttons.length === 0);
+  renderItemReferenceEditor();
   renderItemCustomJobs();
 
   if (focusFirstAction) {
@@ -3970,40 +4859,53 @@ async function handlePhotoFileChosen(event) {
   savePendingPhoto();
 }
 
-/* begin → two signed uploads → commit, shared by item detail and the RM-015
- * identification journey. Returns { abandoned } once stillHere() fails, the
- * failed call's { ok: false, status, reason }, or { ok: true, photo }. */
+/* begin → two signed uploads → commit, shared by item detail, the RM-015
+ * identification journey and the Add flow (issue #56). Returns { abandoned }
+ * once stillHere() fails, the failed call's { ok: false, status, reason }, or
+ * { ok: true, photo }. */
 async function uploadItemPhoto(itemId, pending, expected, stillHere) {
   return uploadPhotoGeneration(callItemPhotos, PHOTO.BUCKET, { garden_item_id: itemId }, pending, expected, stillHere);
 }
 
 /* The one upload sequence for every photo kind. `target` names the owner
  * ({ garden_item_id } or { custom_job_id }); only processed derivatives from
- * processItemPhoto() are ever sent, never the original file. */
-async function uploadPhotoGeneration(call, fallbackBucket, target, pending, expected, stillHere) {
-  const begin = await call(Object.assign({ action: "begin" }, target, { expected_generation_id: expected }));
-  if (!stillHere()) return { abandoned: true };
-  if (!begin.ok) return begin;
-
-  try {
-    const uploads = begin.data.uploads || {};
-    const bucket = sb.storage.from(begin.data.bucket || fallbackBucket);
-    const options = { contentType: "image/jpeg", cacheControl: PHOTO.CACHE_CONTROL };
-    const results = await Promise.all([
-      bucket.uploadToSignedUrl(uploads.image.path, uploads.image.token, pending.main, options),
-      bucket.uploadToSignedUrl(uploads.thumb.path, uploads.thumb.token, pending.thumb, options)
-    ]);
-    const failed = results.find(r => r && r.error);
-    if (failed) throw failed.error;
-  } catch (error) {
-    console.error("Photo upload failed:", error);
+ * processItemPhoto() are ever sent, never the original file.
+ *
+ * `progress`, when given, records how far this attempt got
+ * ({ generationId, uploaded }) and lets a retry resume: a generation whose
+ * two uploads both finished is committed again rather than uploaded twice.
+ * The caller decides, by reading the saved photo first, whether a commit that
+ * never answered had in fact landed (addFlowReconcilePhotos). */
+async function uploadPhotoGeneration(call, fallbackBucket, target, pending, expected, stillHere, progress = null) {
+  let generationId = progress && progress.uploaded ? progress.generationId : null;
+  if (!generationId) {
+    const begin = await call(Object.assign({ action: "begin" }, target, { expected_generation_id: expected }));
     if (!stillHere()) return { abandoned: true };
-    return { ok: false, status: 0, reason: "upload_failed" };
+    if (!begin.ok) return begin;
+    generationId = begin.data.generation_id;
+    if (progress) { progress.generationId = generationId; progress.uploaded = false; }
+
+    try {
+      const uploads = begin.data.uploads || {};
+      const bucket = sb.storage.from(begin.data.bucket || fallbackBucket);
+      const options = { contentType: "image/jpeg", cacheControl: PHOTO.CACHE_CONTROL };
+      const results = await Promise.all([
+        bucket.uploadToSignedUrl(uploads.image.path, uploads.image.token, pending.main, options),
+        bucket.uploadToSignedUrl(uploads.thumb.path, uploads.thumb.token, pending.thumb, options)
+      ]);
+      const failed = results.find(r => r && r.error);
+      if (failed) throw failed.error;
+    } catch (error) {
+      console.error("Photo upload failed:", error);
+      if (!stillHere()) return { abandoned: true };
+      return { ok: false, status: 0, reason: "upload_failed" };
+    }
+    if (progress) progress.uploaded = true;
+    if (!stillHere()) return { abandoned: true };
   }
-  if (!stillHere()) return { abandoned: true };
 
   const commit = await call(Object.assign({ action: "commit" }, target, {
-    generation_id: begin.data.generation_id,
+    generation_id: generationId,
     width: pending.width, height: pending.height, expected_generation_id: expected
   }));
   if (!stillHere()) return { abandoned: true };
@@ -4012,7 +4914,7 @@ async function uploadPhotoGeneration(call, fallbackBucket, target, pending, expe
   return {
     ok: true,
     photo: {
-      generation_id: saved.generation_id || begin.data.generation_id,
+      generation_id: saved.generation_id || generationId,
       width: saved.width || pending.width,
       height: saved.height || pending.height
     }
@@ -4109,6 +5011,238 @@ function photoSaveFailed(token, res) {
   d.step = "failed";
   setDetailMessage(d, "Photo not saved", true);
   renderItemDetail(true);
+}
+
+/* ---- My reference, editable after saving (issue #56) -----------------------
+ *
+ * A small editor inside item detail for the item's own garden_item
+ * .friendly_name: add, change or clear it. Only that column of that item, in
+ * that garden, is written — never its blueprint, category, photo or Custom
+ * Job links, so the item's id and everything attached to it stay as they
+ * were. The write is conditional on the reference this edit started from, so
+ * a change another member made meanwhile is reported, never overwritten, and
+ * a removed item or a lost membership (garden_item RLS) matches nothing. */
+
+let itemReferenceSerial = 0;
+
+function newItemReferenceState() {
+  return { step: "idle", draft: "", base: "", message: "", isError: false, token: 0 };
+}
+
+function setItemReferenceMessage(r, message, isError) {
+  r.message = message;
+  r.isError = !!isError;
+}
+
+function itemReferenceMarkup(r, hasReference) {
+  const status = r.message
+    ? `<p class="item-detail-status${r.isError ? " is-error" : ""}" role="status">${escapeHtml(r.message)}</p>`
+    : "";
+  if (r.step === "idle") {
+    return `<button type="button" class="photo-text-btn item-reference-edit" data-ref-action="edit">` +
+      (hasReference ? "Edit my reference" : "Add my reference") + `</button>` + status;
+  }
+  const saving = r.step === "saving";
+  return `<label class="garden-field-title garden-reference-label" for="item-reference-input">My reference <span>(optional)</span></label>` +
+    `<div class="modern-input-wrapper">` +
+      `<input type="text" id="item-reference-input" placeholder="e.g. next to the front door"` +
+      ` maxlength="${ADD_REFERENCE_MAX}" autocomplete="off"${saving ? " readonly" : ""}>` +
+    `</div>` +
+    status +
+    `<div class="item-reference-actions">` +
+      `<button type="button" class="primary-action-btn" data-ref-action="save"${saving ? " disabled" : ""}>${saving ? "Saving…" : "Save"}</button>` +
+      `<button type="button" class="photo-text-btn" data-ref-action="cancel"${saving ? " disabled" : ""}>Cancel</button>` +
+    `</div>`;
+}
+
+/* Rebuilt only when what it shows changes, so photo and job refreshes never
+ * cost the text being typed, its caret or the keyboard. */
+function renderItemReferenceEditor() {
+  const d = photoDetail;
+  const box = document.getElementById("item-detail-reference-editor");
+  const item = d ? inventoryItem(d.itemId) : null;
+  if (!d || !box || !item) return;
+  const r = d.ref;
+  const hasReference = !!item.friendly_name;
+  const sig = [r.step, r.message, r.isError, hasReference].join("|");
+  if (box.dataset.sig !== sig) {
+    const active = document.activeElement;
+    const inside = active && typeof box.contains === "function" && box.contains(active);
+    const focusKey = inside ? (active.id || (active.dataset && active.dataset.refAction) || null) : null;
+    box.innerHTML = itemReferenceMarkup(r, hasReference);
+    box.dataset.sig = sig;
+    if (focusKey) focusItemReferenceControl(focusKey);
+  }
+  const input = document.getElementById("item-reference-input");
+  if (input && r.step !== "idle" && input.value !== r.draft) input.value = r.draft;
+}
+
+function focusItemReferenceControl(key) {
+  const box = document.getElementById("item-detail-reference-editor");
+  if (!box) return;
+  const target = key === "item-reference-input"
+    ? document.getElementById("item-reference-input")
+    : box.querySelector(`[data-ref-action="${key}"]`) || box.querySelector("[data-ref-action]");
+  if (target && typeof target.focus === "function") target.focus();
+}
+
+function handleItemReferenceAction(action) {
+  const d = photoDetail;
+  const item = d ? inventoryItem(d.itemId) : null;
+  if (!d || !item) return;
+  const r = d.ref;
+  if (action === "edit" && r.step === "idle") {
+    r.step = "editing";
+    r.base = item.friendly_name || "";
+    r.draft = r.base;
+    setItemReferenceMessage(r, "", false);
+    renderItemReferenceEditor();
+    focusItemReferenceControl("item-reference-input");
+    return;
+  }
+  if (action === "cancel" && r.step === "editing") {
+    r.step = "idle";
+    r.draft = "";
+    r.token = ++itemReferenceSerial;
+    setItemReferenceMessage(r, "", false);
+    renderItemReferenceEditor();
+    focusItemReferenceControl("edit");
+    return;
+  }
+  if (action === "save") saveItemReference();
+}
+
+function handleItemReferenceInput(event) {
+  const input = event.target;
+  const d = photoDetail;
+  if (!input || input.id !== "item-reference-input" || !d || d.ref.step !== "editing") return;
+  d.ref.draft = String(input.value || "").slice(0, ADD_REFERENCE_MAX);
+}
+
+/* The reference as the database holds it, for comparison: none is "". */
+function itemReferenceValue(value) {
+  return value === null || value === undefined ? "" : String(value);
+}
+
+/* A saved reference, wherever it is shown: inventory, item detail and the
+ * Custom Job labels that name the item. Only for the garden it belongs to. */
+function applyItemReference(gardenId, itemId, value) {
+  if (gardenId !== currentGardenId || inventoryLoadedFor !== gardenId) return;
+  const item = inventoryItem(itemId);
+  if (!item) return;
+  item.friendly_name = itemReferenceValue(value);
+  renderGroupedInventory();
+  if (customJobsLoadedFor === gardenId) renderCustomJobSurfaces();
+  if (photoDetail && photoDetail.itemId === Number(itemId)) renderItemDetail();
+}
+
+async function saveItemReference() {
+  const d = photoDetail;
+  if (!d || d.ref.step !== "editing" || !inventoryItem(d.itemId)) return;
+  const r = d.ref;
+  const next = addReferenceForSubmission(String(r.draft).slice(0, ADD_REFERENCE_MAX));
+  const base = r.base;
+  const gardenId = d.gardenId;
+  const itemId = d.itemId;
+
+  if (itemReferenceValue(next) === base) {
+    // Nothing changed: nothing to send.
+    r.step = "idle";
+    setItemReferenceMessage(r, "", false);
+    renderItemReferenceEditor();
+    focusItemReferenceControl("edit");
+    return;
+  }
+
+  const token = r.token = ++itemReferenceSerial;
+  const current = () => photoDetail === d && d.ref.token === token && d.gardenId === currentGardenId;
+  r.step = "saving";
+  setItemReferenceMessage(r, "", false);
+  renderItemReferenceEditor();
+
+  let data = null;
+  let error = null;
+  try {
+    let query = sb.from("garden_item")
+      .update({ friendly_name: next })
+      .eq("id", itemId)
+      .eq("garden_id", gardenId)
+      .is("removed_at", null);
+    // Only if it still says what this edit started from.
+    query = base === ""
+      ? query.or('friendly_name.is.null,friendly_name.eq.""')
+      : query.eq("friendly_name", base);
+    ({ data, error } = await query.select("id, friendly_name"));
+  } catch (e) {
+    error = e || {};
+  }
+
+  if (!error && Array.isArray(data) && data.length === 1) {
+    itemReferenceSaved(d, token, gardenId, itemId, data[0].friendly_name, current);
+    return;
+  }
+  if (error) {
+    console.error("Reference save error:", error);
+    if (await sessionHasGone(error, 0)) { await recoverFromSessionLoss(); return; }
+    if (!current()) return;
+    r.step = "editing";
+    setItemReferenceMessage(r, error.code
+      ? "Couldn’t save your reference. Please try again."
+      : "Couldn’t save your reference. Check your connection and try again.", true);
+    renderItemReferenceEditor();
+    return;
+  }
+
+  // Nothing matched: read the item to say why.
+  let row = null;
+  let readError = null;
+  try {
+    ({ data: row, error: readError } = await sb.from("garden_item")
+      .select("id, friendly_name, removed_at")
+      .eq("id", itemId)
+      .eq("garden_id", gardenId)
+      .maybeSingle());
+  } catch (e) {
+    readError = e || {};
+  }
+  if (readError) {
+    if (!current()) return;
+    r.step = "editing";
+    setItemReferenceMessage(r, "Couldn’t save your reference. Check your connection and try again.", true);
+    renderItemReferenceEditor();
+    return;
+  }
+  if (!row || row.removed_at) {
+    // Removed, or no longer this person's garden to change.
+    if (gardenId !== currentGardenId) return;
+    if (photoDetail === d) closeItemDetail(false);
+    showToast("That item is no longer in this garden.", false);
+    loadInventory();
+    return;
+  }
+  const saved = itemReferenceValue(row.friendly_name);
+  if (saved === itemReferenceValue(next)) {
+    // An earlier attempt whose answer was lost had already saved it.
+    itemReferenceSaved(d, token, gardenId, itemId, row.friendly_name, current);
+    return;
+  }
+  // Someone else changed it first. Theirs is shown; this one stays typed.
+  applyItemReference(gardenId, itemId, row.friendly_name);
+  if (!current()) return;
+  r.step = "editing";
+  r.base = saved;
+  setItemReferenceMessage(r, "This reference was just changed somewhere else. Check it before saving yours.", true);
+  renderItemReferenceEditor();
+}
+
+function itemReferenceSaved(d, token, gardenId, itemId, value, current) {
+  applyItemReference(gardenId, itemId, value);
+  if (!current()) return;
+  d.ref.step = "idle";
+  d.ref.draft = "";
+  setItemReferenceMessage(d.ref, itemReferenceValue(value) ? "Reference saved." : "Reference removed.", false);
+  renderItemReferenceEditor();
+  focusItemReferenceControl("edit");
 }
 
 /* ---- Remove photo ------------------------------------------------------------ */
@@ -4262,6 +5396,392 @@ function handlePhotoViewerClick(event) {
 
 function handlePhotoViewerImageError() {
   if (photoViewer) setPhotoViewerProblem(true);
+}
+
+
+/* ==========================================================================
+ *  MY GARDEN — saving the Add flow (issue #56, fourth of five)
+ *
+ *  Add N items hands the Review selection here (addFlowSaveTarget). Items
+ *  first, photos second, and never the other way round:
+ *
+ *  1. One call to the trusted #54 batch operation creates every selected item
+ *     or none. Its request id is the session's, so if no answer arrives the
+ *     same request, with exactly the same selections, is the only thing Try
+ *     again can send: the database hands back the items it already made
+ *     instead of making them twice. Until it has answered, nothing in the
+ *     selection can change (addFlowFrozen) and nothing is uploaded.
+ *  2. With real garden_item ids in hand, each prepared photo is attached to
+ *     its own item through the RM-026 item-photo API, exactly as item detail
+ *     does: begin, two signed uploads of the processed derivatives, commit.
+ *     The item-photo entitlement, account ceiling, membership and image
+ *     checks stay the server's; a refusal that retrying cannot change is
+ *     shown as final, never offered again.
+ *  3. A photo that failed for any other reason waits on this device for a
+ *     photo-only Try again, which never repeats the item Add and never
+ *     re-sends an image the database has already accepted: an attempt whose
+ *     commit went unanswered is first checked against the saved photo.
+ *
+ *  Every await is followed by a check that the same person is still in the
+ *  same garden (and, before anything is drawn, that the same session is still
+ *  open), so a late answer is credited to the garden it was sent for and
+ *  never painted over another.
+ * ========================================================================== */
+
+async function saveAddFlowSelections(request) {
+  const s = request.session;
+  if (!s || s.selected.size === 0) return;
+  if (s.outcome !== "saved") {
+    const saved = await addFlowSaveBatch(s, request);
+    if (!saved) return;
+  }
+  await addFlowAttachPhotos(s, request);
+}
+
+const ADD_GENERAL_FAILURE = "Your selections are still here. Please try again.";
+const ADD_CHECK_GARDEN = "Check My Garden before adding them again, so they aren’t added twice.";
+
+/* Refusals the batch makes before saving anything, that trying the same
+ * selection again cannot change. */
+const ADD_BATCH_REFUSALS = {
+  "garden_item_batch:capacity": "There isn’t room in this garden for all of these. Remove some to add the rest.",
+  "garden_item_batch:not_entitled": "Something here belongs to a pack this account doesn’t have.",
+  "garden_item_batch:invalid_selection": "Something here isn’t available in the catalogue any more."
+};
+
+/* Returns true once every selected item has a garden_item id. */
+async function addFlowSaveBatch(s, request) {
+  // Replaying an uncertain batch sends what was sent, not what is on screen.
+  const batch = s.frozen || {
+    requestId: s.requestId,
+    selections: request.selections,
+    ids: Array.from(s.selected.keys())
+  };
+  const replaying = !!s.frozen;
+  s.notice = null;
+
+  if (!replaying && navigator.onLine === false) {
+    // Nothing was sent, so nothing can have been saved.
+    addFlowNotice(s, { lines: [ADD_GENERAL_FAILURE], retry: true });
+    return false;
+  }
+
+  let data = null;
+  let error = null;
+  try {
+    ({ data, error } = await sb.rpc("add_garden_items_batch", {
+      p_garden_id: s.gardenId,
+      p_request_id: batch.requestId,
+      p_selections: batch.selections
+    }));
+  } catch (e) {
+    error = e || {};
+  }
+
+  if (!request.stillCurrent()) {
+    // Only a garden switch or sign-out ends a session mid-save. What was saved
+    // belongs to the garden it was sent for, and the person is told so there.
+    if (!error && Array.isArray(data) && data.length > 0 && currentUserId === s.userId && currentGardenId !== s.gardenId) {
+      const garden = gardens.find(g => g.id === s.gardenId);
+      showToast(plural(data.length, "item was", "items were") + " added to " + (garden ? garden.name : "your other garden") + ".", false);
+    }
+    return false;
+  }
+
+  if (error) {
+    console.error("Add flow batch error:", error);
+    if (await sessionHasGone(error, 0)) { await recoverFromSessionLoss(); return false; }
+    if (!request.stillCurrent()) return false;
+    const hint = String(error.hint || "");
+    if (hint === "garden_item_batch:not_available") { await handleGardenGone(); return false; }
+    if (!error.code) {
+      // No answer: the batch may or may not have been saved. Only this exact
+      // request may be sent again, and only by the person.
+      s.frozen = batch;
+      s.outcome = "unknown";
+      addFlowNotice(s, { lines: [ADD_GENERAL_FAILURE], retry: true });
+      return false;
+    }
+    const refusal = ADD_BATCH_REFUSALS[hint];
+    if (replaying) {
+      // A replay's refusal cannot say whether the first, unanswered request
+      // was saved; current catalogue and capacity facts are checked again.
+      addFlowNotice(s, refusal
+        ? { lines: [refusal, ADD_CHECK_GARDEN], retry: false }
+        : { lines: [ADD_GENERAL_FAILURE], retry: true });
+      if (refusal) loadInventory();
+      return false;
+    }
+    if (hint === "garden_item_batch:request_conflict") {
+      // This request id was already used for a different selection, so those
+      // items exist. A fresh id is needed, and the person should look first.
+      s.requestId = newAddSessionKey();
+      addFlowNotice(s, { lines: [ADD_CHECK_GARDEN], retry: false });
+      loadInventory();
+      return false;
+    }
+    // Any other answer from the database means nothing was saved.
+    addFlowNotice(s, refusal ? { lines: [refusal], retry: false } : { lines: [ADD_GENERAL_FAILURE], retry: true });
+    return false;
+  }
+
+  const rows = (Array.isArray(data) ? data : []).slice()
+    .sort((a, b) => Number(a.selection_index) - Number(b.selection_index));
+  const matches = rows.length === batch.ids.length && rows.every((row, i) =>
+    Number(row.selection_index) === i + 1 &&
+    Number(row.blueprint_id) === batch.ids[i] &&
+    Number(row.garden_item_id) > 0 &&
+    s.selected.has(batch.ids[i]));
+  if (!matches) {
+    // Saved, but not in a shape this screen can trust: treat it as unknown,
+    // so Try again replays the same request and gets the ids again.
+    console.error("Add flow batch result did not match the selection");
+    s.frozen = batch;
+    s.outcome = "unknown";
+    addFlowNotice(s, { lines: [ADD_GENERAL_FAILURE], retry: true });
+    loadInventory();
+    return false;
+  }
+
+  rows.forEach((row, i) => {
+    const entry = s.selected.get(batch.ids[i]);
+    entry.itemId = Number(row.garden_item_id);
+    if (entry.details.photo) entry.details.attach = newAddAttach("pending");
+  });
+  s.frozen = null;
+  s.outcome = "saved";
+  s.notice = null;
+  loadInventory();
+  loadToday();
+  return true;
+}
+
+function newAddAttach(state) {
+  return { state, reason: "", progress: { generationId: null, uploaded: false, priorGeneration: null } };
+}
+
+/* Photo states once the items exist: pending → uploading → done, or failed
+ * (retryable) or refused (final). */
+function addFlowPhotoCounts(s) {
+  const counts = { saved: 0, done: 0, retryable: 0, refused: 0, uploading: 0 };
+  if (!s) return counts;
+  s.selected.forEach(entry => {
+    if (!entry.itemId) return;
+    counts.saved += 1;
+    const state = entry.details.attach ? entry.details.attach.state : null;
+    if (state === "done") counts.done += 1;
+    else if (state === "pending" || state === "failed") counts.retryable += 1;
+    else if (state === "refused") counts.refused += 1;
+    else if (state === "uploading") counts.uploading += 1;
+  });
+  return counts;
+}
+
+// Reasons no photo-only retry can change for the item they name.
+const ADD_PHOTO_FINAL = ["not_entitled", "account_ceiling", "item_unavailable", "item_removed", "photo_exists",
+  "bad_request", "bad_dimensions", "upload_wrong_type", "upload_too_large"];
+// Reasons that would refuse every remaining photo in this save just the same.
+const ADD_PHOTO_FINAL_FOR_ALL = ["not_entitled", "account_ceiling"];
+
+function addFlowRefusePhoto(d, reason) {
+  d.attach.state = "refused";
+  d.attach.reason = reason;
+  releaseAddPhoto(d);       // nothing left to retry with
+}
+
+async function addFlowAttachPhotos(s, request) {
+  const gardenId = s.gardenId;
+  const userId = s.userId;
+  const stillHere = () => currentGardenId === gardenId && currentUserId === userId;
+  const paint = () => { if (request.stillCurrent()) renderAddFlow({ keepFocus: true }); };
+  const wanted = Array.from(s.selected.values()).filter(entry =>
+    entry.itemId && entry.details.photo && entry.details.attach &&
+    (entry.details.attach.state === "pending" || entry.details.attach.state === "failed"));
+
+  // Known to have lapsed: say so without asking the server for each photo.
+  if (wanted.length > 0 && photoEntitlement.known && photoEntitlement.userId === userId && !photoEntitlement.value) {
+    wanted.forEach(entry => addFlowRefusePhoto(entry.details, "not_entitled"));
+    wanted.length = 0;
+  }
+
+  // An attempt that may have committed without an answer is checked first,
+  // so an accepted photo is never sent again or overwritten.
+  const unsure = wanted.filter(entry =>
+    entry.details.attach.progress.generationId || entry.details.attach.progress.priorGeneration);
+  if (unsure.length > 0) {
+    const known = await addFlowReconcilePhotos(gardenId, unsure);
+    if (!stillHere()) return;
+    if (!known) {
+      // Nothing can safely be sent until the saved photos can be read.
+      unsure.forEach(entry => { entry.details.attach.state = "failed"; entry.details.attach.reason = ""; });
+      addFlowPhotosSettled(s, request);
+      return;
+    }
+  }
+
+  const attached = [];
+  for (const entry of wanted) {
+    const d = entry.details;
+    if (d.attach.state === "done" || d.attach.state === "refused" || !d.photo) continue;
+    d.attach.state = "uploading";
+    d.attach.reason = "";
+    paint();
+    const res = await uploadPhotoGeneration(callItemPhotos, PHOTO.BUCKET, { garden_item_id: entry.itemId },
+      d.photo, null, stillHere, d.attach.progress);
+    if (res.abandoned) return;
+    if (res.ok) {
+      d.attach.state = "done";
+      recordSavedPhoto(gardenId, entry.itemId, res.photo, null);
+      releaseAddPhoto(d);
+      attached.push(entry.itemId);
+      continue;
+    }
+    if (res.status === 401 && await sessionHasGone(null, 401)) { await recoverFromSessionLoss(); return; }
+    if (!stillHere()) return;
+    const reason = res.reason || "";
+    if (reason === "generation_in_use" || reason === "stale_generation") {
+      // This generation was already accepted, or the item's photo moved on:
+      // the saved photo says which.
+      const known = await addFlowReconcilePhotos(gardenId, [entry]);
+      if (!stillHere()) return;
+      if (d.attach.state === "done") { attached.push(entry.itemId); continue; }
+      if (d.attach.state === "refused") continue;
+      // No photo saved after all: the next attempt starts from a new generation.
+      if (known) { d.attach.progress.generationId = null; d.attach.progress.uploaded = false; }
+      d.attach.state = "failed";
+      continue;
+    }
+    if (ADD_PHOTO_FINAL.indexOf(reason) !== -1) {
+      addFlowRefusePhoto(d, reason);
+      if (reason === "not_entitled") photoEntitlement = { userId, known: true, value: false };
+      if (ADD_PHOTO_FINAL_FOR_ALL.indexOf(reason) !== -1) {
+        wanted.forEach(other => {
+          const a = other.details.attach;
+          if (a.state === "pending" || a.state === "failed") addFlowRefusePhoto(other.details, reason);
+        });
+      }
+      continue;
+    }
+    // Connection, Storage or an expired upload: worth a retry. An upload that
+    // expired or never arrived starts again from a new generation; anything
+    // else keeps its place, to be checked before it is sent again.
+    if (/^upload_/.test(reason)) { d.attach.progress.generationId = null; d.attach.progress.uploaded = false; }
+    d.attach.state = "failed";
+    d.attach.reason = "";
+  }
+
+  if (attached.length > 0) {
+    if (inventoryLoadedFor === gardenId) renderGroupedInventory();
+    ensurePhotoUrls(gardenId, attached, false).then(signed => { if (signed && stillHere()) rerenderPhotoSurfaces(); });
+  }
+  addFlowPhotosSettled(s, request);
+}
+
+/* Reads the garden's saved photos and settles each listed attempt that had a
+ * generation in flight: committed (done), replaced by someone else
+ * (refused), or still to do. False when the photos could not be read. */
+async function addFlowReconcilePhotos(gardenId, entries) {
+  let list = null;
+  try {
+    list = await sb.rpc("item_photo_list", { p_garden_id: gardenId });
+  } catch (e) {
+    list = null;
+  }
+  if (!list || list.error) return false;
+  const current = new Map((list.data || []).map(row => [Number(row.garden_item_id), row]));
+  entries.forEach(entry => {
+    const d = entry.details;
+    const progress = d.attach.progress;
+    const saved = current.get(entry.itemId);
+    const ours = saved && (saved.generation_id === progress.generationId || saved.generation_id === progress.priorGeneration);
+    if (ours) {
+      d.attach.state = "done";
+      recordSavedPhoto(gardenId, entry.itemId, { generation_id: saved.generation_id, width: saved.width, height: saved.height }, null);
+      releaseAddPhoto(d);
+    } else if (saved) {
+      // Another member's photo arrived first. It is kept, never overwritten.
+      addFlowRefusePhoto(d, "photo_exists");
+    } else {
+      progress.priorGeneration = null;
+      if (!progress.uploaded) { progress.generationId = null; }
+    }
+  });
+  return true;
+}
+
+function addFlowPhotosSettled(s, request) {
+  if (!request.stillCurrent()) return;
+  const counts = addFlowPhotoCounts(s);
+  if (counts.retryable === 0 && counts.refused === 0) { addFlowSaveComplete(s); return; }
+  s.stage = "review";
+  setAddFlowAddState("idle");
+  renderAddFlow();
+  announceAddFlow("Couldn’t add everything. " + (counts.saved === 1 ? "Your item is" : "Your items are") +
+    " in My Garden, but " + addPhotosNotAdded(counts.retryable + counts.refused));
+}
+
+/* Review's message after a save that saved nothing (or may have). */
+function addFlowNotice(s, notice) {
+  s.notice = notice;
+  announceAddFlow("Couldn’t add everything. " + notice.lines.join(" "));
+}
+
+/* Everything saved: the WGT "Added!", then a fresh start at the catalogue
+ * home, still inside Add. Closing afterwards shows My Garden, already
+ * refreshed, with no second message. */
+function addFlowSaveComplete(s) {
+  s.stage = "added";
+  setAddFlowAddState("success");
+  renderAddFlow();
+  announceAddFlow("Added to My Garden");
+  if (addSavedTimer) clearTimeout(addSavedTimer);
+  addSavedTimer = setTimeout(() => {
+    addSavedTimer = null;
+    if (addSession !== s || currentAddSession() !== s || s.stage !== "added") return;
+    addFlowStartAfresh(s);
+  }, 850);
+}
+
+/* Selections, references and every prepared photo go; the session carries
+ * on at the catalogue home with a new request id for the next batch. */
+function addFlowStartAfresh(s) {
+  releaseAddSession(s);
+  s.selected = new Map();
+  s.retained = new Map();
+  s.nav = [];
+  s.homeScrollY = 0;
+  s.search.query = "";
+  s.reviewExpanded = null;
+  s.stage = "browse";
+  s.outcome = null;
+  s.frozen = null;
+  s.notice = null;
+  s.requestId = newAddSessionKey();
+  s.transition += 1;
+  const search = document.getElementById("add-flow-search");
+  if (search) search.value = "";
+  setAddFlowAddState("idle");
+  renderAddFlow();
+  addFlowScrollTo(0);
+  focusAddFlowTitle();
+}
+
+/* Carrying on without the photos that weren't added: Done, Back, X or a tab.
+ * The items are saved, so nothing is asked; the photos still on this device
+ * are let go, and the person is told plainly what was and wasn't added. */
+function addFlowFinishSaved(s, options = {}) {
+  if (!s || s.outcome !== "saved" || addFlowBusy(s) || currentAddSession() !== s) return;
+  const counts = addFlowPhotoCounts(s);
+  const missing = counts.retryable + counts.refused;
+  const message = plural(counts.saved, "item", "items") + " added to My Garden." +
+    (missing > 0 ? " " + addPhotosNotAdded(missing) : "");
+  if (options.exit) {
+    closeAddFlow({ restoreFocus: !options.then });
+    if (options.then) options.then();
+  } else {
+    addFlowStartAfresh(s);
+  }
+  showToast(message, false);
 }
 
 
@@ -4721,7 +6241,9 @@ function closeIdentify(options = {}) {
 
 function identifySearchInstead() {
   closeIdentify();
-  const search = document.getElementById("pill-search");
+  // The entry lives in the Add flow, so it is normally open already.
+  if (!addFlowIsOpen()) openAddFlow();
+  const search = document.getElementById("add-flow-search");
   if (search) {
     search.focus();
     if (search.scrollIntoView) search.scrollIntoView({ block: "center" });
@@ -4730,8 +6252,13 @@ function identifySearchInstead() {
 
 function identifyCheckGarden() {
   closeIdentify();
-  const inventory = document.getElementById("garden-inventory-title");
-  if (inventory && inventory.scrollIntoView) inventory.scrollIntoView({ block: "start" });
+  const showInventory = () => {
+    const inventory = document.getElementById("garden-inventory-title");
+    if (inventory && inventory.scrollIntoView) inventory.scrollIntoView({ block: "start" });
+  };
+  // Inside the Add flow the inventory is out of view: leaving it asks first
+  // when other items are still selected there.
+  if (addFlowIsOpen()) requestAddFlowExit(showInventory); else showInventory();
 }
 
 function openIdentifyModal() {
@@ -6665,7 +8192,7 @@ async function handleHideTaskClick(event) {
  * garden. */
 function showToast(message, withUndo) {
   if (toastTimeout) { clearTimeout(toastTimeout); toastTimeout = null; }
-  if (!withUndo) undoToastState = null;
+  if (!withUndo) replaceUndoToastState(null);
 
   const toast = document.getElementById("undo-toast");
   if (!toast) return;
@@ -6678,15 +8205,25 @@ function showToast(message, withUndo) {
 
 function hideToast() {
   if (toastTimeout) { clearTimeout(toastTimeout); toastTimeout = null; }
-  undoToastState = null;
+  replaceUndoToastState(null);
   const toast = document.getElementById("undo-toast");
   if (toast) toast.classList.remove("visible");
 }
 
+/* Whenever an Undo stops being offered, an Add flow removal's held photo is
+ * let go (issue #55); every other Undo holds nothing on the device. */
+function replaceUndoToastState(next) {
+  const previous = undoToastState;
+  undoToastState = next;
+  if (previous && previous !== next && previous.type === "add-remove") addRemovalUndoExpired(previous);
+}
+
 function showUndoToast(state) {
-  undoToastState = state;
+  replaceUndoToastState(state);
   const message = state.type === "completion" || state.type === "custom-job-completion"
     ? '“' + (state.taskName || state.jobName) + '” completed.'
+    : state.type === "add-remove"
+      ? state.itemName + " removed"
     : state.type === "custom-job-delete"
       ? '“' + state.jobName + '” deleted.'
     : state.type === "frost-banner"
@@ -6699,6 +8236,14 @@ async function handleUndoAction() {
   if (!undoToastState) return;
   const state = undoToastState;
   const gardenAtUndo = currentGardenId;
+
+  // An Add flow removal never left the device: put it straight back.
+  if (state.type === "add-remove") {
+    undoToastState = null;      // taken, not expired: its details go back into the selection
+    hideToast();
+    addFlowUndoRemoval(state);
+    return;
+  }
 
   hideToast();
   if (state.gardenId !== gardenAtUndo) return;
@@ -6813,6 +8358,8 @@ function closeSettingsModal(restoreFocus = true) {
 }
 
 function closeAllModals() {
+  addDiscardContinuation = null;
+  hideAccessibleModal("add-discard-modal", false);
   closeCustomJobPremium(false);
   closeCustomJobDelete(false);
   closeCustomJobEditor(false);
@@ -7133,7 +8680,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   ["garden-modal", "settings-modal", "garden-danger-modal", "delete-account-modal", "feedback-modal",
    "item-detail-modal", "photo-remove-modal", "photo-viewer", "identify-modal", "your-jobs-modal",
-   "job-detail-modal", "job-editor-modal", "job-delete-modal", "job-premium-modal"]
+   "job-detail-modal", "job-editor-modal", "job-delete-modal", "job-premium-modal", "add-discard-modal"]
     .forEach(id => {
       const modal = document.getElementById(id);
       if (modal) modal.addEventListener("keydown", handleAccessibleModalKeydown);
@@ -7195,7 +8742,17 @@ document.addEventListener("DOMContentLoaded", () => {
       if (event.target.closest("#item-add-job-btn")) { startAddCustomJob(photoDetail && photoDetail.itemId, "item-detail-modal"); return; }
       const jobRow = event.target.closest("[data-job-id]");
       if (jobRow) { openCustomJobDetail(jobRow.dataset.jobId, "item-detail-modal"); return; }
+      const refControl = event.target.closest("[data-ref-action]");
+      if (refControl) { if (!refControl.disabled) handleItemReferenceAction(refControl.dataset.refAction); return; }
       handleItemDetailAction(event);
+    });
+    // Issue #56: the My reference editor.
+    itemDetailModal.addEventListener("input", handleItemReferenceInput);
+    itemDetailModal.addEventListener("keydown", event => {
+      if (event.key === "Enter" && event.target && event.target.id === "item-reference-input") {
+        event.preventDefault();
+        saveItemReference();
+      }
     });
     itemDetailModal.addEventListener("error", handlePhotoImageError, true);
     itemDetailModal.addEventListener("error", handleJobPhotoImageError, true);
@@ -7231,16 +8788,56 @@ document.addEventListener("DOMContentLoaded", () => {
   if (photoViewerEl) photoViewerEl.addEventListener("click", handlePhotoViewerClick);
   const photoViewerImg = document.getElementById("photo-viewer-img");
   if (photoViewerImg) photoViewerImg.addEventListener("error", handlePhotoViewerImageError);
-  const addAssetBtn = document.getElementById("add-asset-btn");
-  if (addAssetBtn) addAssetBtn.addEventListener("click", handleAddAsset);
-  const pillSearch = document.getElementById("pill-search");
-  if (pillSearch) {
-    pillSearch.addEventListener("input", handlePillSearchInput);
-    // Enter on a phone keyboard should dismiss the keyboard, not submit anything.
-    pillSearch.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); pillSearch.blur(); } });
+
+  // --- The Add flow (issues #53, #55-#57) ---
+  const addFlowOpenBtn = document.getElementById("add-flow-open-btn");
+  if (addFlowOpenBtn) addFlowOpenBtn.addEventListener("click", openAddFlow);
+  const addFlowBackBtn = document.getElementById("add-flow-back-btn");
+  if (addFlowBackBtn) addFlowBackBtn.addEventListener("click", addFlowBack);
+  const addFlowCloseBtn = document.getElementById("add-flow-close-btn");
+  if (addFlowCloseBtn) addFlowCloseBtn.addEventListener("click", () => requestAddFlowExit(null));
+  const addFlowBody = document.getElementById("add-flow-body");
+  if (addFlowBody) {
+    addFlowBody.addEventListener("click", handleAddFlowBodyClick);
+    // Issue #55 Review: references, keyboard and photo previews.
+    addFlowBody.addEventListener("input", handleAddFlowReferenceInput);
+    addFlowBody.addEventListener("focusin", handleAddFlowFocusIn);
+    addFlowBody.addEventListener("focusout", handleAddFlowFocusOut);
+    addFlowBody.addEventListener("keydown", e => {
+      if (e.key === "Enter" && e.target && e.target.dataset && e.target.dataset.addRef) { e.preventDefault(); e.target.blur(); }
+    });
+    addFlowBody.addEventListener("error", handleAddFlowImageError, true);
   }
-  const pillSearchClear = document.getElementById("pill-search-clear");
-  if (pillSearchClear) pillSearchClear.addEventListener("click", clearPillSearch);
+  if (window.visualViewport) window.visualViewport.addEventListener("resize", keepAddReferenceVisible);
+  const addFlowReviewBtn = document.getElementById("add-flow-review-btn");
+  if (addFlowReviewBtn) addFlowReviewBtn.addEventListener("click", addFlowOpenReview);
+  const addFlowAddBtn = document.getElementById("add-flow-add-btn");
+  if (addFlowAddBtn) addFlowAddBtn.addEventListener("click", addFlowFooterAction);
+  const addFlowPhotoInput = document.getElementById("add-flow-photo-input");
+  if (addFlowPhotoInput) {
+    addFlowPhotoInput.addEventListener("change", handleAddFlowPhotoChosen);
+    addFlowPhotoInput.addEventListener("cancel", handleAddFlowPhotoCancelled);
+  }
+  const addFlowSearch = document.getElementById("add-flow-search");
+  if (addFlowSearch) {
+    addFlowSearch.addEventListener("input", handleAddFlowSearchInput);
+    addFlowSearch.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); addFlowSearch.blur(); } });
+  }
+  const addFlowSearchClear = document.getElementById("add-flow-search-clear");
+  if (addFlowSearchClear) addFlowSearchClear.addEventListener("click", clearAddFlowSearch);
+  const addDiscardModal = document.getElementById("add-discard-modal");
+  if (addDiscardModal) {
+    addDiscardModal.addEventListener("click", event => {
+      if (event.target === addDiscardModal || event.target.closest("#close-add-discard-modal, #add-discard-keep-btn")) { keepAddEditing(); return; }
+      if (event.target.closest("#add-discard-confirm-btn")) confirmAddDiscard();
+    });
+  }
+  // A reload while the flow was open leaves its history entry behind with no
+  // session to go with it; drop the marker so it reads as an ordinary entry.
+  if (window.history && window.history.state && window.history.state[ADD_HISTORY_KEY]) {
+    try { window.history.replaceState(null, ""); } catch (e) { /* harmless */ }
+  }
+  window.addEventListener("popstate", handleAddFlowPopState);
   const closeRemoveItemBtn = document.getElementById("close-remove-item-modal");
   if (closeRemoveItemBtn) closeRemoveItemBtn.addEventListener("click", closeRemoveItemModal);
   const removeItemCancelBtn = document.getElementById("remove-item-cancel-btn");
