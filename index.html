@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700&amp;family=Source+Sans+3:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=gardening-v66-add-cutover">
+  <link rel="stylesheet" href="style.css?v=gardening-v67-settings">
 </head>
 <body>
 
@@ -153,9 +153,12 @@
       <main id="main-content">
 
         <section id="view-today" class="view-section active-view">
-          <div class="page-heading">
+          <div class="page-heading today-heading">
             <h1>Today’s Tasks</h1>
-            <button id="today-add-job-btn" class="quiet-add-job-btn" type="button">+ Add a job</button>
+            <div class="today-job-actions">
+              <button id="your-jobs-btn" class="quiet-add-job-btn" type="button">Your jobs</button>
+              <button id="today-add-job-btn" class="quiet-add-job-btn" type="button">+ Add a job</button>
+            </div>
           </div>
 
           <!-- The frost warning, rendered by app.js and empty until a task is
@@ -598,67 +601,59 @@
       </div>
     </div>
 
-    <!-- ============================================================= -->
-    <!--  SETTINGS                                                     -->
-    <!--                                                               -->
-    <!--  Split in two, because it now holds two different kinds of     -->
-    <!--  thing. Everything under the garden's name applies to THAT     -->
-    <!--  garden only — including the hidden-task list, which was       -->
-    <!--  always per-garden but never said so.                          -->
-    <!-- ============================================================= -->
+    <!-- Settings stays secondary to the two main destinations. -->
     <div id="settings-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title">
       <div class="modal-panel">
         <div class="modal-header">
           <h2 class="section-title" id="settings-modal-title">Settings</h2>
-          <button id="close-settings-modal" class="modal-close-btn" aria-label="Close">✕</button>
+          <button id="close-settings-modal" class="modal-close-btn" type="button" aria-label="Close">✕</button>
         </div>
 
-        <p class="settings-group-title" id="settings-garden-name">This garden</p>
+        <section class="settings-section" aria-labelledby="settings-garden-title">
+          <h3 class="settings-group-title" id="settings-garden-title">This garden</h3>
+          <p class="settings-garden-context" id="settings-garden-name">This garden</p>
+          <button id="edit-garden-btn" class="settings-row-btn" type="button">Rename or change location</button>
+          <button id="hidden-tasks-btn" class="settings-row-btn" type="button" aria-haspopup="dialog">Hidden tasks</button>
+          <button id="leave-garden-btn" class="settings-row-btn settings-row-danger hidden" type="button">Leave this garden</button>
+          <button id="delete-garden-btn" class="settings-row-btn settings-row-danger" type="button">Delete this garden</button>
+        </section>
 
-        <button id="edit-garden-btn" class="settings-row-btn">Rename or change location</button>
-        <button id="your-jobs-btn" class="settings-row-btn">Your jobs</button>
+        <section class="settings-section" aria-labelledby="settings-preferences-title">
+          <h3 class="settings-group-title" id="settings-preferences-title">Preferences</h3>
+          <!-- Device-only disclosure must remain alongside this localStorage preference. -->
+          <div class="settings-toggle-row">
+            <label class="settings-toggle-label" for="remember-garden-toggle">Remember my last garden</label>
+            <input type="checkbox" id="remember-garden-toggle" class="settings-toggle" aria-describedby="remember-garden-help">
+          </div>
+          <p class="settings-toggle-help" id="remember-garden-help">
+            Stored on this device only. Turn it off and the app always opens your oldest garden.
+          </p>
+        </section>
 
-        <p class="form-instruction">Hidden tasks</p>
-        <div id="hidden-tasks-list" class="hidden-tasks-list">
-          <div class="loading-spinner-box">Loading...</div>
+        <section class="settings-section" aria-labelledby="settings-help-title">
+          <h3 class="settings-group-title" id="settings-help-title">Help &amp; feedback</h3>
+          <button id="feedback-btn" class="settings-row-btn" type="button">Send feedback</button>
+          <a class="settings-row-btn" href="mailto:whatgardeningtoday@gmail.com">Contact us</a>
+        </section>
+
+        <section class="settings-section" aria-labelledby="settings-account-title">
+          <h3 class="settings-group-title" id="settings-account-title">Account</h3>
+          <button id="signout-btn" class="settings-row-btn" type="button">Sign out</button>
+          <button id="delete-account-btn" class="settings-row-btn settings-row-danger" type="button">Delete my account</button>
+        </section>
+      </div>
+    </div>
+
+    <div id="hidden-tasks-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="hidden-tasks-title" aria-describedby="hidden-tasks-garden-name">
+      <div class="modal-panel">
+        <div class="modal-header">
+          <h2 class="section-title" id="hidden-tasks-title">Hidden tasks</h2>
+          <button id="close-hidden-tasks-modal" class="modal-close-btn" type="button" aria-label="Back to Settings">✕</button>
         </div>
-
-        <!-- Quiet and last within the garden's own group, for the same reason
-             account deletion is quiet and last: irreversible things should
-             never be what a thumb finds by accident. -->
-        <div class="danger-row">
-          <button id="leave-garden-btn" class="text-btn danger-text-btn hidden">Leave this garden</button>
-          <button id="delete-garden-btn" class="text-btn danger-text-btn">Delete this garden</button>
-        </div>
-
-        <p class="settings-group-title settings-group-title--account">Account</p>
-
-        <!-- Device-level, not account-level: it is a convenience stored in this
-             browser's localStorage and nowhere else. The help line underneath
-             is the "clear information" half of the PECR exception that lets it
-             be stored without a consent prompt — it is not decoration and must
-             not be dropped for tidiness. -->
-        <div class="settings-toggle-row">
-          <label class="settings-toggle-label" for="remember-garden-toggle">
-            Remember which garden I was last in
-          </label>
-          <input type="checkbox" id="remember-garden-toggle" class="settings-toggle">
-        </div>
-        <p class="settings-toggle-help">
-          Stored on this device only. Turn it off and the app always opens your oldest garden.
-        </p>
-
-        <button id="feedback-btn" class="settings-row-btn">Send feedback</button>
-        <p class="settings-contact-line">
-          <a href="mailto:whatgardeningtoday@gmail.com">Get in touch</a>
-        </p>
-
-        <div class="signout-row">
-          <button id="signout-btn" class="signout-btn">Sign out</button>
-        </div>
-        <div class="danger-row">
-          <button id="delete-account-btn" class="text-btn danger-text-btn">Delete my account</button>
-        </div>
+        <p id="hidden-tasks-garden-name" class="settings-garden-context"></p>
+        <button id="restore-all-tasks-btn" class="secondary-action-btn hidden" type="button">Restore all</button>
+        <p id="restore-all-tasks-error" class="garden-inline-error hidden" role="alert"></p>
+        <div id="hidden-tasks-list" class="hidden-tasks-list" aria-live="polite"></div>
       </div>
     </div>
 
@@ -788,6 +783,6 @@
   <!-- Your Supabase URL + anon key. Create this file from config.example.js. -->
   <script src="config.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js?v=gardening-v66-add-cutover"></script>
+  <script src="app.js?v=gardening-v67-settings"></script>
 </body>
 </html>

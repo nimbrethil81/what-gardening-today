@@ -89,7 +89,7 @@ const sb = configLooksValid ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : nu
  * from. It must match CACHE_NAME in sw.js, and both must be bumped in the same
  * commit — a report labelled with a version that was never deployed is worse
  * than no label at all. */
-const APP_VERSION = "gardening-v66-add-cutover";
+const APP_VERSION = "gardening-v67-settings";
 
 /* ---- Small helpers ------------------------------------------------------- */
 
@@ -553,6 +553,7 @@ function hideAccessibleModal(modalId, restoreFocus = true) {
 function closeModalFromKeyboard(modalId) {
   if (modalId === "garden-modal") closeGardenModal();
   if (modalId === "settings-modal") closeSettingsModal();
+  if (modalId === "hidden-tasks-modal") closeHiddenTasksModal();
   if (modalId === "garden-danger-modal") closeGardenDangerModal();
   if (modalId === "delete-account-modal") closeDeleteAccountModal();
   if (modalId === "feedback-modal") closeFeedbackModal();
@@ -886,6 +887,8 @@ function resetPerGardenUiState() {
   inventoryLoadedFor = null;
   inventoryRequestSerial += 1;
   hiddenTasksRequestSerial += 1;
+  closeHiddenTasksModal(false);
+  closeSettingsModal(false);
   const inventoryList = document.getElementById("inventory-list");
   if (inventoryList) {
     inventoryList.innerHTML = '<div class="garden-local-status">Seeing what’s growing…</div>';
@@ -6713,7 +6716,6 @@ function renderCustomJobSurfaces() {
 }
 
 function openYourJobs() {
-  closeSettingsModal(false);
   showAccessibleModal("your-jobs-modal", "close-your-jobs-modal");
   loadCustomJobs(currentGardenId);
 }
@@ -8316,10 +8318,8 @@ function showTaskStatus(message, isError) {
 /* ==========================================================================
  *  SETTINGS  (gear icon)
  *
- *  Two groups, because it holds two different kinds of thing. Everything under
- *  the garden's name applies to THAT garden only — including the hidden-task
- *  list, which was always per-garden but never said so, and became genuinely
- *  ambiguous the moment a second garden existed.
+ *  Garden management, device preferences, help and account actions.
+ *  Hidden tasks loads only in its garden-scoped secondary view.
  * ========================================================================== */
 
 function openSettingsModal() {
@@ -8338,7 +8338,7 @@ function openSettingsModal() {
   // Leaving only means something while there is somebody to leave it TO. As the
   // last member, leaving IS deleting, so Delete is the honest word for it.
   const leaveBtn = document.getElementById("leave-garden-btn");
-  if (leaveBtn) leaveBtn.classList.toggle("hidden", !(shared || !isOwner));
+  if (leaveBtn) leaveBtn.classList.toggle("hidden", !(g && (shared || !isOwner)));
 
   // Deleting destroys it for everyone: an owner's action only.
   const deleteBtn = document.getElementById("delete-garden-btn");
@@ -8349,8 +8349,10 @@ function openSettingsModal() {
   const rememberToggle = document.getElementById("remember-garden-toggle");
   if (rememberToggle) rememberToggle.checked = rememberGardenEnabled();
 
+  const hiddenBtn = document.getElementById("hidden-tasks-btn");
+  if (hiddenBtn) hiddenBtn.disabled = !g;
+
   showAccessibleModal("settings-modal", "close-settings-modal");
-  fetchHiddenTasks();
 }
 
 function closeSettingsModal(restoreFocus = true) {
@@ -8373,15 +8375,75 @@ function closeAllModals() {
   closeDeleteAccountModal(false);
   closeGardenDangerModal(false);
   closeRemoveItemModal(false);
+  closeHiddenTasksModal(false);
   closeSettingsModal(false);
   closeGardenModal(false);
+}
+
+function openHiddenTasksModal() {
+  const garden = currentGarden();
+  if (!garden) return;
+  document.getElementById("hidden-tasks-garden-name").textContent = garden.name;
+  showAccessibleModal("hidden-tasks-modal", "close-hidden-tasks-modal", "settings-modal");
+  fetchHiddenTasks();
+}
+
+function closeHiddenTasksModal(restoreFocus = true) {
+  hiddenTasksRequestSerial += 1;
+  hideAccessibleModal("hidden-tasks-modal", restoreFocus);
+}
+
+function resetHiddenTasksActions(hasTasks = false) {
+  const btn = document.getElementById("restore-all-tasks-btn");
+  btn.classList.toggle("hidden", !hasTasks);
+  btn.disabled = false;
+  btn.textContent = "Restore all";
+  document.getElementById("restore-all-tasks-error").classList.add("hidden");
+}
+
+async function restoreAllHiddenTasks() {
+  const gardenAtRestore = currentGardenId;
+  if (!gardenAtRestore) return;
+  // Invalidates a pending list fetch and any older restoration UI response.
+  const requestSerial = ++hiddenTasksRequestSerial;
+  const btn = document.getElementById("restore-all-tasks-btn");
+  const errorEl = document.getElementById("restore-all-tasks-error");
+  errorEl.classList.add("hidden");
+  // Disabling a focused button drops keyboard events onto the page. Keep
+  // Escape and Tab inside the sheet while the request is pending.
+  if (document.activeElement === btn) document.getElementById("close-hidden-tasks-modal").focus();
+  btn.disabled = true;
+  btn.textContent = "Restoring…";
+  document.querySelectorAll("#hidden-tasks-list .restore-task-btn").forEach(control => { control.disabled = true; });
+  try {
+    const { error } = await sb.from("hidden_task").delete().eq("garden_id", gardenAtRestore);
+    if (error) throw error;
+    if (gardenAtRestore !== currentGardenId) return;
+    loadToday();
+    if (requestSerial !== hiddenTasksRequestSerial) return;
+    renderHiddenTasksList([]);
+  } catch (error) {
+    if (gardenAtRestore !== currentGardenId || requestSerial !== hiddenTasksRequestSerial) return;
+    if (await sessionHasGone(error, 0)) { await recoverFromSessionLoss(); return; }
+    if (gardenAtRestore !== currentGardenId || requestSerial !== hiddenTasksRequestSerial) return;
+    btn.disabled = false;
+    btn.textContent = "Restore all";
+    document.querySelectorAll("#hidden-tasks-list .restore-task-btn").forEach(control => { control.disabled = false; });
+    errorEl.textContent = "Couldn’t restore these tasks. Please try again.";
+    errorEl.classList.remove("hidden");
+  }
 }
 
 async function fetchHiddenTasks() {
   const listEl = document.getElementById("hidden-tasks-list");
   const requestSerial = ++hiddenTasksRequestSerial;
+  resetHiddenTasksActions();
   listEl.innerHTML = '<div class="garden-local-status">Checking hidden tasks…</div>';
   const gardenAtRequest = currentGardenId;
+  if (!gardenAtRequest) {
+    listEl.textContent = "Choose a garden to see its hidden tasks.";
+    return;
+  }
 
   try {
     const { data, error } = await sb
@@ -8403,6 +8465,7 @@ async function fetchHiddenTasks() {
     if (requestSerial !== hiddenTasksRequestSerial || gardenAtRequest !== currentGardenId) return;
     console.error("Fetch hidden tasks error:", error);
     if (await sessionHasGone(error, 0)) { await recoverFromSessionLoss(); return; }
+    if (requestSerial !== hiddenTasksRequestSerial || gardenAtRequest !== currentGardenId) return;
     listEl.innerHTML = `
       <div class="hidden-tasks-error" role="alert">
         <p>We couldn’t show hidden tasks for this garden.</p>
@@ -8412,6 +8475,7 @@ async function fetchHiddenTasks() {
 }
 
 function renderHiddenTasksList(hiddenTasks) {
+  resetHiddenTasksActions(hiddenTasks.length > 0);
   const listEl = document.getElementById("hidden-tasks-list");
   listEl.innerHTML = "";
 
@@ -8427,7 +8491,7 @@ function renderHiddenTasksList(hiddenTasks) {
     // user-written, so both are escaped before going into innerHTML.
     card.innerHTML = `
       <div class="hidden-task-info">
-        <h4>${escapeHtml(task.task_name)}</h4>
+        <h3>${escapeHtml(task.task_name)}</h3>
         <p>${escapeHtml(task.category)}</p>
       </div>
       <button class="restore-task-btn" type="button" data-task-id="${task.task_id}">Restore</button>
@@ -8445,11 +8509,15 @@ async function handleRestoreTask(event) {
 
   const taskId = parseInt(btn.getAttribute("data-task-id"), 10);
   const gardenAtRestore = currentGardenId;
+  const requestSerial = hiddenTasksRequestSerial;
   const card = btn.closest(".hidden-task-card");
-  const taskNameEl = card ? card.querySelector(".hidden-task-info h4") : null;
+  const taskNameEl = card ? card.querySelector(".hidden-task-info h3") : null;
   const taskName = taskNameEl ? taskNameEl.textContent : "that task";
   const errorEl = card ? card.querySelector(".hidden-task-error") : null;
   if (errorEl) { errorEl.textContent = ""; errorEl.classList.add("hidden"); }
+  // Disabling a focused button drops keyboard events onto the page. Keep
+  // Escape and Tab inside the sheet while the request is pending.
+  if (document.activeElement === btn) document.getElementById("close-hidden-tasks-modal").focus();
   btn.disabled = true;
   btn.textContent = "Restoring…";
 
@@ -8461,18 +8529,17 @@ async function handleRestoreTask(event) {
     if (error) throw error;
     if (gardenAtRestore !== currentGardenId) return;
 
+    loadToday();
+    if (requestSerial !== hiddenTasksRequestSerial) return;
     if (card) card.remove();
 
-    loadToday();
-
     const listEl = document.getElementById("hidden-tasks-list");
-    if (listEl.children.length === 0) {
-      listEl.innerHTML = '<div class="loading-spinner-box">You haven\'t hidden any tasks in this garden.</div>';
-    }
+    if (listEl.children.length === 0) renderHiddenTasksList([]);
   } catch (error) {
     console.error("Restore task error:", error);
-    if (gardenAtRestore !== currentGardenId) return;
+    if (gardenAtRestore !== currentGardenId || requestSerial !== hiddenTasksRequestSerial) return;
     if (await sessionHasGone(error, 0)) { await recoverFromSessionLoss(); return; }
+    if (gardenAtRestore !== currentGardenId || requestSerial !== hiddenTasksRequestSerial) return;
     btn.disabled = false;
     btn.textContent = "Restore";
     if (errorEl) {
@@ -8678,7 +8745,7 @@ document.addEventListener("DOMContentLoaded", () => {
   if (gardenModal) {
     gardenModal.addEventListener("click", (e) => { if (e.target === gardenModal) closeGardenModal(); });
   }
-  ["garden-modal", "settings-modal", "garden-danger-modal", "delete-account-modal", "feedback-modal",
+  ["garden-modal", "settings-modal", "hidden-tasks-modal", "garden-danger-modal", "delete-account-modal", "feedback-modal",
    "item-detail-modal", "photo-remove-modal", "photo-viewer", "identify-modal", "your-jobs-modal",
    "job-detail-modal", "job-editor-modal", "job-delete-modal", "job-premium-modal", "add-discard-modal"]
     .forEach(id => {
@@ -8865,6 +8932,11 @@ document.addEventListener("DOMContentLoaded", () => {
   if (settingsModal) {
     settingsModal.addEventListener("click", (e) => { if (e.target === settingsModal) closeSettingsModal(); });
   }
+  document.getElementById("hidden-tasks-btn").addEventListener("click", openHiddenTasksModal);
+  document.getElementById("close-hidden-tasks-modal").addEventListener("click", () => closeHiddenTasksModal());
+  const hiddenModal = document.getElementById("hidden-tasks-modal");
+  hiddenModal.addEventListener("click", event => { if (event.target === hiddenModal) closeHiddenTasksModal(); });
+  document.getElementById("restore-all-tasks-btn").addEventListener("click", restoreAllHiddenTasks);
   const hiddenTasksList = document.getElementById("hidden-tasks-list");
   if (hiddenTasksList) hiddenTasksList.addEventListener("click", handleRestoreTask);
   const rememberToggle = document.getElementById("remember-garden-toggle");

@@ -690,7 +690,7 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
   white-space: nowrap;
 }
 
-/* --- HIDDEN TASKS MODAL (opened via the settings gear icon) --- */
+/* --- SECONDARY MODALS (opened via the header or supporting rows) --- */
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -821,43 +821,38 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
   color: var(--text-muted);
 }
 
-/* --- SETTINGS GROUPS --- */
-/* Settings holds two different kinds of thing now: this garden, and the
-   account. Naming the garden is what makes "Hidden tasks" and "Delete this
-   garden" unambiguous — both were always per-garden, neither ever said so. */
+/* --- SETTINGS SECTIONS AND SHARED ACTION ROWS --- */
+.settings-section + .settings-section { margin-top: 24px; }
 .settings-group-title {
-  font-size: 17px;
-  font-weight: 700;
-  color: var(--text-main);
-  margin: 4px 0 12px 2px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  margin: 0 0 8px;
+  color: var(--ink-blue);
+  font: 700 19px/1.25 var(--font-heading);
+  overflow-wrap: anywhere;
 }
-
-.settings-group-title--account {
-  margin-top: 26px;
-  padding-top: 18px;
-  border-top: 1px solid var(--border-color);
+.settings-garden-context {
+  margin: 0 0 12px;
+  font: 400 16px/1.4 var(--font-body);
+  overflow-wrap: anywhere;
 }
-
 .settings-row-btn {
+  display: flex;
+  align-items: center;
   width: 100%;
-  background: var(--bg-card);
-  border: none;
-  border-radius: 12px;
-  padding: 14px;
-  font-family: inherit;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-main);
+  min-height: 52px;
+  padding: 12px 4px;
+  border: 0;
+  border-bottom: 1px solid rgba(7, 63, 53, 0.13);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink-blue);
+  font: 600 16px/1.4 var(--font-body);
   text-align: left;
+  text-decoration: none;
+  overflow-wrap: anywhere;
   cursor: pointer;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);
-  transition: transform 0.1s ease;
 }
-
 .settings-row-btn:active { transform: scale(0.99); }
+.settings-row-danger { color: #7E2727; font-weight: 400; }
 
 .hidden-tasks-list { display: flex; flex-direction: column; gap: 8px; }
 
@@ -871,7 +866,7 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);
 }
 
-.hidden-task-info h4 { font-size: 14px; margin: 0 0 2px 0; }
+.hidden-task-info h3 { font-size: 14px; margin: 0 0 2px 0; }
 .hidden-task-info p { font-size: 11px; color: var(--text-muted); margin: 0; }
 
 .restore-task-btn {
@@ -888,50 +883,6 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
 }
 
 .restore-task-btn:active { transform: scale(0.96); }
-
-/* --- SIGN OUT (in the settings modal) --- */
-.signout-row {
-  margin-top: 18px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border-color);
-}
-
-.signout-btn {
-  width: 100%;
-  background: none;
-  border: 1.5px solid var(--accent-red);
-  color: var(--accent-red);
-  border-radius: 10px;
-  font-size: 14px;
-  font-weight: 600;
-  padding: 11px;
-  cursor: pointer;
-}
-
-.signout-btn:active { transform: scale(0.99); }
-
-/* --- DELETE ACCOUNT (settings modal, then its own confirmation panel) ---
-   The entry point is deliberately quiet — plain text, muted, sitting last —
-   because it is irreversible and should never be the thing a thumb finds by
-   accident. All the weight lives on the confirmation panel instead. */
-.danger-row {
-  margin-top: 10px;
-  text-align: center;
-}
-
-/* The garden group can show two of these (Leave / Delete). Stacked, not
-   side by side, so neither becomes a 50%-width target next to the other. */
-.danger-row .danger-text-btn + .danger-text-btn { margin-top: 0; }
-
-/* Scoped to .danger-row on purpose. These buttons also carry the ordinary
-   indigo .text-btn treatment, but destructive entry points remain quieter
-   until the user reaches the explicit confirmation panel. */
-.danger-row .danger-text-btn {
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
-.danger-row .danger-text-btn:active { color: var(--accent-red); }
 
 .delete-lede {
   font-size: 14px;
@@ -1146,20 +1097,6 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
   line-height: 1.45;
   margin: 8px 2px 14px;
 }
-
-.settings-contact-line {
-  font-size: 13px;
-  color: var(--text-muted);
-  text-align: center;
-  line-height: 1.45;
-  margin: 10px 0 0;
-}
-
-.settings-contact-line a {
-  color: var(--ink-blue);
-  font-weight: 600;
-}
-
 
 /* --- SEND FEEDBACK --- */
 .feedback-lede {
@@ -1387,6 +1324,10 @@ h1, h2, h3, h4,
 
 .page-heading { margin: 10px 0 22px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .page-heading h1 { font-size: clamp(30px, 8vw, 38px); line-height: 1.08; }
+.today-heading { flex-wrap: wrap; }
+.today-heading h1 { flex: 1 1 240px; }
+.today-job-actions { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.today-job-actions .quiet-add-job-btn { white-space: normal; text-align: left; }
 .quiet-add-job-btn {
   min-height: 44px;
   padding: 8px 5px;
@@ -2012,25 +1953,18 @@ h1, h2, h3, h4,
 .garden-row-meta { font-size: 14px; line-height: 1.3; }
 .garden-row.current .garden-row-name { color: var(--brand-green); }
 
-.settings-group-title { font: 700 19px/1.25 var(--font-heading); overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
 #settings-garden-name { color: var(--ink-blue); }
-.settings-group-title--account { color: var(--ink-blue); }
-.settings-row-btn {
+.settings-toggle-row {
   min-height: 52px;
-  padding: 12px 4px;
-  border-bottom: 1px solid rgba(7, 63, 53, 0.13);
+  padding: 4px;
   border-radius: 0;
+  border-bottom: 1px solid rgba(7, 63, 53, 0.13);
   background: transparent;
   box-shadow: none;
-  font-size: 16px;
 }
-.settings-toggle-row { min-height: 52px; }
 .settings-toggle-label { font-size: 16px; line-height: 1.35; }
 .settings-toggle { min-width: 44px; min-height: 44px; }
-.settings-toggle-help { font-size: 15px; line-height: 1.4; }
-.settings-contact-line a { display: inline-flex; align-items: center; min-height: 44px; }
-.signout-btn { min-height: 48px; font-size: 16px; }
-.danger-text-btn { min-height: 44px; font-size: 15px; }
+.settings-toggle-help { margin: 8px 4px 0; font-size: 15px; line-height: 1.4; }
 
 .hidden-tasks-list { gap: 0; }
 .hidden-task-card {
@@ -2045,7 +1979,7 @@ h1, h2, h3, h4,
   box-shadow: none;
 }
 .hidden-task-info { min-width: 0; }
-.hidden-task-info h4 { font-size: 16px; line-height: 1.3; overflow-wrap: anywhere; }
+.hidden-task-info h3 { font-size: 16px; line-height: 1.3; overflow-wrap: anywhere; }
 .hidden-task-info p { font-size: 14px; line-height: 1.3; overflow-wrap: anywhere; }
 .restore-task-btn { min-width: 88px; min-height: 44px; padding: 8px 12px; font-size: 14px; }
 .hidden-task-error { grid-column: 1 / -1; margin: 0; color: #7E2727; font-size: 14px; line-height: 1.4; }
@@ -2115,7 +2049,6 @@ h1, h2, h3, h4,
 .restore-task-btn:active,
 .secondary-action-btn:active,
 .google-signin-btn:active,
-.signout-btn:active,
 .destructive-action-btn:active { transform: none; filter: brightness(0.96); }
 
 @media (min-width: 375px) {
