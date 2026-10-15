@@ -1326,8 +1326,12 @@ h1, h2, h3, h4,
 .page-heading h1 { font-size: clamp(30px, 8vw, 38px); line-height: 1.08; }
 .today-heading { flex-wrap: wrap; }
 .today-heading h1 { flex: 1 1 240px; }
-.today-job-actions { display: flex; flex-wrap: wrap; gap: 4px 16px; }
-.today-job-actions .quiet-add-job-btn { white-space: normal; text-align: left; }
+/* Understated and after the last task; body's bottom padding clears the fixed nav. */
+.today-add-job-footer { display: flex; justify-content: center; margin: 18px 0 8px; }
+.today-add-job-footer .quiet-add-job-btn { white-space: normal; }
+#task-container:has(.today-setup-state) + .today-add-job-footer,
+#task-container:has(.today-load-error) + .today-add-job-footer,
+#task-container[aria-busy="true"]:not(.refreshing) + .today-add-job-footer { display: none; }
 .quiet-add-job-btn {
   min-height: 44px;
   padding: 8px 5px;

@@ -89,7 +89,7 @@ const sb = configLooksValid ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : nu
  * from. It must match CACHE_NAME in sw.js, and both must be bumped in the same
  * commit — a report labelled with a version that was never deployed is worse
  * than no label at all. */
-const APP_VERSION = "gardening-v67-settings";
+const APP_VERSION = "gardening-v69-today-footer";
 
 /* ---- Small helpers ------------------------------------------------------- */
 
@@ -1895,7 +1895,7 @@ async function loadToday() {
     renderWeather(null);
     taskContainer.dataset.empty = "false";
     taskContainer.innerHTML = `
-      <div class="today-error-state">
+      <div class="today-error-state today-load-error">
         <h2>We couldn’t show today’s jobs.</h2>
         <p>Check your connection and try again.</p>
         <button type="button" class="secondary-action-btn" data-action="retry-today">Try again</button>
@@ -2160,7 +2160,7 @@ function renderTodayEmptyState() {
   c.dataset.empty = "true";
   const inventoryKnown = inventoryLoadedFor === currentGardenId;
   c.innerHTML = (inventoryKnown && userInventory.length === 0)
-    ? `<div class="today-empty-state">
+    ? `<div class="today-empty-state today-setup-state">
          <div><h2>Let’s set up your garden</h2><p>Add the plants, tools and structures you have, and we’ll find the jobs that fit.</p><button type="button" class="secondary-action-btn" data-action="open-garden">Add to My Garden</button></div>
        </div>`
     : `<div class="today-empty-state">
@@ -6716,7 +6716,8 @@ function renderCustomJobSurfaces() {
 }
 
 function openYourJobs() {
-  showAccessibleModal("your-jobs-modal", "close-your-jobs-modal");
+  // Opened from Settings, which stays the parent: closing returns there.
+  showAccessibleModal("your-jobs-modal", "close-your-jobs-modal", "settings-modal");
   loadCustomJobs(currentGardenId);
 }
 
@@ -8351,6 +8352,8 @@ function openSettingsModal() {
 
   const hiddenBtn = document.getElementById("hidden-tasks-btn");
   if (hiddenBtn) hiddenBtn.disabled = !g;
+  const yourJobsRow = document.getElementById("your-jobs-btn");
+  if (yourJobsRow) yourJobsRow.disabled = !g;
 
   showAccessibleModal("settings-modal", "close-settings-modal");
 }
